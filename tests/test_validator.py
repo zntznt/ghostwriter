@@ -1,6 +1,7 @@
 """In-game validation tests. Need a Factorio executable (see tools/factorio.py);
 skipped without one. One server for the whole class, ~30 s."""
 
+import os
 import unittest
 from pathlib import Path
 
@@ -17,7 +18,9 @@ from validator.validate import Report, validate
 GATED_IDS = {"chest": 1, "decider": 2, "requests": 3}
 
 
-@unittest.skipUnless(locate(), "no Factorio executable (run `python -m validator.fetch`)")
+# CI sets GHOSTWRITER_REQUIRE_FACTORIO so a missing server fails instead of skipping.
+@unittest.skipUnless(locate() or os.environ.get("GHOSTWRITER_REQUIRE_FACTORIO"),
+                     "no Factorio executable (run `python -m validator.fetch`)")
 class Validator(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

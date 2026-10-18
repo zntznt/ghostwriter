@@ -23,3 +23,16 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `site/` | library browser: `template.html`, built by `python -m tools.site` into `site/dist/` (gitignored) |
 | `data/` | `data-raw-dump.json` from `python -m tools.dump_data` (gitignored) |
 | `NOTES.md` | format facts and how each was verified |
+
+## Library site (GitHub Pages)
+
+`.github/workflows/pages.yml` builds and publishes the library browser to
+https://zntznt.github.io/ghostwriter/ on every push to `main`. Pull requests
+run the same build without deploying. Each build runs the full test suite,
+including in-game validation of `library/` in a Factorio headless server
+(cached between runs). A failing blueprint blocks the deploy, so only passing
+strings are published.
+
+One-time setup: **Settings → Pages → Build and deployment → Source: GitHub
+Actions**. GitHub also recommends a deployment protection rule so that only
+`main` can deploy to the `github-pages` environment (Settings → Environments).
