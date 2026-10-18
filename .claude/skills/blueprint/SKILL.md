@@ -19,13 +19,15 @@ where Draftsman 4.0.1 lags behind 2.1.
 ## Commands (repo root, venv active: `pip install -r requirements.txt`)
 
 ```
-python -m tools.bp gen NAME [key=value ...] [--json]   # generator -> checked string
+python -m tools.bp gen NAME [key=value ...] --validate   # generator -> checked, validated string
+python -m tools.bp validate SRC...                      # in-game validation (headless server)
 python -m tools.bp check SRC                          # static checks, exit 1 on error
 python -m tools.bp decode SRC                         # string -> pretty JSON
 python -m tools.bp encode SRC                         # JSON -> string
 python -m tools.bp add SRC [--to library/BOOK]        # file into library/
 python -m tools.bp book library/BOOK [--json]         # folder -> book string
 python -m tools.dump_data [--factorio PATH]           # refresh data/ from the game
+python -m validator.fetch 2.1.22                      # headless server for validation (Linux)
 python -m unittest discover tests
 ```
 
@@ -45,11 +47,19 @@ SRC is a string, a file path, or `-` (stdin).
    with raw keys; say what the user must set by hand in game instead.
 4. `gen` runs `check` and refuses to print a string with errors. Unknown
    names are errors (typos). Unknown keys are only warnings, because
-   Draftsman lags 2.1; only the game validator can confirm keys.
+   Draftsman lags 2.1; the validator is what confirms keys.
+   Always use `gen --validate`. A string that hasn't passed validation does
+   not go to the user as working. If no Factorio binary is available, say
+   so and label the string "static checks only".
 5. Add a test in `tests/` for anything verified, especially wires.
 6. Hand the string to the user with what it needs in game (wires to connect,
-   items to set). Until the validator exists (step 2), say plainly that the
-   string has passed static checks only, not an in-game test.
+   items to set). Say what validation covered: import, settings and wires,
+   and building on a test surface. It does **not** cover circuit behaviour,
+   so unverified logic is the user's to test.
+7. If validation fails: read the error, fix the generator, re-run. A key
+   the game drops is either a typo or something Draftsman writes in an older
+   form. For the latter, verify the game's form in a round trip, then add a
+   migration to `validator/validate.py` with a note in `NOTES.md`.
 
 ## Filing
 
@@ -58,7 +68,8 @@ SRC is a string, a file path, or `-` (stdin).
   children keep their `index`). Strings are never stored. Build them on
   demand with `book` / `encode`.
 - Only file blueprints the user has confirmed work in game, or that passed
-  the validator once it exists. `add` refuses strings with check errors
+  the validator (and whose circuit logic, if any, the user confirmed).
+  `add` refuses strings with check errors
   (`--force` for modded exports with names neither Draftsman nor `data/`
   knows). Expect "doesn't model" warnings on 2.1 exports; they are harmless.
 - `data/` is gitignored. `python -m tools.dump_data` regenerates it.

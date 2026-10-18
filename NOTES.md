@@ -17,6 +17,9 @@ build with `build_blueprint` + `revive`, then read the live entities.
 | `import_stack` returning 0 does not mean the blueprint survived intact | The 2.0 case above. The validator must diff the game's re-export against the input. |
 | The version stamp doesn't block import | Strings stamped 2.0.72, 2.0.77 and 2.1.20 all imported on 2.1.22 (and 2.0.77) with content intact. |
 | Books built by `tools.library` import with nesting, deconstruction and upgrade planners intact | Imported and re-exported on both servers. |
+| On import the game silently drops: wires beyond reach, wires to a connector the entity lacks (e.g. connector 3 on a chest), keys it doesn't know, and invalid enum values (`circuit_mode_of_operation: 7`). `import_stack` returns 0 for all of these. Unknown entity names make it return -1, and the entity is dropped. | `tests/test_validator.py`, 2.1.22. |
+| 2.1 migrates all three `circuit_mode_of_operation` values on logistic chests: 0 → defaults, 1 → `set_requests: true, read_contents: false`, 2 → `read_contents: false` | Validator round trips, 2.1.22. |
+| Defaults the 2.1 export omits: `direction: 0`, signal `type: "item"`, `quality: "normal"`, `copy_count_from_input: true`, network flags set to `true` | Validator round trips of the hand-built example and of Draftsman output. |
 | `--dump-data` writes to `<write-data>/script-output/data-raw-dump.json`, and the game logs `Write data path: ...` at startup | `tools/dump_data.py` run against the 2.0.77 and 2.1.22 headless binaries. In a portable install, write-data is the install dir, not `~/.factorio`. |
 
 ## Draftsman 4.0.1 vs real 2.1.22 exports
@@ -32,7 +35,7 @@ Samples live in `tests/fixtures/game-2.1.22/`. Not separated: which of these key
 
 Consequences for this repo:
 - `bp check` reports unknown keys and Draftsman crashes as **warnings**, because it can't tell a typo from a real 2.1 key. Unknown **names** are errors unless the game (the `data/` dump, else Draftsman's data) knows them.
-- Generators can only set what Draftsman models, and Draftsman may write older keys that 2.1 migrates (as with the chest) or drops. Verified only for the chest so far. The game validator (step 2) must cover each generator.
+- Generators can only set what Draftsman models, and Draftsman may write older keys that 2.1 migrates (as with the chest) or drops. `bp gen --validate` catches the drops; migrations verified so far: logistic chest mode.
 
 ## Draftsman behaviour worth knowing
 
@@ -44,4 +47,4 @@ Consequences for this repo:
 ## Open
 
 - Your exact 2.1.x build. `python -m tools.dump_data` on your machine records it in `data/factorio-version.txt`.
-- Decider `Each(G) > Each(R)` semantics with a signal present on only one network: not exercised in game yet (needs ticking the circuit network; step 2).
+- Decider `Each(G) > Each(R)` semantics with a signal present on only one network: not exercised in game. The validator builds but doesn't tick circuits.

@@ -16,7 +16,6 @@ first; a running instance holds a lock on write-data.
 """
 
 import argparse
-import os
 import re
 import shutil
 import subprocess
@@ -24,29 +23,10 @@ import sys
 import time
 from pathlib import Path
 
+from tools.factorio import find_factorio
+
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
-
-# Searched only when neither --factorio, $FACTORIO nor PATH has the binary.
-CANDIDATES = [
-    "~/.steam/steam/steamapps/common/Factorio/bin/x64/factorio",
-    "~/.local/share/Steam/steamapps/common/Factorio/bin/x64/factorio",
-    "~/Library/Application Support/Steam/steamapps/common/Factorio/factorio.app/Contents/MacOS/factorio",
-    "/Applications/factorio.app/Contents/MacOS/factorio",
-    r"C:\Program Files (x86)\Steam\steamapps\common\Factorio\bin\x64\factorio.exe",
-    r"C:\Program Files\Factorio\bin\x64\factorio.exe",
-]
-
-
-def find_factorio(explicit: str | None) -> Path:
-    for c in (explicit, os.environ.get("FACTORIO"), shutil.which("factorio")):
-        if c:
-            return Path(c).expanduser()
-    for c in CANDIDATES:
-        p = Path(c).expanduser()
-        if p.is_file():
-            return p
-    sys.exit("factorio executable not found; pass --factorio PATH or set $FACTORIO")
 
 
 def run(exe: Path, *args: str) -> str:

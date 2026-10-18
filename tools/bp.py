@@ -6,8 +6,13 @@
   add SRC [--to DIR]    decode into library/ (books become folders)
   book DIR [--json]     library folder -> blueprint book string
   gen NAME [k=v ...]    run generators/NAME.py build(), check, print string
+      [--validate]        ...and validate in the game before printing
+  validate SRC...       import, round-trip and build in a headless server
 
-SRC is a blueprint string, a path to a file holding one (or JSON), or - for stdin.
+SRC is a blueprint string, a path to a file holding one (or JSON), or - for
+stdin; `validate` also takes library folders (validated as books).
+validate/gen --validate take --factorio PATH (else $FACTORIO, PATH, common
+install paths, or .factorio-headless/ from `python -m validator.fetch`).
 """
 
 import argparse
@@ -19,6 +24,8 @@ from pathlib import Path
 from tools.check import check
 from tools.codec import decode, dump_json, encode, read_input
 from tools.library import load_book, save
+from validator.server import Server
+from validator.validate import validate
 
 ROOT = Path(__file__).resolve().parent.parent
 LIBRARY = ROOT / "library"
@@ -69,7 +76,37 @@ def cmd_gen(args):
         data = module.build(**params).to_dict()
     if _report(check(data)):
         sys.exit(1)
+    if args.validate and not _validate([("", data)], args.factorio):
+        sys.exit(1)
     sys.stdout.write(dump_json(data) if args.json else encode(data) + "\n")
+
+
+def cmd_validate(args):
+    items = []
+    for i, src in enumerate(args.src):
+        path = Path(src)
+        if path.is_dir():
+            items.append((src, load_book(path)))
+        else:
+            label = src if path.is_file() else f"#{i + 1}"
+            items.append((label if len(args.src) > 1 else "", decode(read_input(src))))
+    if not _validate(items, args.factorio):
+        sys.exit(1)
+
+
+def _validate(items: list[tuple[str, dict]], factorio: str | None) -> bool:
+    """Validate each (label, data) in one server session; print a report; True if all pass."""
+    all_ok = True
+    with Server(factorio) as server:
+        print(f"validating in Factorio {server.version}", file=sys.stderr)
+        for label, data in items:
+            report = validate(server, data)
+            prefix = f"{label}: " if label else ""
+            for line in report.lines():
+                print(prefix + line, file=sys.stderr)
+            print(prefix + ("pass" if report.ok else "FAIL"), file=sys.stderr)
+            all_ok &= report.ok
+    return all_ok
 
 
 def _param(text: str):
@@ -106,7 +143,14 @@ def main(argv=None):
     p.add_argument("name")
     p.add_argument("params", nargs="*", metavar="key=value")
     p.add_argument("--json", action="store_true")
+    p.add_argument("--validate", action="store_true", help="validate in the game before printing")
+    p.add_argument("--factorio", help="Factorio executable for --validate")
     p.set_defaults(fn=cmd_gen)
+
+    p = sub.add_parser("validate")
+    p.add_argument("src", nargs="+")
+    p.add_argument("--factorio", help="Factorio executable (headless server or game)")
+    p.set_defaults(fn=cmd_validate)
 
     args = ap.parse_args(argv)
     args.fn(args)

@@ -7,7 +7,8 @@ real game → fix → only passing strings reach the user.
 
 ```
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m tools.bp gen gated_requester item=iron-plate count=100
+.venv/bin/python -m validator.fetch 2.1.22      # headless server for validation (Linux)
+.venv/bin/python -m tools.bp gen gated_requester item=iron-plate count=100 --validate
 .venv/bin/python -m unittest discover tests
 ```
 
@@ -17,7 +18,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `tools/` | codec, checks, library/book builder, CLI (`python -m tools.bp`), data dump |
 | `generators/` | parametric designs, `build(**params)` |
 | `library/` | decoded JSON, one file per blueprint; folders are books |
-| `validator/` | headless server + RCON harness (step 2) |
+| `validator/` | in-game validation: headless server, RCON, Lua harness, diff (`bp validate`) |
 | `site/` | static browser (step 3) |
 | `data/` | `data-raw-dump.json` from `python -m tools.dump_data` (gitignored) |
 | `NOTES.md` | format facts and how each was verified |

@@ -1,18 +1,48 @@
-# validator (step 2)
+# validator
 
-Not built yet. Learned while verifying `NOTES.md` by hand:
+Checks blueprints, books and planners in a real headless Factorio server.
 
-- Headless servers: `factorio --create map.zip`, then
-  `--start-server map.zip --rcon-port P --rcon-password X`. Two servers need
-  distinct `--port` values (UDP 34197 is the default for both).
-- The first Lua command over RCON only prints the "achievements" warning and
-  must be sent again. `/sc` needs a space or newline before the code.
-- `game.create_inventory(1)[1].import_stack(s)` returns 0 even when fields
-  are dropped, so diff `export_stack()` against the input.
-- `build_blueprint{..., build_mode=defines.build_mode.forced}` returns
-  ghosts; `ghost.revive()` gives real entities whose
-  `get_wire_connectors(false)` and control behaviour can be read back.
-- Target **2.1** (the user's game): `factorio.com/get-download/latest/headless/linux64`.
-  2.0 is `stable`. They disagree on some fields, so pin the user's build.
-- Highest-value first job: round-trip every generator's output and diff the
-  re-export. Draftsman may write keys 2.1 drops (NOTES.md).
+```
+python -m validator.fetch 2.1.22              # once: Linux headless server -> .factorio-headless/
+python -m tools.bp validate SRC...            # strings, files or library folders
+python -m tools.bp gen NAME k=v --validate    # generate, check, validate, then print
+python -m unittest tests.test_validator       # ~30 s; skipped without a Factorio binary
+```
+
+On macOS or Windows, point it at the game itself: `--factorio PATH` or
+`$FACTORIO`. Match the version you play, because 2.0 and 2.1 disagree on
+some fields.
+
+## What it does
+
+`validator/server.py` starts a throwaway server:
+- It uses a temp write-data dir via `--config`, so your saves, mods and lock file are never touched.
+- It uses free ports and loads the `scenario/` harness.
+- It talks to the harness over RCON (`validator/rcon.py`).
+
+`scenario/control.lua` then, per string:
+
+1. `import_stack`. A result of 1 means rejected; -1 means imported with errors (e.g. unknown entity names, which are dropped).
+2. `export_stack`. The **parse diff** compares the input with this re-export. A key the game dropped or changed is one it didn't understand: a typo, a key from another version, or a value it rejects. `import_stack` still returns 0 in those cases, so this diff is the real check.
+3. For every blueprint, including those inside books:
+   - `build_blueprint` on concrete, centred at the origin.
+   - Revive the ghosts.
+   - Blueprint what was built. The **build diff** compares that with the re-export: entities that weren't built, wires that didn't form, settings that didn't stick.
+
+Reporting rules (`validate.py`):
+- **Dropped defaults:** a dropped key holding a default the game is known to omit (`DEFAULTS`) is silent. One that only looks default-ish is a warning.
+- **Added keys:** keys the game adds are ignored.
+- **Migrations:** keys the game renames on import (`MIGRATIONS`) are mapped first. Each entry must be verified in game.
+- **Placement:** entities the concrete test surface can't hold at all are warnings, and their build isn't checked. That covers surface conditions, water and rails; `thruster` is an example. Collisions within the blueprint are errors.
+
+## Not covered yet
+
+- Circuit behaviour. Nothing ticks the circuit network, so logic like `Each(G) > Each(R)` is unverified.
+- Item requests (modules, fuel): ignored in the build diff because nothing delivers them.
+- Mods: the server loads only base and the DLC.
+
+## Server facts this relies on
+
+- RCON requests and responses each travel as a single packet, tested to 3 MB both ways. No chunking is needed.
+- With a scenario loaded, the first `/sc` runs directly. The "achievements disabled, repeat the command" prompt only appears on plain saves.
+- factorio.com answers Python's default User-Agent with 403, so `fetch.py` sends its own.

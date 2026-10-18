@@ -110,21 +110,23 @@ class Check(unittest.TestCase):
         self.assertTrue(any("spans" in p for p in check(data)))
 
 
-class Library(unittest.TestCase):
-    def make_book(self) -> dict:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            inner = BlueprintBook(label="Inner")
-            inner.blueprints.append(build(item="copper-plate"))
-            outer = BlueprintBook(label="Outer")
-            outer.blueprints.append(build())
-            outer.blueprints.append(inner)
-            outer.blueprints.append(DeconstructionPlanner(label="Trees"))
-            outer.blueprints.append(UpgradePlanner(label="Belts"))
-            return outer.to_dict()
+def make_book() -> dict:
+    """A nested book with both planner kinds, built through Draftsman."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        inner = BlueprintBook(label="Inner")
+        inner.blueprints.append(build(item="copper-plate"))
+        outer = BlueprintBook(label="Outer")
+        outer.blueprints.append(build())
+        outer.blueprints.append(inner)
+        outer.blueprints.append(DeconstructionPlanner(label="Trees"))
+        outer.blueprints.append(UpgradePlanner(label="Belts"))
+        return outer.to_dict()
 
+
+class Library(unittest.TestCase):
     def test_book_round_trip(self):
-        book = self.make_book()
+        book = make_book()
         with tempfile.TemporaryDirectory() as tmp:
             folder = save(copy.deepcopy(book), Path(tmp))
             self.assertEqual(

@@ -1,6 +1,6 @@
 """Static checks: Draftsman's object model plus wire lint Draftsman lacks.
 
-This is not the real-game validator (validator/, step 2). It catches typos,
+This is not the real-game validator (validator/, `bp validate`). It catches typos,
 unknown names, overlaps and malformed wires before a string reaches the game.
 
 Draftsman 4.0.1 on import, verified by probing:
