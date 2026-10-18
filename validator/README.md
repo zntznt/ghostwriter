@@ -12,5 +12,7 @@ Not built yet. Learned while verifying `NOTES.md` by hand:
 - `build_blueprint{..., build_mode=defines.build_mode.forced}` returns
   ghosts; `ghost.revive()` gives real entities whose
   `get_wire_connectors(false)` and control behaviour can be read back.
-- Both 2.0 (stable) and 2.1 (experimental) headless builds are downloadable,
-  and they disagree on some fields, so test against the version the user plays.
+- Target **2.1** (the user's game): `factorio.com/get-download/latest/headless/linux64`.
+  2.0 is `stable`. They disagree on some fields, so pin the user's build.
+- Highest-value first job: round-trip every generator's output and diff the
+  re-export. Draftsman may write keys 2.1 drops (NOTES.md).

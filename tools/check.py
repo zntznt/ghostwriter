@@ -4,17 +4,26 @@ This is not the real-game validator (validator/, step 2). It catches typos,
 unknown names, overlaps and malformed wires before a string reaches the game.
 
 Draftsman 4.0.1 on import, verified by probing:
-  catches   unknown entity/signal names, misspelled keys, overlaps, bad enums
+  catches   unknown entity/signal names, overlaps, bad enums
   misses    wires to missing entities (crashes), connector IDs on the wrong
             entity kind, out-of-range connector IDs, wire reach
+  unreliable on 2.1: it rejects many keys real 2.1.22 exports contain and
+            crashes on some entities (NOTES.md), so unknown keys and its own
+            crashes are warnings here. The game validator is the authority.
 """
 
 import copy
+import json
+import re
 import warnings
+from functools import cache
+from pathlib import Path
 
 from draftsman.blueprintable import get_blueprintable_from_JSON
 from draftsman.constants import WireConnectorID
 from draftsman.data import entities as entity_data
+from draftsman.data import signals as signal_data
+from draftsman.error import DataFormatError
 from draftsman.utils import distance
 
 from tools.codec import root_key
@@ -22,17 +31,7 @@ from tools.codec import root_key
 _COMBINATOR_OUTPUTS = {WireConnectorID.COMBINATOR_OUTPUT_RED, WireConnectorID.COMBINATOR_OUTPUT_GREEN}
 _COPPER = {WireConnectorID.POLE_COPPER, WireConnectorID.POWER_SWITCH_RIGHT_COPPER}
 _CIRCUIT = {WireConnectorID.CIRCUIT_RED, WireConnectorID.CIRCUIT_GREEN} | _COMBINATOR_OUTPUTS
-_LOGISTIC_CONTAINERS = set(
-    entity_data.logistic_passive_containers
-    + entity_data.logistic_active_containers
-    + entity_data.logistic_storage_containers
-    + entity_data.logistic_buffer_containers
-    + entity_data.logistic_request_containers
-)
-# 2.1 control_behavior keys for logistic containers. Verified in headless
-# servers (NOTES.md): 2.1.22 reads them; 2.0.77 silently drops them and the
-# chest falls back to send_contents. circuit_mode_of_operation works on both.
-_LOGISTIC_21_KEYS = ("read_contents", "set_requests", "read_empty_slots", "empty_slots_signal")
+_DUMP = Path(__file__).resolve().parent.parent / "data" / "data-raw-dump.json"
 
 
 def check(data: dict, prefix: str = "") -> list[str]:
@@ -56,19 +55,7 @@ def _check_blueprint(data: dict, prefix: str) -> list[str]:
     if len(entities) != len(bp.get("entities", [])):
         problems.append("error: duplicate entity_number")
 
-    # Draftsman doesn't model the 2.1 keys; report them once, our way.
     stripped = copy.deepcopy(data)
-    for e in stripped["blueprint"].get("entities", []):
-        if e["name"] not in _LOGISTIC_CONTAINERS:
-            continue
-        cb = e.get("control_behavior", {})
-        found = [k for k in _LOGISTIC_21_KEYS if cb.pop(k, None) is not None]
-        if found:
-            problems.append(
-                f"warning: entity {e['entity_number']} ({e['name']}): {', '.join(found)} "
-                "are 2.1-only; 2.0 drops them silently. Use circuit_mode_of_operation."
-            )
-
     bad_wires = _wire_endpoint_problems(bp, entities)
     numbers = [e["entity_number"] for e in bp.get("entities", [])]
     if numbers != list(range(1, len(numbers) + 1)):
@@ -129,16 +116,39 @@ def _load(data: dict):
         try:
             model = get_blueprintable_from_JSON(data)
             errors = model.validate().error_list
+        except DataFormatError as e:
+            return [f"error: draftsman: {' '.join(str(e).split())}"], None
         except Exception as e:
-            return [f"error: draftsman: {type(e).__name__}: {e}"], None
+            # A Draftsman bug, not a blueprint problem (seen on 2.1 vehicles).
+            return [f"warning: draftsman crashed, model checks skipped: {type(e).__name__}: {e}"], None
     out = [f"error: draftsman: {e}" for e in errors]
     for w in caught:
         if issubclass(w.category, ResourceWarning):
             continue
-        # Unknown entity/signal/item/key names are almost always typos here.
-        # Draftsman only warns because mods may add names; a modded export
-        # can still be filed with `bp add --force`.
-        level = "error" if w.category.__name__.startswith("Unknown") else "warning"
-        out.append(f"{level}: {w.category.__name__}: {' '.join(str(w.message).split())}")
+        message = " ".join(str(w.message).split())
+        kind = w.category.__name__
+        if kind == "UnknownKeywordWarning":
+            out.append(f"warning: Draftsman 4.0.1 doesn't model: {message.split('keys: ', 1)[-1]}")
+        elif kind.startswith("Unknown"):
+            # A name neither Draftsman nor the game knows is almost always a
+            # typo. One the game knows is a Draftsman gap (e.g. 'thruster').
+            name = re.search(r"'([^']+)'", message)
+            level = "warning" if name and _game_knows(name[1]) else "error"
+            out.append(f"{level}: {kind}: {message}")
+        else:
+            out.append(f"warning: {kind}: {message}")
     return out, model
+
+
+def _game_knows(name: str) -> bool:
+    return name in _known_names()
+
+
+@cache
+def _known_names() -> frozenset:
+    """Prototype names from data/ (the user's game) if dumped, else Draftsman's data."""
+    if _DUMP.exists():
+        dump = json.loads(_DUMP.read_text())
+        return frozenset(name for group in dump.values() if isinstance(group, dict) for name in group)
+    return frozenset(entity_data.raw) | frozenset(signal_data.raw)
 

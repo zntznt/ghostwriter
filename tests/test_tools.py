@@ -14,9 +14,11 @@ from tools.codec import CodecError, decode, encode
 from tools.library import load_book, save
 
 FIXTURES = Path(__file__).parent / "fixtures"
-# The hand-built string from the planning handoff, kept as a fixture: it is
-# NOT in library/ because its requester chest uses 2.1-only keys (see NOTES.md).
+# The hand-built string from the planning handoff. Not in library/ until it
+# is confirmed in game. Its requester chest uses 2.1 keys (see NOTES.md).
 HANDOFF = (FIXTURES / "gated_requester_handoff.txt").read_text()
+# Real exports from a 2.1.22 headless server, settings flipped from defaults.
+GAME_21 = sorted((FIXTURES / "game-2.1.22").glob("*.txt"))
 
 
 def generated() -> dict:
@@ -51,7 +53,7 @@ class GatedRequester(unittest.TestCase):
         self.assertEqual(generated()["blueprint"]["wires"], [[3, 1, 2, 1], [2, 3, 1, 1]])
         self.assertEqual(decode(HANDOFF)["blueprint"]["wires"], [[3, 1, 2, 1], [2, 3, 1, 1]])
 
-    def test_requester_uses_mode_field_that_works_on_2_0_and_2_1(self):
+    def test_requester_uses_mode_field_2_1_migrates(self):
         chest = generated()["blueprint"]["entities"][0]
         self.assertEqual(chest["control_behavior"], {"circuit_mode_of_operation": 1})
 
@@ -60,10 +62,14 @@ class GatedRequester(unittest.TestCase):
 
 
 class Check(unittest.TestCase):
-    def test_flags_2_1_only_logistic_keys(self):
-        problems = check(decode(HANDOFF))
-        self.assertEqual(len(problems), 1)
-        self.assertIn("2.1-only", problems[0])
+    def test_real_2_1_exports_have_no_errors(self):
+        self.assertTrue(GAME_21)
+        for path in GAME_21:
+            with self.subTest(path.stem):
+                self.assertEqual(errors(decode(path.read_text())), [])
+
+    def test_handoff_example_has_no_errors(self):
+        self.assertEqual(errors(decode(HANDOFF)), [])
 
     def test_dangling_wire(self):
         data = generated()
@@ -85,11 +91,18 @@ class Check(unittest.TestCase):
         data["blueprint"]["entities"][2]["name"] = "constant-combinatorr"
         self.assertTrue(any("UnknownEntityWarning" in p for p in errors(data)))
 
-    def test_misspelled_key_is_error(self):
+    def test_misspelled_key_is_only_a_warning(self):
+        # Draftsman can't tell a typo from a 2.1 key it doesn't model.
         data = generated()
         cond = data["blueprint"]["entities"][1]["control_behavior"]["decider_conditions"]["conditions"][0]
         cond["first_signal_network"] = cond.pop("first_signal_networks")
-        self.assertTrue(any("first_signal_network" in p for p in errors(data)))
+        self.assertEqual(errors(data), [])
+        self.assertTrue(any("first_signal_network" in p for p in check(data)))
+
+    def test_unknown_signal_is_error(self):
+        data = generated()
+        data["blueprint"]["entities"][2]["control_behavior"]["sections"]["sections"][0]["filters"][0]["name"] = "iron-plates"
+        self.assertTrue(any("iron-plates" in p for p in errors(data)))
 
     def test_wire_reach(self):
         data = generated()

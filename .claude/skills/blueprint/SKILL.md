@@ -12,8 +12,9 @@ a generator in `generators/` (Draftsman), or the codec in `tools/` applied to
 a string the game produced. Hand-written JSON drifts: field names change
 between game versions, and wire connector IDs are easy to get wrong.
 
-Read `NOTES.md` before relying on any format detail. It records what has been
-verified in the game and what hasn't.
+Target game: **Factorio 2.1** (the user's version). Read `NOTES.md` before
+relying on any format detail. It records what has been verified in game and
+where Draftsman 4.0.1 lags behind 2.1.
 
 ## Commands (repo root, venv active: `pip install -r requirements.txt`)
 
@@ -39,10 +40,12 @@ SRC is a string, a file path, or `-` (stdin).
    `build(**params) -> Blueprintable` (Draftsman). Docstring: what it does and
    how to hook it up in game.
 3. Draftsman gotchas: `entities.append()` copies, so wire by `id=`; use
-   `LogisticModeOfOperation` for chest circuit mode (works on 2.0 and 2.1);
-   check `NOTES.md` for anything else version-sensitive.
+   `LogisticModeOfOperation` for chest circuit mode (2.1 migrates it).
+   Draftsman doesn't model many 2.1 settings (`NOTES.md`). Don't fake them
+   with raw keys; say what the user must set by hand in game instead.
 4. `gen` runs `check` and refuses to print a string with errors. Unknown
-   entity/signal/item names are errors, since they are almost always typos.
+   names are errors (typos). Unknown keys are only warnings, because
+   Draftsman lags 2.1; only the game validator can confirm keys.
 5. Add a test in `tests/` for anything verified, especially wires.
 6. Hand the string to the user with what it needs in game (wires to connect,
    items to set). Until the validator exists (step 2), say plainly that the
@@ -56,7 +59,8 @@ SRC is a string, a file path, or `-` (stdin).
   demand with `book` / `encode`.
 - Only file blueprints the user has confirmed work in game, or that passed
   the validator once it exists. `add` refuses strings with check errors
-  (`--force` for modded exports with names Draftsman doesn't know).
+  (`--force` for modded exports with names neither Draftsman nor `data/`
+  knows). Expect "doesn't model" warnings on 2.1 exports; they are harmless.
 - `data/` is gitignored. `python -m tools.dump_data` regenerates it.
 
 ## Explaining a string
