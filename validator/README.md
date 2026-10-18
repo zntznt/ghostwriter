@@ -5,7 +5,7 @@ Checks blueprints, books and planners in a real headless Factorio server.
 ```
 python -m validator.fetch 2.1.22              # once: Linux headless server -> .factorio-headless/
 python -m tools.bp validate SRC...            # strings, files or library folders
-python -m tools.bp gen NAME k=v --validate    # generate, check, validate, then print
+python -m tools.bp gen NAME k=v --validate    # generate, check, validate, run circuit tests, print
 python -m unittest tests.test_validator       # ~30 s; skipped without a Factorio binary
 ```
 
@@ -35,9 +35,22 @@ Reporting rules (`validate.py`):
 - **Migrations:** keys the game renames on import (`MIGRATIONS`) are mapped first. Each entry must be verified in game.
 - **Placement:** entities the concrete test surface can't hold at all are warnings, and their build isn't checked. That covers surface conditions, water and rails; `thruster` is an example. Collisions within the blueprint are errors.
 
+## Circuit tests
+
+A generator with circuit logic declares `circuit_tests(**params)` next to `build()`. It returns `validator.circuit.Case`s; see `generators/gated_requester.py`. Each case:
+
+- `Inject(entity, connector, signals)` sets a constant combinator wired by script to that connector. There is no reach limit, so it fits anywhere. Injectors a case doesn't mention go quiet.
+- The game runs `ticks` ticks (default 10).
+- `Expect(entity, connector, signals=...)` checks the exact non-zero signals on that network.
+- `Expect(entity, requests=...)` checks the exact logistic requests of a requester or buffer chest. These are the chest's compiled requests, so they include what the circuit sets.
+
+`gen --validate` runs them once structural validation passes. Everything is powered by a global electric network on the test surface, so the tests cover logic, not power or layout. Inputs are synthetic: a roboport's network contents is just a signal set you inject.
+
+The server runs with `auto_pause: false`. A server with no players otherwise sits paused, which is invisible until you need ticks.
+
 ## Not covered yet
 
-- Circuit behaviour. Nothing ticks the circuit network, so logic like `Each(G) > Each(R)` is unverified.
+- Circuit tests for strings that don't come from a generator (`bp validate` only checks structure).
 - Item requests (modules, fuel): ignored in the build diff because nothing delivers them.
 - Mods: the server loads only base and the DLC.
 

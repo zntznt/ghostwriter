@@ -4,10 +4,15 @@ skipped without one. One server for the whole class, ~30 s."""
 import unittest
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
+from generators import gated_requester
 from tools.codec import decode
 from tools.factorio import locate
+from validator.circuit import Case, Expect, Inject, run_circuit_tests
 from validator.server import Server
-from validator.validate import validate
+from validator.validate import Report, validate
+
+# Entity numbers of the gated requester, in the generator and the handoff string alike.
+GATED_IDS = {"chest": 1, "decider": 2, "requests": 3}
 
 
 @unittest.skipUnless(locate(), "no Factorio executable (run `python -m validator.fetch`)")
@@ -92,6 +97,33 @@ class Validator(unittest.TestCase):
         data = generated()
         data["blueprint"]["entities"][2]["name"] = "constant-combinatorr"
         self.assertFailsWith(data, "import_stack returned -1")
+
+    # Circuit behaviour.
+
+    def run_circuit(self, data, cases):
+        report = Report(self.server.version)
+        run_circuit_tests(self.server, data, cases, GATED_IDS, report)
+        return report
+
+    def test_gated_requester_logic(self):
+        report = self.run_circuit(generated(), gated_requester.circuit_tests())
+        self.assertTrue(report.ok, report.lines())
+
+    def test_handoff_example_logic(self):
+        report = self.run_circuit(decode(HANDOFF), gated_requester.circuit_tests())
+        self.assertTrue(report.ok, report.lines())
+
+    def test_wrong_expectation_fails(self):
+        case = Case("wrong", [Inject("decider", "combinator_input_green", {"iron-plate": 150})],
+                    [Expect("chest", requests={"iron-plate": 99})])
+        report = self.run_circuit(generated(), [case])
+        self.assertTrue(any("expected {'iron-plate': 99}" in e for e in report.errors), report.lines())
+
+    def test_broken_logic_passes_validation_but_fails_circuit(self):
+        data = generated()
+        data["blueprint"]["entities"][1]["control_behavior"]["decider_conditions"]["conditions"][0]["comparator"] = "<"
+        self.assertPasses(data)
+        self.assertFalse(self.run_circuit(data, gated_requester.circuit_tests()).ok)
 
 
 if __name__ == "__main__":

@@ -38,12 +38,19 @@ class Server:
         (self.dir / "config.ini").write_text(
             f"[path]\nread-data=__PATH__executable__/../../data\nwrite-data={self.dir}\n"
         )
+        # With no players connected a server pauses by default; circuit tests
+        # need it to tick. The server wants every key, so start from the
+        # example it ships with. Keep it off the LAN/public lists.
+        settings = json.loads((self.exe.parents[2] / "data" / "server-settings.example.json").read_text())
+        settings.update(auto_pause=False, visibility={"public": False, "lan": False})
+        (self.dir / "server-settings.json").write_text(json.dumps(settings))
         rcon_port = _free_port(socket.SOCK_STREAM)
         self.log_path = self.dir / "server.log"
         self.proc = subprocess.Popen(
             [
                 str(self.exe), "--config", str(self.dir / "config.ini"),
                 "--start-server-load-scenario", "ghostwriter",
+                "--server-settings", str(self.dir / "server-settings.json"),
                 "--port", str(_free_port(socket.SOCK_DGRAM)),
                 "--rcon-port", str(rcon_port), "--rcon-password", PASSWORD,
             ],

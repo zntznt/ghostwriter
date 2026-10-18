@@ -6,7 +6,8 @@
   add SRC [--to DIR]    decode into library/ (books become folders)
   book DIR [--json]     library folder -> blueprint book string
   gen NAME [k=v ...]    run generators/NAME.py build(), check, print string
-      [--validate]        ...and validate in the game before printing
+      [--validate]        ...and validate in the game (plus the generator's
+                          circuit_tests(), if any) before printing
   validate SRC...       import, round-trip and build in a headless server
 
 SRC is a blueprint string, a path to a file holding one (or JSON), or - for
@@ -24,6 +25,7 @@ from pathlib import Path
 from tools.check import check
 from tools.codec import decode, dump_json, encode, read_input
 from tools.library import load_book, save
+from validator.circuit import run_circuit_tests
 from validator.server import Server
 from validator.validate import validate
 
@@ -73,10 +75,15 @@ def cmd_gen(args):
     with warnings.catch_warnings():
         # check() below re-detects these from the output and reports them once.
         warnings.simplefilter("ignore")
-        data = module.build(**params).to_dict()
+        blueprint = module.build(**params)
+        data = blueprint.to_dict()
     if _report(check(data)):
         sys.exit(1)
-    if args.validate and not _validate([("", data)], args.factorio):
+    circuit = None
+    if hasattr(module, "circuit_tests") and "blueprint" in data:
+        ids = {e.id: n for n, e in enumerate(blueprint.entities, start=1) if e.id}
+        circuit = (module.circuit_tests(**params), ids)
+    if args.validate and not _validate([("", data, circuit)], args.factorio):
         sys.exit(1)
     sys.stdout.write(dump_json(data) if args.json else encode(data) + "\n")
 
@@ -86,21 +93,27 @@ def cmd_validate(args):
     for i, src in enumerate(args.src):
         path = Path(src)
         if path.is_dir():
-            items.append((src, load_book(path)))
+            items.append((src, load_book(path), None))
         else:
             label = src if path.is_file() else f"#{i + 1}"
-            items.append((label if len(args.src) > 1 else "", decode(read_input(src))))
+            items.append((label if len(args.src) > 1 else "", decode(read_input(src)), None))
     if not _validate(items, args.factorio):
         sys.exit(1)
 
 
-def _validate(items: list[tuple[str, dict]], factorio: str | None) -> bool:
-    """Validate each (label, data) in one server session; print a report; True if all pass."""
+def _validate(items: list[tuple], factorio: str | None) -> bool:
+    """Validate each (label, data, circuit) in one server session, where circuit
+    is None or (cases, ids) for run_circuit_tests; print a report; True if all pass."""
     all_ok = True
     with Server(factorio) as server:
         print(f"validating in Factorio {server.version}", file=sys.stderr)
-        for label, data in items:
+        for label, data, circuit in items:
             report = validate(server, data)
+            if circuit and report.ok:
+                cases, ids = circuit
+                run_circuit_tests(server, data, cases, ids, report)
+                if report.ok:
+                    print(f"{label + ': ' if label else ''}circuit: {len(cases)} cases pass", file=sys.stderr)
             prefix = f"{label}: " if label else ""
             for line in report.lines():
                 print(prefix + line, file=sys.stderr)

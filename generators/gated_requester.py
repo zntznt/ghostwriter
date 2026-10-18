@@ -46,3 +46,25 @@ def build(item: str = "iron-plate", count: int = 100) -> Blueprint:
     bp.add_circuit_connection("red", "requests", "decider", side_1="input", side_2="input")
     bp.add_circuit_connection("red", "decider", "chest", side_1="output", side_2="input")
     return bp
+
+
+def circuit_tests(item: str = "iron-plate", count: int = 100):
+    # Green on the decider input stands in for the roboport's network contents.
+    from validator.circuit import Case, Expect, Inject
+
+    other = "copper-plate" if item != "copper-plate" else "iron-plate"
+
+    def stock(n, extra=None):
+        signals = {item: n} if n else {}
+        return [Inject("decider", "combinator_input_green", {**signals, **(extra or {})})]
+
+    return [
+        Case("network short: no request", stock(count // 2), [Expect("chest", requests={})]),
+        Case("network has surplus: request", stock(count + 50),
+             [Expect("chest", requests={item: count}),
+              Expect("decider", "combinator_output_red", signals={item: count})]),
+        Case("network exactly at request: no request (strict >)", stock(count), [Expect("chest", requests={})]),
+        Case("unrelated items in network: no request", stock(0, {other: 10_000}),
+             [Expect("chest", requests={})]),
+        Case("surplus gone again: request drops", stock(count - 1), [Expect("chest", requests={})]),
+    ]

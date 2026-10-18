@@ -40,7 +40,12 @@ SRC is a string, a file path, or `-` (stdin).
    fails, so prefer small, parametric, tested generator functions.
 2. A new generator is `generators/<name>.py` exposing
    `build(**params) -> Blueprintable` (Draftsman). Docstring: what it does and
-   how to hook it up in game.
+   how to hook it up in game. If it has circuit logic, it also exposes
+   `circuit_tests(**params) -> list[Case]` (`validator/circuit.py`): cases
+   that inject signals and assert outputs or chest requests. Cover the
+   boundaries: below, at and above every threshold, plus unrelated signals.
+   Make the cases follow the parameters (an "unrelated" item must differ
+   from `item`).
 3. Draftsman gotchas: `entities.append()` copies, so wire by `id=`; use
    `LogisticModeOfOperation` for chest circuit mode (2.1 migrates it).
    Draftsman doesn't model many 2.1 settings (`NOTES.md`). Don't fake them
@@ -53,9 +58,10 @@ SRC is a string, a file path, or `-` (stdin).
    so and label the string "static checks only".
 5. Add a test in `tests/` for anything verified, especially wires.
 6. Hand the string to the user with what it needs in game (wires to connect,
-   items to set). Say what validation covered: import, settings and wires,
-   and building on a test surface. It does **not** cover circuit behaviour,
-   so unverified logic is the user's to test.
+   items to set). Say what validation covered: import, settings, wires,
+   building on a test surface, and the circuit cases by name. Inputs in
+   circuit tests are synthetic (injected signals, script power), so name
+   what the user still has to check in a real factory.
 7. If validation fails: read the error, fix the generator, re-run. A key
    the game drops is either a typo or something Draftsman writes in an older
    form. For the latter, verify the game's form in a round trip, then add a
@@ -68,7 +74,7 @@ SRC is a string, a file path, or `-` (stdin).
   children keep their `index`). Strings are never stored. Build them on
   demand with `book` / `encode`.
 - Only file blueprints the user has confirmed work in game, or that passed
-  the validator (and whose circuit logic, if any, the user confirmed).
+  the validator including circuit tests for any logic.
   `add` refuses strings with check errors
   (`--force` for modded exports with names neither Draftsman nor `data/`
   knows). Expect "doesn't model" warnings on 2.1 exports; they are harmless.

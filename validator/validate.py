@@ -31,6 +31,7 @@ DEFAULTS = {
     "type": "item",  # SignalID.type
     "quality": "normal",
     "copy_count_from_input": True,
+    "comparator": "<",  # decider conditions
 }
 
 

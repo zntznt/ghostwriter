@@ -20,6 +20,10 @@ build with `build_blueprint` + `revive`, then read the live entities.
 | On import the game silently drops: wires beyond reach, wires to a connector the entity lacks (e.g. connector 3 on a chest), keys it doesn't know, and invalid enum values (`circuit_mode_of_operation: 7`). `import_stack` returns 0 for all of these. Unknown entity names make it return -1, and the entity is dropped. | `tests/test_validator.py`, 2.1.22. |
 | 2.1 migrates all three `circuit_mode_of_operation` values on logistic chests: 0 → defaults, 1 → `set_requests: true, read_contents: false`, 2 → `read_contents: false` | Validator round trips, 2.1.22. |
 | Defaults the 2.1 export omits: `direction: 0`, signal `type: "item"`, `quality: "normal"`, `copy_count_from_input: true`, network flags set to `true` | Validator round trips of the hand-built example and of Draftsman output. |
+| Gated requester logic (`Each` on green `>` `Each` on red, output `Each` from red) works as designed in 2.1.22. It requests the red amount only while green is strictly greater. A signal on only one network produces nothing: green-only gives a count of 0 from red, and red-only fails `0 > n`. | Circuit tests (`tests/test_validator.py`), on both the generator's string and the hand-built handoff string. |
+| A requester chest's `get_logistic_point(logistic_container).filters` includes circuit-set requests | Circuit tests, 2.1.22. |
+| A headless server with no players doesn't tick unless `auto_pause` is false. `--server-settings` needs a complete file (a partial one fails with `Key "name" not found`). | `validator/server.py`, 2.1.22. |
+| The decider default `comparator: "<"` is omitted on export | Validator round trip, 2.1.22. |
 | `--dump-data` writes to `<write-data>/script-output/data-raw-dump.json`, and the game logs `Write data path: ...` at startup | `tools/dump_data.py` run against the 2.0.77 and 2.1.22 headless binaries. In a portable install, write-data is the install dir, not `~/.factorio`. |
 
 ## Draftsman 4.0.1 vs real 2.1.22 exports
@@ -47,4 +51,3 @@ Consequences for this repo:
 ## Open
 
 - Your exact 2.1.x build. `python -m tools.dump_data` on your machine records it in `data/factorio-version.txt`.
-- Decider `Each(G) > Each(R)` semantics with a signal present on only one network: not exercised in game. The validator builds but doesn't tick circuits.
