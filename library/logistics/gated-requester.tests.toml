@@ -1,0 +1,36 @@
+# Circuit tests for gated-requester.json, run in the game by CI before every
+# publish (validator/circuit.py). Green on the decider input stands in for the
+# roboport's logistic network contents.
+
+[ids]
+chest = 1
+decider = 2
+requests = 3
+
+[[case]]
+name = "network short: no request"
+inject = [{ entity = "decider", connector = "combinator_input_green", signals = { iron-plate = 50 } }]
+expect = [{ entity = "chest", requests = {} }]
+
+[[case]]
+name = "network has surplus: request"
+inject = [{ entity = "decider", connector = "combinator_input_green", signals = { iron-plate = 150 } }]
+expect = [
+  { entity = "chest", requests = { iron-plate = 100 } },
+  { entity = "decider", connector = "combinator_output_red", signals = { iron-plate = 100 } },
+]
+
+[[case]]
+name = "network exactly at request: no request (strict >)"
+inject = [{ entity = "decider", connector = "combinator_input_green", signals = { iron-plate = 100 } }]
+expect = [{ entity = "chest", requests = {} }]
+
+[[case]]
+name = "unrelated items in network: no request"
+inject = [{ entity = "decider", connector = "combinator_input_green", signals = { copper-plate = 10000 } }]
+expect = [{ entity = "chest", requests = {} }]
+
+[[case]]
+name = "surplus gone again: request drops"
+inject = [{ entity = "decider", connector = "combinator_input_green", signals = { iron-plate = 99 } }]
+expect = [{ entity = "chest", requests = {} }]

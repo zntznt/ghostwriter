@@ -47,6 +47,12 @@ class Site(unittest.TestCase):
         car = next(n for n in self.nodes(data) if n["path"].startswith("exports/"))
         self.assertEqual([s["name"] for s in car["preview"]["shapes"]], ["car"])
 
+    def test_tested_entries_list_their_cases(self):
+        data = site.build(Path(__file__).parent.parent / "library")
+        leaf = next(n for n in self.nodes(data) if n["path"] == "logistics/gated-requester.json")
+        self.assertEqual(len(leaf["tests"]), 5)
+        self.assertIn("network has surplus: request", leaf["tests"])
+
     def test_page_embeds_data_safely(self):
         data = generated()
         data["blueprint"]["description"] = "</script><script>alert(1)</script>"
