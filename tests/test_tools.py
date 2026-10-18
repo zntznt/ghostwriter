@@ -124,7 +124,18 @@ def make_book() -> dict:
         return outer.to_dict()
 
 
+LIBRARY = Path(__file__).parent.parent / "library"
+
+
 class Library(unittest.TestCase):
+    def test_library_files_check_clean(self):
+        for path in sorted(LIBRARY.rglob("*.json")):
+            if path.name != "_book.json":
+                with self.subTest(str(path.relative_to(LIBRARY))):
+                    data = decode(path.read_text())
+                    data.pop("index", None)
+                    self.assertEqual(errors(data), [])
+
     def test_book_round_trip(self):
         book = make_book()
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,6 +160,7 @@ class Library(unittest.TestCase):
             save(generated(), folder)
             save(generated(), folder)
             book = load_book(folder)["blueprint_book"]
+            self.assertEqual(book["item"], "blueprint-book")  # the game's item name
             self.assertEqual(book["label"], "my-book")
             self.assertEqual([c["index"] for c in book["blueprints"]], [0, 1])
 

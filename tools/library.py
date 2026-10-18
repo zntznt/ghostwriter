@@ -25,7 +25,7 @@ def load_book(folder: Path) -> dict:
     if meta_path.exists():
         book = json.loads(meta_path.read_text())["blueprint_book"]
     else:
-        book = {"item": "blueprint_book", "label": folder.name}
+        book = {"item": "blueprint-book", "label": folder.name}
 
     children = []
     for path in sorted(folder.iterdir()):

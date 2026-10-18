@@ -2,11 +2,13 @@
 skipped without one. One server for the whole class, ~30 s."""
 
 import unittest
+from pathlib import Path
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
 from generators import gated_requester
 from tools.codec import decode
 from tools.factorio import locate
+from tools.library import load_book
 from validator.circuit import Case, Expect, Inject, run_circuit_tests
 from validator.server import Server
 from validator.validate import Report, validate
@@ -53,6 +55,12 @@ class Validator(unittest.TestCase):
         for path in GAME_21:
             with self.subTest(path.stem):
                 self.assertPasses(decode(path.read_text()))
+
+    def test_library_validates(self):
+        library = Path(__file__).parent.parent / "library"
+        for folder in sorted(p for p in library.iterdir() if p.is_dir()):
+            with self.subTest(folder.name):
+                self.assertPasses(load_book(folder))
 
     def test_space_only_entity_is_a_warning(self):
         report = self.assertPasses(decode((GAME_21[0].parent / "thruster.txt").read_text()))

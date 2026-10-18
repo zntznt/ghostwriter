@@ -1,0 +1,112 @@
+{
+  "blueprint": {
+    "item": "blueprint",
+    "version": 562954249699328,
+    "label": "Gated requester",
+    "description": "Requests 100 iron-plate only while the logistic network holds more than 100. Wire a roboport (read logistic network contents) to the decider input with green.",
+    "icons": [
+      {
+        "index": 1,
+        "signal": {
+          "type": "item",
+          "name": "requester-chest"
+        }
+      }
+    ],
+    "entities": [
+      {
+        "entity_number": 1,
+        "name": "requester-chest",
+        "position": {
+          "x": 0.5,
+          "y": -0.5
+        },
+        "control_behavior": {
+          "circuit_mode_of_operation": 1
+        }
+      },
+      {
+        "entity_number": 2,
+        "name": "decider-combinator",
+        "position": {
+          "x": 0.5,
+          "y": 1.0
+        },
+        "control_behavior": {
+          "decider_conditions": {
+            "conditions": [
+              {
+                "first_signal": {
+                  "type": "virtual",
+                  "name": "signal-each"
+                },
+                "first_signal_networks": {
+                  "red": false
+                },
+                "comparator": ">",
+                "second_signal": {
+                  "type": "virtual",
+                  "name": "signal-each"
+                },
+                "second_signal_networks": {
+                  "green": false
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "signal": {
+                  "type": "virtual",
+                  "name": "signal-each"
+                },
+                "networks": {
+                  "green": false
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "entity_number": 3,
+        "name": "constant-combinator",
+        "position": {
+          "x": 0.5,
+          "y": 2.5
+        },
+        "control_behavior": {
+          "sections": {
+            "sections": [
+              {
+                "index": 1,
+                "filters": [
+                  {
+                    "comparator": "=",
+                    "index": 1,
+                    "name": "iron-plate",
+                    "count": 100,
+                    "quality": "normal"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "wires": [
+      [
+        3,
+        1,
+        2,
+        1
+      ],
+      [
+        2,
+        3,
+        1,
+        1
+      ]
+    ]
+  }
+}

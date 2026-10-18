@@ -26,6 +26,7 @@ python -m tools.bp decode SRC                         # string -> pretty JSON
 python -m tools.bp encode SRC                         # JSON -> string
 python -m tools.bp add SRC [--to library/BOOK]        # file into library/
 python -m tools.bp book library/BOOK [--json]         # folder -> book string
+python -m tools.site                                  # rebuild the library browser (site/dist/index.html)
 python -m tools.dump_data [--factorio PATH]           # refresh data/ from the game
 python -m validator.fetch 2.1.22                      # headless server for validation (Linux)
 python -m unittest discover tests
@@ -78,6 +79,9 @@ SRC is a string, a file path, or `-` (stdin).
   `add` refuses strings with check errors
   (`--force` for modded exports with names neither Draftsman nor `data/`
   knows). Expect "doesn't model" warnings on 2.1 exports; they are harmless.
+- Give every filed blueprint a `label` and a `description` saying what it
+  does and how to hook it up. The browser and the in-game tooltip show both.
+- After filing, rebuild the browser with `python -m tools.site`.
 - `data/` is gitignored. `python -m tools.dump_data` regenerates it.
 
 ## Explaining a string

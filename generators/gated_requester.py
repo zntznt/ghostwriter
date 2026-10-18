@@ -16,6 +16,10 @@ from draftsman.entity import ConstantCombinator, DeciderCombinator, LogisticRequ
 def build(item: str = "iron-plate", count: int = 100) -> Blueprint:
     bp = Blueprint()
     bp.label = "Gated requester"
+    bp.description = (
+        f"Requests {count} {item} only while the logistic network holds more than {count}. "
+        "Wire a roboport (read logistic network contents) to the decider input with green."
+    )
     bp.icons = ["requester-chest"]
 
     chest = LogisticRequestContainer(
