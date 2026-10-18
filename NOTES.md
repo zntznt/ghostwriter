@@ -24,6 +24,11 @@ build with `build_blueprint` + `revive`, then read the live entities.
 | A requester chest's `get_logistic_point(logistic_container).filters` includes circuit-set requests | Circuit tests, 2.1.22. |
 | A headless server with no players doesn't tick unless `auto_pause` is false. `--server-settings` needs a complete file (a partial one fails with `Key "name" not found`). | `validator/server.py`, 2.1.22. |
 | The decider default `comparator: "<"` is omitted on export | Validator round trip, 2.1.22. |
+| `build_blueprint` with `blueprint_snap_to_grid = {2, 2}` and absolute snapping, built at `{0, 0}`, puts every entity exactly at its blueprint position, rails included. Without it, the game re-centres the blueprint. | Tested on 4 layouts (combinators, an assembler far from the origin, a splitter with a belt, rails), 2.1.22. |
+| What entities need to be buildable, from the live prototypes: `surface_conditions` (thruster, asteroid collector and space platform hub: pressure 0; crusher: gravity 0; elevated rails: gravity ≥ 1), `tile_buildability_rules` (offshore pump: ground under it, water in a 2×1 strip in front), and drill `resource_categories`. Each was built on a site the validator prepared. | `test_site_is_prepared_for_each_entity`, 2.1.22. |
+| The lightning rod and lightning collector declare no surface conditions, yet `can_place_entity` (manual) refuses them on every surface except the real Fulgora planet surface. That includes a plain surface with Fulgora's exact properties, and a fully researched force. Script `create_entity` works anywhere. | Probed in 2.1.22. |
+| Rolling-stock ghosts placed while their rails are still ghosts don't revive. A fresh ghost on the built rails does. | Train fixture, 2.1.22. |
+| The game re-orders a blueprint's `tiles` on export, and gives a train stop with an empty name a random backer name when built. | 119-entity sweep, 2.1.22. |
 | `--dump-data` writes to `<write-data>/script-output/data-raw-dump.json`, and the game logs `Write data path: ...` at startup | `tools/dump_data.py` run against the 2.0.77 and 2.1.22 headless binaries. In a portable install, write-data is the install dir, not `~/.factorio`. |
 
 ## Draftsman 4.0.1 vs real 2.1.22 exports

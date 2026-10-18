@@ -23,6 +23,8 @@ from validator.validate import Report, validate
 # the centre the game uses for tile_position (0, 0).
 DRAFTSMAN_FOOTPRINT_BUGS = {"railgun-turret": (1.5, 2.5)}
 
+FIXTURES_21 = GAME_21[0].parent
+
 # Entity numbers of the gated requester, in the generator and the handoff string alike.
 GATED_IDS = {"chest": 1, "decider": 2, "requests": 3}
 
@@ -98,9 +100,31 @@ class Validator(unittest.TestCase):
                     self.assertFalse([w for w in report.warnings if "dropped" in w and "else_outputs" not in w],
                                      report.lines())
 
-    def test_space_only_entity_is_a_warning(self):
-        report = self.assertPasses(decode((GAME_21[0].parent / "thruster.txt").read_text()))
-        self.assertTrue(any("thruster" in w for w in report.warnings))
+    def test_site_is_prepared_for_each_entity(self):
+        # Each needs something plain concrete on a default surface lacks; all
+        # must now build and match, with no warnings.
+        needs = {
+            "thruster": "pressure 0, platform foundation, empty space behind",
+            "asteroid-collector": "pressure 0, empty space in front",
+            "crusher": "gravity 0",
+            "offshore-pump": "water in front, ground under it",
+            "pumpjack": "crude oil under it",
+            "electric-mining-drill": "ore under it",
+            "lightning-rod": "the real Fulgora surface",
+            "train-on-track": "rails built before the rolling stock",
+            "train-stop": "a random backer name is not a difference",
+            "construction-robot": "tiles compared as a set, not in order",
+        }
+        for name, need in needs.items():
+            with self.subTest(name, need=need):
+                report = self.assertPasses(decode((FIXTURES_21 / f"{name}.txt").read_text()))
+                self.assertEqual(report.warnings, [])
+
+    def test_unbuildable_entity_is_a_warning(self):
+        # A lone elevated curved rail has no rail supports: not buildable in
+        # the real game either, so it is reported, not hidden.
+        report = self.assertPasses(decode((FIXTURES_21 / "elevated-curved-rail-a.txt").read_text()))
+        self.assertTrue(any("not buildable" in w for w in report.warnings), report.lines())
 
     def test_all_logistic_modes_migrate(self):
         for mode in (0, 1, 2):
@@ -135,7 +159,7 @@ class Validator(unittest.TestCase):
     def test_overlap(self):
         data = generated()
         data["blueprint"]["entities"][2]["position"] = {"x": 0.5, "y": 1.5}
-        self.assertFailsWith(data, "was not built")
+        self.assertFailsWith(data, "collides with the rest of the blueprint")
 
     def test_unknown_entity(self):
         data = generated()

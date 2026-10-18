@@ -7,19 +7,25 @@
 -- Each build covers one blueprint (path "" or "1/0" inside books):
 --   {entities = n, unplaced = {...}, unplaceable = {...}, unrevived = {...},
 --    rebuilt = "<string>"}
--- unplaceable: names that can't be placed even alone on the test surface
--- (surface conditions, water, rails); unplaced: the rest, i.e. the blueprint
--- itself collides.
+-- unplaceable: names that can't be placed even alone on the prepared test
+-- site; unplaced: the rest, i.e. the blueprint itself collides; unrevived:
+-- placed as ghosts but not buildable (e.g. elevated rails without supports).
+-- The site is prepared per blueprint: a surface meeting its entities'
+-- surface_conditions (or a real planet surface when only that works), a base
+-- tile, the tiles each entity's tile_buildability_rules need, and a resource
+-- under each mining drill.
 
 local SURFACE = "ghostwriter"
 local MARGIN = 8
+local BASE_TILES = {"refined-concrete", "space-platform-foundation"}
 
+local function new_surface(name)
+  return game.create_surface(name, {default_enable_all_autoplace_controls = false, no_enemies_mode = true})
+end
+
+-- The default test surface (planet-like default properties).
 local function surface()
-  local s = game.surfaces[SURFACE]
-  if not s then
-    s = game.create_surface(SURFACE, {default_enable_all_autoplace_controls = false, no_enemies_mode = true})
-  end
-  return s
+  return game.surfaces[SURFACE] or new_surface(SURFACE)
 end
 
 local function clear(s, area)
@@ -28,31 +34,29 @@ local function clear(s, area)
   end
 end
 
-local function prepare(s, area)
+local function prepare(s, area, tile)
   local lt, rb = area[1], area[2]
-  s.request_to_generate_chunks({0, 0}, math.ceil(math.max(rb[1] - lt[1], rb[2] - lt[2]) / 64) + 1)
+  local centre = {(lt[1] + rb[1]) / 2, (lt[2] + rb[2]) / 2}
+  s.request_to_generate_chunks(centre, math.ceil(math.max(rb[1] - lt[1], rb[2] - lt[2]) / 64) + 1)
   s.force_generate_chunk_requests()
   clear(s, area)
   local tiles = {}
   for x = math.floor(lt[1]), math.ceil(rb[1]) do
     for y = math.floor(lt[2]), math.ceil(rb[2]) do
-      tiles[#tiles + 1] = {name = "refined-concrete", position = {x, y}}
+      tiles[#tiles + 1] = {name = tile or "refined-concrete", position = {x, y}}
     end
   end
   s.set_tiles(tiles)
 end
 
-local function bounds(stack)
+local function bounds(entities, tiles)
   local x1, y1, x2, y2 = 0, 0, 0, 0
-  for _, e in pairs(stack.get_blueprint_entities() or {}) do
-    x1, y1 = math.min(x1, e.position.x), math.min(y1, e.position.y)
-    x2, y2 = math.max(x2, e.position.x), math.max(y2, e.position.y)
+  for _, list in pairs({entities, tiles}) do
+    for _, e in pairs(list) do
+      x1, y1 = math.min(x1, e.position.x), math.min(y1, e.position.y)
+      x2, y2 = math.max(x2, e.position.x), math.max(y2, e.position.y)
+    end
   end
-  for _, t in pairs(stack.get_blueprint_tiles() or {}) do
-    x1, y1 = math.min(x1, t.position.x), math.min(y1, t.position.y)
-    x2, y2 = math.max(x2, t.position.x), math.max(y2, t.position.y)
-  end
-  -- The build is centred on {0,0}, so make the area symmetric and generous.
   local r = math.max(-x1, -y1, x2, y2) + MARGIN
   return {{-r, -r}, {r, r}}
 end
@@ -61,83 +65,248 @@ local function key(name, x, y)
   return name .. "@" .. (math.floor(x * 8 + 0.5) / 8) .. "," .. (math.floor(y * 8 + 0.5) / 8)
 end
 
--- Build a blueprint centred on {0,0} and revive it. Returns the report part
--- shared by validation and circuit tests, the area, and the built entities
--- keyed by their blueprint entity_number.
-local function place(stack)
-  local s = surface()
-  local area = bounds(stack)
-  prepare(s, area)
-  local out = {entities = #(stack.get_blueprint_entities() or {}), unplaced = {}, unplaceable = {}, unrevived = {}}
-  local blueprint_entities = stack.get_blueprint_entities() or {}
-
-  local ghosts = stack.build_blueprint{
-    surface = s, force = "player", position = {0, 0},
-    build_mode = defines.build_mode.forced, skip_fog_of_war = false,
-  }
-  local placed = {}
-  for _, g in pairs(ghosts) do
-    if g.valid and g.name == "entity-ghost" then
-      placed[g.ghost_name] = (placed[g.ghost_name] or 0) + 1
+-- A surface whose properties satisfy every entity's surface_conditions:
+-- each property at its default, clamped into the allowed range. Surfaces are
+-- created on demand and named after the properties that differ.
+local function surface_for(entities)
+  local range = {}
+  for _, e in pairs(entities) do
+    local proto = prototypes.entity[e.name]
+    for _, c in pairs((proto and proto.surface_conditions) or {}) do
+      local r = range[c.property] or {-math.huge, math.huge}
+      range[c.property] = {math.max(r[1], c.min or -math.huge), math.min(r[2], c.max or math.huge)}
     end
   end
-  local wanted = {}
-  for _, e in pairs(blueprint_entities) do
-    wanted[e.name] = (wanted[e.name] or 0) + 1
-  end
-  local probe = {area[2][1] + 2 * MARGIN, 0}
-  for name, n in pairs(wanted) do
-    local missing = n - (placed[name] or 0)
-    if missing > 0 then
-      prepare(s, {{probe[1] - MARGIN, -MARGIN}, {probe[1] + MARGIN, MARGIN}})
-      local alone = s.can_place_entity{name = name, position = probe, force = "player",
-                                       build_check_type = defines.build_check_type.manual}
-      local list = alone and out.unplaced or out.unplaceable
-      list[#list + 1] = name .. " x" .. missing
+  local changed = {}
+  for name, sp in pairs(prototypes.surface_property) do
+    local r = range[name]
+    if r then
+      local v = math.min(math.max(sp.default_value, r[1]), r[2])
+      if v ~= sp.default_value then changed[#changed + 1] = {name, v} end
     end
   end
+  if #changed == 0 then return surface() end
+  table.sort(changed, function(a, b) return a[1] < b[1] end)
+  local parts = {}
+  for _, c in pairs(changed) do parts[#parts + 1] = c[1] .. "_" .. c[2] end
+  local name = SURFACE .. "-" .. table.concat(parts, "-")
+  local s = game.surfaces[name]
+  if not s then
+    s = new_surface(name)
+    for _, c in pairs(changed) do s.set_property(c[1], c[2]) end
+  end
+  return s
+end
 
-  -- build_blueprint shifts the blueprint to align it to the grid; find the
-  -- shift by voting over same-named ghosts, then map ghosts to entity numbers.
-  local votes, best, best_n = {}, {0, 0}, 0
-  for _, g in pairs(ghosts) do
-    if g.valid and g.name == "entity-ghost" then
-      for _, e in pairs(blueprint_entities) do
-        if e.name == g.ghost_name then
-          local d = key("", g.position.x - e.position.x, g.position.y - e.position.y)
-          votes[d] = (votes[d] or 0) + 1
-          if votes[d] > best_n then best, best_n = {g.position.x - e.position.x, g.position.y - e.position.y}, votes[d] end
+local function tile_layers(name)
+  local mask = prototypes.tile[name] and prototypes.tile[name].collision_mask
+  return (mask and mask.layers) or {}
+end
+
+-- First tile (common ones first) with every required layer and no colliding one.
+local function tile_for(required, colliding)
+  local function fits(name)
+    local layers = tile_layers(name)
+    for layer in pairs(required or {}) do if not layers[layer] then return false end end
+    for layer in pairs(colliding or {}) do if layers[layer] then return false end end
+    return true
+  end
+  for _, name in pairs({"refined-concrete", "space-platform-foundation", "water", "deepwater", "empty-space"}) do
+    if prototypes.tile[name] and fits(name) then return name end
+  end
+  local names = {}
+  for name in pairs(prototypes.tile) do names[#names + 1] = name end
+  table.sort(names)
+  for _, name in pairs(names) do if fits(name) then return name end end
+end
+
+-- Rotate a north-facing offset clockwise to `direction` (16-way; cardinals only).
+local function rotate(x, y, direction)
+  local quarter = math.floor(((direction or 0) % 16) / 4)
+  for _ = 1, quarter do x, y = -y, x end
+  return x, y
+end
+
+-- Tiles an entity's tile_buildability_rules demand (water under an offshore
+-- pump, empty space behind a thruster), set at its blueprint position.
+local function apply_tile_rules(s, e, base)
+  local proto = prototypes.entity[e.name]
+  local tiles = {}
+  for _, rule in pairs((proto and proto.tile_buildability_rules) or {}) do
+    local tile = tile_for(rule.required_tiles and rule.required_tiles.layers,
+                          rule.colliding_tiles and rule.colliding_tiles.layers)
+    if tile and tile ~= base then
+      local a, b = rule.area.left_top, rule.area.right_bottom
+      local ax, ay = rotate(a.x, a.y, e.direction)
+      local bx, by = rotate(b.x, b.y, e.direction)
+      local x1, x2 = math.min(ax, bx) + e.position.x, math.max(ax, bx) + e.position.x
+      local y1, y2 = math.min(ay, by) + e.position.y, math.max(ay, by) + e.position.y
+      -- Every tile the area overlaps (its edges can fall on tile centres).
+      local eps = 1 / 256
+      for x = math.floor(x1 + eps), math.ceil(x2 - eps) - 1 do
+        for y = math.floor(y1 + eps), math.ceil(y2 - eps) - 1 do
+          tiles[#tiles + 1] = {name = tile, position = {x, y}}
         end
       end
     end
   end
-  local number_at = {}
-  for _, e in pairs(blueprint_entities) do
-    number_at[key(e.name, e.position.x + best[1], e.position.y + best[2])] = e.entity_number
-  end
+  if #tiles > 0 then s.set_tiles(tiles) end
+end
 
-  -- Tile ghosts first so entities that need the tiles can revive.
-  for _, g in pairs(ghosts) do
-    if g.valid and g.name == "tile-ghost" then g.revive() end
+-- A resource under a mining drill or pumpjack, of a category it can mine.
+local function apply_resources(s, e)
+  local proto = prototypes.entity[e.name]
+  if not (proto and proto.type == "mining-drill") then return end
+  local categories = proto.resource_categories or {}
+  local names = {}
+  for name, p in pairs(prototypes.entity) do
+    if p.type == "resource" and categories[p.resource_category] then names[#names + 1] = name end
   end
-  local built = {}
-  for _, g in pairs(ghosts) do
-    if g.valid and g.name == "entity-ghost" then
-      local name, number = g.ghost_name, number_at[key(g.ghost_name, g.position.x, g.position.y)]
-      local _, entity = g.revive()
-      if not entity then
-        out.unrevived[#out.unrevived + 1] = name
-      elseif number then
-        built[number] = entity
+  table.sort(names)
+  local resource = names[1]
+  if not resource then return end
+  local box = proto.collision_box
+  local spots = {{e.position.x, e.position.y}}
+  for x = math.floor(e.position.x + box.left_top.x), math.ceil(e.position.x + box.right_bottom.x) - 1 do
+    for y = math.floor(e.position.y + box.left_top.y), math.ceil(e.position.y + box.right_bottom.y) - 1 do
+      spots[#spots + 1] = {x + 0.5, y + 0.5}
+    end
+  end
+  for _, at in pairs(spots) do
+    pcall(s.create_entity, {name = resource, position = at, amount = 100000})
+  end
+end
+
+-- Entity names whose placement doesn't depend on tiles or resources the
+-- harness prepares per entity (those can't be judged standing alone).
+local function plain_names(entities)
+  local names, n = {}, 0
+  for _, e in pairs(entities) do
+    local proto = prototypes.entity[e.name]
+    local special = proto and (proto.type == "mining-drill" or next(proto.tile_buildability_rules or {}))
+    if proto and not special and not names[e.name] then names[e.name] = true n = n + 1 end
+  end
+  return names, n
+end
+
+-- How many of `names` stand alone on surface s with base tile `tile`.
+local function fits(s, names, area, tile)
+  local probe = {area[2][1] + 2 * MARGIN, 0}
+  prepare(s, {{probe[1] - MARGIN, -MARGIN}, {probe[1] + MARGIN, MARGIN}}, tile)
+  local n = 0
+  for name in pairs(names) do
+    if s.can_place_entity{name = name, position = probe, force = "player",
+                          build_check_type = defines.build_check_type.manual} then n = n + 1 end
+  end
+  return n
+end
+
+-- Where to build: the surface matching the entities' surface_conditions,
+-- else a real planet surface (some restrictions, like Fulgora's lightning rods,
+-- only show on the planet itself), with the base tile that fits most entities.
+local function site_for(entities, area)
+  local names, total = plain_names(entities)
+  local best = {score = -1}
+  local function try(s)
+    for _, tile in pairs(BASE_TILES) do
+      if prototypes.tile[tile] then
+        local n = fits(s, names, area, tile)
+        if n > best.score then best = {surface = s, tile = tile, score = n} end
+        if n == total then return true end
       end
     end
   end
-  return out, area, built
+  if try(surface_for(entities)) then return best.surface, best.tile end
+  local planets = {}
+  for name in pairs(game.planets) do planets[#planets + 1] = name end
+  table.sort(planets)
+  for _, name in pairs(planets) do
+    local planet = game.planets[name]
+    local s = planet.surface or planet.create_surface()
+    s.peaceful_mode = true
+    if try(s) then break end
+  end
+  return best.surface, best.tile
+end
+
+-- Build a blueprint where its entities stand in the blueprint (absolute
+-- snapping on a 2-tile grid keeps every position, rails included), on a surface
+-- and tiles that meet its entities' needs, then revive it. Several passes, so
+-- entities that need others built first (rolling stock on rails) get them.
+-- Returns the report part shared by validation and circuit tests, the surface,
+-- the area, and the built entities keyed by blueprint entity_number.
+local function place(stack)
+  local entities = stack.get_blueprint_entities() or {}
+  local area = bounds(entities, stack.get_blueprint_tiles() or {})
+  local s, tile = site_for(entities, area)
+  prepare(s, area, tile)
+  for _, e in pairs(entities) do
+    apply_tile_rules(s, e, tile)
+    apply_resources(s, e)
+  end
+  stack.blueprint_snap_to_grid = {2, 2}
+  stack.blueprint_absolute_snapping = true
+  stack.blueprint_position_relative_to_grid = {0, 0}
+
+  local number_at, wanted = {}, {}
+  for _, e in pairs(entities) do
+    number_at[key(e.name, e.position.x, e.position.y)] = e.entity_number
+    wanted[e.name] = (wanted[e.name] or 0) + 1
+  end
+  local out = {entities = #entities, surface = s.name, tile = tile, unplaced = {}, unplaceable = {}, unrevived = {}}
+  local built, count = {}, {}
+  for _ = 1, 4 do
+    local ghosts = stack.build_blueprint{
+      surface = s, force = "player", position = {0, 0},
+      build_mode = defines.build_mode.forced, skip_fog_of_war = false,
+    }
+    local progress = false
+    -- Tile ghosts first so entities that need the tiles can revive.
+    for _, g in pairs(ghosts) do
+      if g.valid and g.name == "tile-ghost" then g.revive() end
+    end
+    for _, g in pairs(ghosts) do
+      if g.valid and g.name == "entity-ghost" then
+        local number = number_at[key(g.ghost_name, g.position.x, g.position.y)]
+        local name = g.ghost_name
+        local _, entity = g.revive()
+        if entity then
+          progress = true
+          count[name] = (count[name] or 0) + 1
+          if number then built[number] = entity end
+        end
+      end
+    end
+    if not progress then break end
+    -- Re-place what didn't build: a ghost laid before its rails existed
+    -- (rolling stock) only builds as a fresh ghost on the real rails.
+    for _, g in pairs(s.find_entities_filtered{area = area, name = "entity-ghost"}) do g.destroy() end
+  end
+
+  local ghosts_left = {}
+  for _, g in pairs(s.find_entities_filtered{area = area, name = "entity-ghost"}) do
+    out.unrevived[#out.unrevived + 1] = g.ghost_name
+    ghosts_left[g.ghost_name] = (ghosts_left[g.ghost_name] or 0) + 1
+  end
+  local probe = {area[2][1] + 2 * MARGIN, 0}
+  for name, n in pairs(wanted) do
+    -- Placed as a ghost but not built is reported as unrevived, not here.
+    local missing = n - (count[name] or 0) - (ghosts_left[name] or 0)
+    if missing > 0 then
+      prepare(s, {{probe[1] - MARGIN, -MARGIN}, {probe[1] + MARGIN, MARGIN}}, tile)
+      local alone = s.can_place_entity{name = name, position = probe, force = "player",
+                                       build_check_type = defines.build_check_type.manual}
+      -- Placeable alone but not here: the blueprint itself collides. Otherwise
+      -- the test surface can't hold it (needs something not prepared).
+      local list = alone and out.unplaced or out.unplaceable
+      list[#list + 1] = name .. " x" .. missing
+    end
+  end
+  return out, s, area, built
 end
 
 local function build(stack)
-  local out, area = place(stack)
-  local s = surface()
+  local out, s, area = place(stack)
   local inv = game.create_inventory(1)
   local copy = inv[1]
   copy.set_stack("blueprint")
@@ -172,11 +341,13 @@ end
 
 local function powered(s)
   s.create_global_electric_network()
-  if not (storage.power and storage.power.valid) then
+  storage.power = storage.power or {}
+  local source = storage.power[s.name]
+  if not (source and source.valid) then
     local at = {-1000, -1000}
     s.request_to_generate_chunks(at, 1)
     s.force_generate_chunk_requests()
-    storage.power = s.create_entity{name = "electric-energy-interface", position = at, force = "player"}
+    storage.power[s.name] = s.create_entity{name = "electric-energy-interface", position = at, force = "player"}
   end
 end
 
@@ -204,7 +375,7 @@ local function circuit_teardown()
   for _, inj in pairs(c.injectors) do
     if inj.valid then inj.destroy() end
   end
-  clear(surface(), c.area)
+  clear(c.surface, c.area)
   storage.circuit = nil
 end
 
@@ -222,11 +393,10 @@ remote.add_interface("ghostwriter", {
       inv.destroy()
       return reply{error = "not a blueprint (import_stack returned " .. rc .. ")"}
     end
-    local s = surface()
+    local out, s, area, built = place(stack)
     powered(s)
-    local out, area, built = place(stack)
     inv.destroy()
-    storage.circuit = {area = area, built = built, injectors = {}}
+    storage.circuit = {surface = s, area = area, built = built, injectors = {}}
     local numbers = {}
     for n in pairs(built) do numbers[#numbers + 1] = n end
     out.built = numbers
@@ -245,7 +415,7 @@ remote.add_interface("ghostwriter", {
     local slot = args.entity .. ":" .. args.connector
     local inj = c.injectors[slot]
     if not (inj and inj.valid) then
-      local s = surface()
+      local s = c.surface
       local spot = s.find_non_colliding_position("constant-combinator", {c.area[2][1] + 2, c.area[1][2] + 2}, 64, 1)
       inj = s.create_entity{name = "constant-combinator", position = spot, force = "player"}
       local color = args.connector:find("green") and defines.wire_connector_id.circuit_green
