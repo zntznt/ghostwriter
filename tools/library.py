@@ -20,6 +20,21 @@ from tools.codec import dump_json, root_key
 BOOK_META = "_book.json"
 
 
+def entries(library: Path) -> list[tuple[str, dict]]:
+    """Every top-level library entry as (name, decoded data): folders as the
+    books they build, loose files as themselves. What the site publishes."""
+    out = []
+    for path in sorted(library.iterdir()):
+        if path.is_dir():
+            out.append((path.name, load_book(path)))
+        elif path.suffix == ".json":
+            data = json.loads(path.read_text())
+            data.pop("index", None)
+            root_key(data)
+            out.append((path.name, data))
+    return out
+
+
 def load_book(folder: Path) -> dict:
     meta_path = folder / BOOK_META
     if meta_path.exists():

@@ -299,6 +299,52 @@ remote.add_interface("ghostwriter", {
     rcon.print(game.tick)
   end,
 
+  -- Place every placeable entity, flip its control behaviour settings
+  -- (spec: {[LuaXControlBehavior] = {b = {bool attrs}, n = {network attrs}}})
+  -- and export each one as its own blueprint.
+  harvest = function(spec_json)
+    local spec = helpers.json_to_table(spec_json)
+    local s = surface()
+    local cols, step = 40, 14
+    local names = {}
+    for name, p in pairs(prototypes.entity) do
+      if p.items_to_place_this and not p.hidden then names[#names + 1] = name end
+    end
+    table.sort(names)
+    local rows = math.ceil(#names / cols)
+    local area = {{-step, -step}, {cols * step + step, rows * step + step}}
+    prepare(s, area)
+    local inv = game.create_inventory(1)
+    local stack = inv[1]
+    local out = {exports = {}, unplaceable = {}}
+    for i, name in ipairs(names) do
+      local at = {((i - 1) % cols) * step, math.floor((i - 1) / cols) * step}
+      local ok, entity = pcall(s.create_entity, {name = name, position = at, force = "player", raise_built = false})
+      if ok and entity and entity.valid then
+        local cb
+        pcall(function() cb = entity.get_or_create_control_behavior() end)
+        if cb then
+          local flips = spec[cb.object_name] or {b = {}, n = {}}
+          for _, attr in pairs(flips.b) do pcall(function() cb[attr] = not cb[attr] end) end
+          for _, attr in pairs(flips.n) do pcall(function() cb[attr] = {red = true, green = false} end) end
+        end
+        local box = entity.bounding_box
+        stack.set_stack("blueprint")
+        stack.create_blueprint{surface = s, force = "player",
+          area = {{box.left_top.x - 0.1, box.left_top.y - 0.1}, {box.right_bottom.x + 0.1, box.right_bottom.y + 0.1}}}
+        if stack.is_blueprint_setup() then
+          out.exports[#out.exports + 1] = {name = name, type = entity.type, string = stack.export_stack()}
+        end
+        stack.clear()
+      else
+        out.unplaceable[#out.unplaceable + 1] = name
+      end
+    end
+    inv.destroy()
+    clear(s, area)
+    reply(out)
+  end,
+
   validate = function(text)
     local inv = game.create_inventory(1)
     local stack = inv[1]

@@ -6,6 +6,7 @@ Checks blueprints, books and planners in a real headless Factorio server.
 python -m validator.fetch 2.1.22              # once: Linux headless server -> .factorio-headless/
 python -m tools.bp validate SRC...            # strings, files or library folders
 python -m tools.bp gen NAME k=v --validate    # generate, check, validate, run circuit tests, print
+python -m validator.harvest                   # refresh tools/game_settings.json (after a game update)
 python -m unittest tests.test_validator       # ~30 s; skipped without a Factorio binary
 ```
 
@@ -47,6 +48,17 @@ A generator with circuit logic declares `circuit_tests(**params)` next to `build
 `gen --validate` runs them once structural validation passes. Everything is powered by a global electric network on the test surface, so the tests cover logic, not power or layout. Inputs are synthetic: a roboport's network contents is just a signal set you inject.
 
 The server runs with `auto_pause: false`. A server with no players otherwise sits paused, which is invisible until you need ticks.
+
+## Game-settings harvest
+
+`harvest.py` asks the game which control-behaviour settings Draftsman 4.0.1
+can't express. It places every placeable entity and flips every writable
+boolean and network selection listed in that version's Lua API docs. Then it
+exports each entity and keeps the keys Draftsman parks in `extra_keys`. The
+result, `tools/game_settings.json`, is what `tools.settings.game_settings()`
+lets generators set. `test_game_settings_registry_round_trips` validates
+every entry on every entity it lists, and fails if the registry was
+harvested for a different game version than the server's.
 
 ## Not covered yet
 
