@@ -27,6 +27,7 @@ from draftsman.error import DataFormatError
 from draftsman.utils import distance
 
 from tools.codec import root_key
+from tools.settings import flatten, known
 
 _COMBINATOR_OUTPUTS = {WireConnectorID.COMBINATOR_OUTPUT_RED, WireConnectorID.COMBINATOR_OUTPUT_GREEN}
 _COPPER = {WireConnectorID.POLE_COPPER, WireConnectorID.POWER_SWITCH_RIGHT_COPPER}
@@ -128,7 +129,13 @@ def _load(data: dict):
         message = " ".join(str(w.message).split())
         kind = w.category.__name__
         if kind == "UnknownKeywordWarning":
-            out.append(f"warning: Draftsman 4.0.1 doesn't model: {message.split('keys: ', 1)[-1]}")
+            # Entity- and blueprint-level keys are judged below from the parked
+            # extra_keys, against the registry. Nested objects (a decider
+            # Condition, a filter section) keep their own extra_keys: report those.
+            owner = re.match(r"'(\w+)'", message)
+            if owner and owner[1] not in _owners(model):
+                out.append(f"warning: Draftsman doesn't model: {message.split('keys: ', 1)[-1]}"
+                           f" (on {owner[1]})")
         elif kind.startswith("Unknown"):
             # A name neither Draftsman nor the game knows is almost always a
             # typo. One the game knows is a Draftsman gap (e.g. 'thruster').
@@ -137,7 +144,36 @@ def _load(data: dict):
             out.append(f"{level}: {kind}: {message}")
         else:
             out.append(f"warning: {kind}: {message}")
-    return out, model
+    return out + _unknown_keys(model), model
+
+
+def _owners(model) -> set[str]:
+    """Class names whose unknown keys _unknown_keys reports."""
+    return {type(model).__name__} | {type(e).__name__ for e in getattr(model, "entities", [])}
+
+
+def _unknown_keys(model) -> list[str]:
+    """Keys Draftsman parked in extra_keys. control_behavior keys in the
+    game-settings registry (tools/game_settings.json) are verified game keys
+    and pass; anything else is reported."""
+    out = []
+    if getattr(model, "extra_keys", None):
+        out.append(f"warning: blueprint keys Draftsman doesn't model: {sorted(model.extra_keys)}")
+    for n, entity in enumerate(getattr(model, "entities", []), start=1):
+        extra = dict(entity.extra_keys or {})
+        cb = extra.pop("control_behavior", None) or {}
+        where = f"entity {n} ({entity.name})"
+        allowed = known(getattr(entity, "type", ""))
+        for path, value in flatten(cb):
+            if path not in allowed:
+                out.append(f"warning: {where}: control_behavior.{path} is not a known game setting "
+                           "(typo, or not harvested yet: python -m validator.harvest)")
+            elif entity.name not in allowed[path]["entities"]:
+                out.append(f"warning: {where}: control_behavior.{path} was only seen on "
+                           f"{', '.join(allowed[path]['entities'])}; the game may drop it here")
+        if extra:
+            out.append(f"warning: {where}: keys Draftsman doesn't model: {sorted(extra)}")
+    return out
 
 
 def _game_knows(name: str) -> bool:

@@ -5,14 +5,23 @@ import os
 import unittest
 from pathlib import Path
 
+from draftsman.blueprintable import Blueprint
+from draftsman.entity import new_entity
+
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
 from generators import gated_requester
 from tools.codec import decode
 from tools.factorio import locate
-from tools.library import load_book
+from tools.library import entries
+from tools.settings import game_settings, registry
 from validator.circuit import Case, Expect, Inject, run_circuit_tests
 from validator.server import Server
 from validator.validate import Report, validate
+
+# Draftsman 4.0.1 derives a 3x4 footprint for the railgun turret from its
+# collision box; the 2.1.22 prototype says tile_height = 5 (NOTES.md). This is
+# the centre the game uses for tile_position (0, 0).
+DRAFTSMAN_FOOTPRINT_BUGS = {"railgun-turret": (1.5, 2.5)}
 
 # Entity numbers of the gated requester, in the generator and the handoff string alike.
 GATED_IDS = {"chest": 1, "decider": 2, "requests": 3}
@@ -60,10 +69,34 @@ class Validator(unittest.TestCase):
                 self.assertPasses(decode(path.read_text()))
 
     def test_library_validates(self):
-        library = Path(__file__).parent.parent / "library"
-        for folder in sorted(p for p in library.iterdir() if p.is_dir()):
-            with self.subTest(folder.name):
-                self.assertPasses(load_book(folder))
+        # Everything the site publishes: books and loose top-level files.
+        for name, data in entries(Path(__file__).parent.parent / "library"):
+            with self.subTest(name):
+                self.assertPasses(data)
+
+    def test_game_settings_registry_round_trips(self):
+        # Every harvested setting, set through game_settings() on its example
+        # entity, must survive import, re-export and building in the game.
+        reg = registry()
+        self.assertEqual(reg["game_version"], self.server.version,
+                         "registry is for another game version: run python -m validator.harvest")
+        for ptype, entry in reg["types"].items():
+            for name in entry["examples"]:
+                with self.subTest(name):
+                    settings = {path: s["observed"] for path, s in entry["settings"].items()
+                                if name in s["entities"]}
+                    bp = Blueprint()
+                    if name in DRAFTSMAN_FOOTPRINT_BUGS:
+                        entity = new_entity(name, position=DRAFTSMAN_FOOTPRINT_BUGS[name])
+                    else:
+                        entity = new_entity(name, tile_position=(0, 0))
+                    game_settings(entity, settings)
+                    bp.entities.append(entity)
+                    report = validate(self.server, bp.to_dict())
+                    self.assertTrue(report.ok, report.lines())
+                    # Only an empty else_outputs may be dropped (it is the default).
+                    self.assertFalse([w for w in report.warnings if "dropped" in w and "else_outputs" not in w],
+                                     report.lines())
 
     def test_space_only_entity_is_a_warning(self):
         report = self.assertPasses(decode((GAME_21[0].parent / "thruster.txt").read_text()))

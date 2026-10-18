@@ -6,12 +6,13 @@ import unittest
 import warnings
 from pathlib import Path
 
-from draftsman.blueprintable import BlueprintBook, DeconstructionPlanner, UpgradePlanner
+from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
 from generators.gated_requester import build
 from tools.check import check
-from tools.codec import CodecError, decode, encode
-from tools.library import load_book, save
+from tools.codec import CodecError, decode, encode, root_key
+from tools.library import entries, load_book, save
+from tools.settings import game_settings, known, registry
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # The hand-built string from the planning handoff. Not in library/ until it
@@ -124,6 +125,38 @@ def make_book() -> dict:
         return outer.to_dict()
 
 
+class GameSettings(unittest.TestCase):
+    def machine(self):
+        from draftsman.entity import new_entity
+
+        return new_entity("assembling-machine-2", position=(1.5, 1.5))
+
+    def test_registry_is_generated(self):
+        reg = registry()
+        self.assertTrue(reg["game_version"].startswith("2.1"))
+        self.assertIn("read_ingredients", known("assembling-machine"))
+
+    def test_sets_registry_keys_into_draftsman_output(self):
+        bp = Blueprint()
+        machine = self.machine()
+        game_settings(machine, {"read_ingredients": True})
+        bp.entities.append(machine)
+        data = bp.to_dict()
+        self.assertEqual(data["blueprint"]["entities"][0]["control_behavior"], {"read_ingredients": True})
+        self.assertEqual(check(data), [])  # a registry key is a known game key
+
+    def test_refuses_typos_and_wrong_kinds(self):
+        with self.assertRaisesRegex(ValueError, "Did you mean 'read_ingredients'"):
+            game_settings(self.machine(), {"read_ingredient": True})
+        with self.assertRaisesRegex(ValueError, "takes a bool"):
+            game_settings(self.machine(), {"read_ingredients": 1})
+
+    def test_check_warns_on_unknown_control_behavior_key(self):
+        data = generated()
+        data["blueprint"]["entities"][0]["control_behavior"]["set_request"] = True
+        self.assertTrue(any("set_request is not a known game setting" in p for p in check(data)))
+
+
 LIBRARY = Path(__file__).parent.parent / "library"
 
 
@@ -153,6 +186,14 @@ class Library(unittest.TestCase):
             )
             self.assertEqual(load_book(folder), book)
             self.assertEqual(errors(load_book(folder)), [])
+
+    def test_entries_include_loose_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp)
+            save(generated(), lib)              # loose top-level file
+            save(generated(), lib / "a-book")   # folder book
+            got = {name: root_key(data) for name, data in entries(lib)}
+            self.assertEqual(got, {"gated-requester.json": "blueprint", "a-book": "blueprint_book"})
 
     def test_plain_folder_becomes_book(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -29,6 +29,7 @@ python -m tools.bp book library/BOOK [--json]         # folder -> book string
 python -m tools.site                                  # rebuild the library browser (site/dist/index.html)
 python -m tools.dump_data [--factorio PATH]           # refresh data/ from the game
 python -m validator.fetch 2.1.22                      # headless server for validation (Linux)
+python -m validator.harvest                           # refresh tools/game_settings.json from the game
 python -m unittest discover tests
 ```
 
@@ -48,9 +49,14 @@ SRC is a string, a file path, or `-` (stdin).
    Make the cases follow the parameters (an "unrelated" item must differ
    from `item`).
 3. Draftsman gotchas: `entities.append()` copies, so wire by `id=`; use
-   `LogisticModeOfOperation` for chest circuit mode (2.1 migrates it).
-   Draftsman doesn't model many 2.1 settings (`NOTES.md`). Don't fake them
-   with raw keys; say what the user must set by hand in game instead.
+   `LogisticModeOfOperation` for chest circuit mode (2.1 migrates it); place
+   `railgun-turret` by `position`, not `tile_position` (wrong footprint).
+   For 2.1 settings Draftsman doesn't model (read ingredients/fuel, splitter
+   and pump filters, turret priority flags, per-network selections, decider
+   `else_outputs`...), use `tools.settings.game_settings(entity, {path: value})`.
+   It only accepts keys the game itself wrote for that entity
+   (`tools/game_settings.json`). Never put raw keys into `extra_keys` yourself.
+   If a setting isn't in the registry, say what the user must set by hand.
 4. `gen` runs `check` and refuses to print a string with errors. Unknown
    names are errors (typos). Unknown keys are only warnings, because
    Draftsman lags 2.1; the validator is what confirms keys.
