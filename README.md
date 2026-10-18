@@ -27,7 +27,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ## Library site (GitHub Pages)
 
 `.github/workflows/pages.yml` builds and publishes the library browser to
-https://zntznt.github.io/ghostwriter/ on every push to `main`. Pull requests
+https://zntznt.com/ghostwriter/ on every push to `main`. The account's Pages
+custom domain is `zntznt.com`, so zntznt.github.io/ghostwriter/ redirects there. Pull requests
 run the same build without deploying. Each build runs the full test suite,
 including in-game validation of `library/` in a Factorio headless server
 (cached between runs). A failing blueprint blocks the deploy, so only passing
