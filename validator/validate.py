@@ -81,10 +81,17 @@ def validate(server: Server, data: dict) -> Report:
         body = _at_path(exported, path)["blueprint"]
         for name in build.get("unplaced") or []:
             report.errors.append(f"{where}build: could not place {name}: it collides with the rest of the blueprint")
-        for name in (build.get("unplaceable") or []) + (build.get("unrevived") or []):
+        site = f"on {build.get('surface')} with {build.get('tile')}"
+        for name in build.get("unplaceable") or []:
             report.warnings.append(
-                f"{where}build: {name} can't be built on the concrete test surface "
-                "(surface conditions, water or rails); its build was not checked"
+                f"{where}build: {name} can't be placed even alone on the prepared test site ({site}); "
+                "its build was not checked"
+            )
+        for name in build.get("unrevived") or []:
+            report.warnings.append(
+                f"{where}build: {name} placed as a ghost but not buildable ({site}): it may need "
+                "something the blueprint doesn't include (elevated rails need rail supports); "
+                "its build was not checked"
             )
         if build.get("unplaceable") or build.get("unrevived"):
             continue
@@ -111,8 +118,9 @@ def _compare_blueprintable(expected: dict, actual: dict, path: str, report: Repo
         return
     exp, act = expected[kind], actual[kind]
     if kind == "blueprint":
-        rest = {k: v for k, v in exp.items() if k not in ("version", "entities", "wires")}
+        rest = {k: v for k, v in exp.items() if k not in ("version", "entities", "wires", "tiles")}
         _diff(rest, act, prefix, report)
+        _compare_tiles(exp, act, prefix, report)
         _compare_entities(exp, act, prefix, report, shifted=False)
     elif kind == "blueprint_book":
         rest = {k: v for k, v in exp.items() if k not in ("version", "blueprints")}
@@ -147,6 +155,8 @@ def _compare_entities(exp: dict, act: dict, where: str, report: Report, shifted:
         a = candidates.pop(0)
         matched[e["entity_number"]] = a
         fields = {k: v for k, v in e.items() if k not in ("entity_number", "position")}
+        if shifted and fields.get("station") == "":
+            del fields["station"]  # a built stop with no name gets a random backer name
         if "control_behavior" in fields:
             for migrate in MIGRATIONS:
                 fields["control_behavior"] = migrate(fields["control_behavior"])
@@ -173,6 +183,17 @@ def _compare_entities(exp: dict, act: dict, where: str, report: Report, shifted:
         report.errors.append(f"{where}: wire missing in game: {_wire_text(w, names)}")
     for w in sorted(got - want, key=sorted):
         report.errors.append(f"{where}: unexpected wire in game: {_wire_text(w, names)}")
+
+
+def _compare_tiles(exp: dict, act: dict, where: str, report: Report):
+    """Tiles as a multiset: the game re-orders the list on export."""
+    def tiles(body):
+        return Counter((t["name"], t["position"]["x"], t["position"]["y"]) for t in body.get("tiles", []))
+    want, got = tiles(exp), tiles(act)
+    for name, x, y in sorted((want - got).elements()):
+        report.errors.append(f"{where}: tile {name} at ({x}, {y}) missing in game")
+    for name, x, y in sorted((got - want).elements()):
+        report.errors.append(f"{where}: unexpected tile {name} at ({x}, {y}) in game")
 
 
 def _wire_text(wire, names) -> str:
