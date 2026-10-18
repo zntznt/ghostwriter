@@ -68,9 +68,31 @@ lets generators set. `test_game_settings_registry_round_trips` validates
 every entry on every entity it lists, and fails if the registry was
 harvested for a different game version than the server's.
 
+### Tests for library blueprints
+
+Imported blueprints have no generator, so their cases live in a file next to
+them. `library/logistics/gated-requester.json` has
+`library/logistics/gated-requester.tests.toml`, which holds the same cases in
+TOML:
+
+```toml
+[ids]                 # optional names for entity_numbers
+chest = 1
+decider = 2
+
+[[case]]
+name = "surplus: request"
+inject = [{ entity = "decider", connector = "combinator_input_green", signals = { iron-plate = 150 } }]
+expect = [{ entity = "chest", requests = { iron-plate = 100 } }]
+```
+
+- `bp validate FILE` runs them. `bp validate library/FOLDER` runs those of every tested child, each on its own blueprint.
+- CI runs all of them in game before publishing (`test_library_circuit_tests_pass`).
+- Without a game, `tests/test_tools.py` checks that every tests file parses and that it only names entities and connectors the blueprint has.
+- The site lists each entry's case names.
+
 ## Not covered yet
 
-- Circuit tests for strings that don't come from a generator (`bp validate` only checks structure).
 - Item requests (modules, fuel): ignored in the build diff because nothing delivers them.
 - Mods: the server loads only base and the DLC.
 

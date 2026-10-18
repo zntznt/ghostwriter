@@ -14,7 +14,7 @@ from tools.codec import decode
 from tools.factorio import locate
 from tools.library import entries
 from tools.settings import game_settings, registry
-from validator.circuit import Case, Expect, Inject, run_circuit_tests
+from validator.circuit import Case, Expect, Inject, library_tests, run_circuit_tests
 from validator.server import Server
 from validator.validate import Report, validate
 
@@ -75,6 +75,14 @@ class Validator(unittest.TestCase):
         for name, data in entries(Path(__file__).parent.parent / "library"):
             with self.subTest(name):
                 self.assertPasses(data)
+
+    def test_library_circuit_tests_pass(self):
+        # Logic of every library blueprint with a .tests.toml, before it is published.
+        for label, data, cases, ids in library_tests(Path(__file__).parent.parent / "library"):
+            with self.subTest(label):
+                report = Report(self.server.version)
+                run_circuit_tests(self.server, data, cases, ids, report)
+                self.assertTrue(report.ok, report.lines())
 
     def test_game_settings_registry_round_trips(self):
         # Every harvested setting, set through game_settings() on its example

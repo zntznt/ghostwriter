@@ -13,6 +13,7 @@ from tools.check import check
 from tools.codec import CodecError, decode, encode, root_key
 from tools.library import entries, load_book, save
 from tools.settings import game_settings, known, registry
+from validator.circuit import library_tests
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # The hand-built string from the planning handoff. Not in library/ until it
@@ -158,6 +159,43 @@ class GameSettings(unittest.TestCase):
 
 
 LIBRARY = Path(__file__).parent.parent / "library"
+
+
+class LibraryCircuitTests(unittest.TestCase):
+    """Tests files parse and name real entities and connectors (no game needed)."""
+
+    def write(self, folder: Path, tests: str) -> Path:
+        save(generated(), folder)
+        path = folder / "gated-requester.tests.toml"
+        path.write_text(tests)
+        return path
+
+    def test_library_tests_parse(self):
+        found = {label: cases for label, _, cases, _ in library_tests(LIBRARY)}
+        self.assertEqual(len(found["logistics/gated-requester.json"]), 5)
+
+    def test_typos_fail_statically(self):
+        bad = {
+            "unknown entity": 'entity = "chset"',
+            "unknown connector": 'connector = "combinator_ouput_red"',
+            "unknown key": 'requets = {}',
+        }
+        base = ('[ids]\nchest = 1\n[[case]]\nname = "x"\n'
+                'expect = [{ entity = "chest", connector = "circuit_red", requests = {} }]\n')
+        for what, typo in bad.items():
+            with self.subTest(what), tempfile.TemporaryDirectory() as tmp:
+                text = (base.replace('entity = "chest"', typo) if "entity" in typo
+                        else base.replace('connector = "circuit_red"', typo) if "connector" in typo
+                        else base.replace("requests = {}", typo))
+                self.write(Path(tmp), text)
+                with self.assertRaises(ValueError):
+                    library_tests(Path(tmp))
+
+    def test_orphan_tests_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "nothing.tests.toml").write_text("")
+            with self.assertRaisesRegex(ValueError, "no nothing.json next to it"):
+                library_tests(Path(tmp))
 
 
 class Library(unittest.TestCase):
