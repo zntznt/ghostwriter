@@ -1,0 +1,61 @@
+# validator
+
+Checks blueprints, books and planners in a real headless Factorio server.
+
+```
+python -m validator.fetch 2.1.22              # once: Linux headless server -> .factorio-headless/
+python -m tools.bp validate SRC...            # strings, files or library folders
+python -m tools.bp gen NAME k=v --validate    # generate, check, validate, run circuit tests, print
+python -m unittest tests.test_validator       # ~30 s; skipped without a Factorio binary
+```
+
+On macOS or Windows, point it at the game itself: `--factorio PATH` or
+`$FACTORIO`. Match the version you play, because 2.0 and 2.1 disagree on
+some fields.
+
+## What it does
+
+`validator/server.py` starts a throwaway server:
+- It uses a temp write-data dir via `--config`, so your saves, mods and lock file are never touched.
+- It uses free ports and loads the `scenario/` harness.
+- It talks to the harness over RCON (`validator/rcon.py`).
+
+`scenario/control.lua` then, per string:
+
+1. `import_stack`. A result of 1 means rejected; -1 means imported with errors (e.g. unknown entity names, which are dropped).
+2. `export_stack`. The **parse diff** compares the input with this re-export. A key the game dropped or changed is one it didn't understand: a typo, a key from another version, or a value it rejects. `import_stack` still returns 0 in those cases, so this diff is the real check.
+3. For every blueprint, including those inside books:
+   - `build_blueprint` on concrete, centred at the origin.
+   - Revive the ghosts.
+   - Blueprint what was built. The **build diff** compares that with the re-export: entities that weren't built, wires that didn't form, settings that didn't stick.
+
+Reporting rules (`validate.py`):
+- **Dropped defaults:** a dropped key holding a default the game is known to omit (`DEFAULTS`) is silent. One that only looks default-ish is a warning.
+- **Added keys:** keys the game adds are ignored.
+- **Migrations:** keys the game renames on import (`MIGRATIONS`) are mapped first. Each entry must be verified in game.
+- **Placement:** entities the concrete test surface can't hold at all are warnings, and their build isn't checked. That covers surface conditions, water and rails; `thruster` is an example. Collisions within the blueprint are errors.
+
+## Circuit tests
+
+A generator with circuit logic declares `circuit_tests(**params)` next to `build()`. It returns `validator.circuit.Case`s; see `generators/gated_requester.py`. Each case:
+
+- `Inject(entity, connector, signals)` sets a constant combinator wired by script to that connector. There is no reach limit, so it fits anywhere. Injectors a case doesn't mention go quiet.
+- The game runs `ticks` ticks (default 10).
+- `Expect(entity, connector, signals=...)` checks the exact non-zero signals on that network.
+- `Expect(entity, requests=...)` checks the exact logistic requests of a requester or buffer chest. These are the chest's compiled requests, so they include what the circuit sets.
+
+`gen --validate` runs them once structural validation passes. Everything is powered by a global electric network on the test surface, so the tests cover logic, not power or layout. Inputs are synthetic: a roboport's network contents is just a signal set you inject.
+
+The server runs with `auto_pause: false`. A server with no players otherwise sits paused, which is invisible until you need ticks.
+
+## Not covered yet
+
+- Circuit tests for strings that don't come from a generator (`bp validate` only checks structure).
+- Item requests (modules, fuel): ignored in the build diff because nothing delivers them.
+- Mods: the server loads only base and the DLC.
+
+## Server facts this relies on
+
+- RCON requests and responses each travel as a single packet, tested to 3 MB both ways. No chunking is needed.
+- With a scenario loaded, the first `/sc` runs directly. The "achievements disabled, repeat the command" prompt only appears on plain saves.
+- factorio.com answers Python's default User-Agent with 403, so `fetch.py` sends its own.

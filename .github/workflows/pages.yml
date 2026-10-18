@@ -1,0 +1,73 @@
+# Build the library browser and publish it to GitHub Pages.
+# Every build first runs the whole test suite, including in-game validation
+# of library/ in a Factorio headless server, so only passing strings are
+# published. Pull requests build and test; only main deploys.
+name: Library site
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FACTORIO_VERSION: "2.1.22"  # the version the library targets (NOTES.md)
+  GHOSTWRITER_REQUIRE_FACTORIO: "1"  # validator tests fail rather than skip
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Cache Factorio headless server
+        id: factorio
+        uses: actions/cache@v6
+        with:
+          path: .factorio-headless
+          key: factorio-headless-${{ env.FACTORIO_VERSION }}
+
+      - name: Download Factorio headless server
+        if: steps.factorio.outputs.cache-hit != 'true'
+        run: python -m validator.fetch "$FACTORIO_VERSION"
+
+      - name: Test, including in-game validation of library/
+        run: python -m unittest discover -v tests
+
+      - name: Build site
+        run: python -m tools.site --out _site/index.html
+
+      - uses: actions/configure-pages@v6
+        if: github.event_name != 'pull_request'
+
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

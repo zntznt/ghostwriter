@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghostwriter Library</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6a66; --line: #dddbd5;
+  --accent: #b35c00; --accent-text: #ffffff; --hover: #efede8; --selected: #fbe6cf;
+  --g-combinator: #3a7bd5; --g-storage: #8a6d3b; --g-belt: #c9a227; --g-inserter: #2e9e6a;
+  --g-machine: #7a5fb3; --g-power: #888683; --g-rail: #5b6770; --g-other: #a9a6a0;
+  --wire-red: #d62828; --wire-green: #2a9d3a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161614; --panel: #1f1f1d; --text: #ecebe7; --muted: #a09e98; --line: #34332f;
+    --accent: #f08c2e; --accent-text: #1a1206; --hover: #2a2926; --selected: #3d2c18;
+    --g-other: #6f6c66; --wire-red: #ff5a5a; --wire-green: #4cd964;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161614; --panel: #1f1f1d; --text: #ecebe7; --muted: #a09e98; --line: #34332f;
+  --accent: #f08c2e; --accent-text: #1a1206; --hover: #2a2926; --selected: #3d2c18;
+  --g-other: #6f6c66; --wire-red: #ff5a5a; --wire-green: #4cd964;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 17px; margin: 0; }
+header .count { color: var(--muted); font-size: 13px; }
+#search { flex: 1 1 220px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--text); font: inherit; }
+.layout { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; min-height: calc(100vh - 58px); }
+nav { border-right: 1px solid var(--line); padding: 8px; overflow: auto; background: var(--panel); }
+main { padding: 20px 24px; overflow: auto; min-width: 0; }
+@media (max-width: 720px) {
+  .layout { grid-template-columns: 1fr; }
+  nav { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
+  main { padding: 16px; }
+}
+details > summary { list-style: none; cursor: pointer; }
+details > summary::-webkit-details-marker { display: none; }
+.item { display: flex; gap: 6px; align-items: baseline; width: 100%; text-align: left; border: 0;
+  background: none; color: inherit; font: inherit; padding: 5px 8px; border-radius: 5px; cursor: pointer; }
+.item:hover { background: var(--hover); }
+.item[aria-current="true"] { background: var(--selected); }
+.item .path { color: var(--muted); font-size: 12px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.children { margin-left: 14px; border-left: 1px solid var(--line); padding-left: 4px; }
+.kind { font-size: 11px; color: var(--muted); min-width: 1.4em; }
+details[open] > summary .kind::before { content: "▾"; }
+details:not([open]) > summary .kind::before { content: "▸"; }
+.empty { color: var(--muted); padding: 24px 8px; }
+.badge { display: inline-block; font-size: 12px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); }
+h2 { margin: 8px 0 2px; font-size: 22px; }
+.where { color: var(--muted); font-size: 13px; font-family: var(--mono); overflow-wrap: anywhere; }
+.description { margin: 12px 0; max-width: 70ch; white-space: pre-wrap; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+button.primary, button.secondary { font: inherit; padding: 7px 14px; border-radius: 6px; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-text); border: 1px solid var(--accent); }
+button.secondary { background: none; color: var(--text); border: 1px solid var(--line); }
+.status { color: var(--muted); font-size: 13px; align-self: center; }
+.preview { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-width: 640px; }
+.preview svg { width: 100%; height: auto; max-height: 420px; display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; background: var(--c); vertical-align: -1px; }
+table { border-collapse: collapse; margin: 14px 0; min-width: 260px; }
+td, th { text-align: left; padding: 4px 12px 4px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+th { color: var(--muted); font-weight: 500; }
+td.n { text-align: right; font-variant-numeric: tabular-nums; }
+main > details { margin-top: 16px; }
+.contents { max-width: 520px; }
+textarea { width: 100%; max-width: 640px; height: 90px; font: 12px var(--mono); padding: 8px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--panel); color: var(--text); resize: vertical; }
+.theme { margin-left: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ghostwriter library</h1>
+  <span class="count" id="count"></span>
+  <input id="search" type="search" placeholder="Search labels, descriptions, entities…" aria-label="Search">
+  <button class="secondary theme" id="theme" title="Toggle light/dark">Theme</button>
+</header>
+<div class="layout">
+  <nav id="nav" aria-label="Library"></nav>
+  <main id="main"></main>
+</div>
+<script>
+const LIBRARY = /*LIBRARY_DATA*/null;
+const KIND = { blueprint: "Blueprint", blueprint_book: "Book",
+               deconstruction_planner: "Deconstruction planner", upgrade_planner: "Upgrade planner" };
+const GROUP_LABEL = { combinator: "Circuit", storage: "Storage", belt: "Belts", inserter: "Inserters",
+                      machine: "Machines", power: "Power", rail: "Rail", other: "Other" };
+const byPath = new Map();
+(function index(nodes) { for (const n of nodes) { byPath.set(n.path, n); if (n.children) index(n.children); } })(LIBRARY.children);
+
+const $ = (tag, attrs = {}, ...kids) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v; else if (k.startsWith("on")) el[k] = v; else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  return el;
+};
+
+function haystack(n) {
+  return [n.label, n.description, n.path, ...Object.keys(n.entities || {})].join(" ").toLowerCase();
+}
+
+function itemButton(n, note) {
+  return $("button", { class: "item", "data-path": n.path, onclick: () => select(n.path) },
+    $("span", { class: "kind" }, n.kind === "blueprint_book" ? "" : "·"),
+    $("span", {}, n.label),
+    note ? $("span", { class: "path" }, note) : null);
+}
+
+function tree(nodes) {
+  return nodes.map(n => n.children
+    ? $("details", { open: "" },
+        $("summary", {}, itemButton(n, null)),
+        $("div", { class: "children" }, tree(n.children)))
+    : itemButton(n, null));
+}
+
+function renderNav() {
+  const nav = document.getElementById("nav");
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  nav.replaceChildren();
+  if (!byPath.size) { nav.append($("p", { class: "empty" }, "The library is empty. File blueprints with `bp add`.")); return; }
+  if (!q) { nav.append(...tree(LIBRARY.children)); }
+  else {
+    const terms = q.split(/\s+/);
+    const hits = [...byPath.values()].filter(n => terms.every(t => haystack(n).includes(t)));
+    nav.append(...(hits.length ? hits.map(n => itemButton(n, n.path)) : [$("p", { class: "empty" }, "No matches.")]));
+  }
+  markCurrent();
+}
+
+function markCurrent() {
+  const current = decodeURIComponent(location.hash.slice(1));
+  for (const b of document.querySelectorAll(".item")) b.setAttribute("aria-current", b.dataset.path === current);
+}
+
+function preview(p) {
+  const NS = "http://www.w3.org/2000/svg";
+  const s = (tag, attrs) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); return el; };
+  if (!p.shapes.length) return null;
+  const xs = p.shapes.flatMap(r => [r.x, r.x + r.w]), ys = p.shapes.flatMap(r => [r.y, r.y + r.h]);
+  const pad = 0.6, x0 = Math.min(...xs) - pad, y0 = Math.min(...ys) - pad;
+  const w = Math.max(...xs) + pad - x0, h = Math.max(...ys) + pad - y0;
+  const svg = s("svg", { viewBox: `${x0} ${y0} ${w} ${h}`, role: "img", "aria-label": "Layout preview" });
+  const grid = s("g", { stroke: "var(--line)", "stroke-width": 0.02 });
+  for (let x = Math.ceil(x0); x <= x0 + w; x++) grid.append(s("line", { x1: x, y1: y0, x2: x, y2: y0 + h }));
+  for (let y = Math.ceil(y0); y <= y0 + h; y++) grid.append(s("line", { x1: x0, y1: y, x2: x0 + w, y2: y }));
+  svg.append(grid);
+  for (const r of p.shapes) {
+    const rect = s("rect", { x: r.x, y: r.y, width: r.w, height: r.h, rx: 0.08,
+                             fill: `var(--g-${r.group})`, "fill-opacity": 0.85 });
+    const title = s("title", {}); title.textContent = r.name; rect.append(title);
+    svg.append(rect);
+  }
+  for (const wire of p.wires) {
+    const off = wire.colour === "green" ? 0.08 : -0.08;
+    const colour = `var(--wire-${wire.colour})`;
+    svg.append(s("line", { x1: wire.x1 + off, y1: wire.y1 + off, x2: wire.x2 + off, y2: wire.y2 + off,
+                            stroke: colour, "stroke-width": 0.08, "stroke-linecap": "round" }));
+    for (const [cx, cy] of [[wire.x1, wire.y1], [wire.x2, wire.y2]])
+      svg.append(s("circle", { cx: cx + off, cy: cy + off, r: 0.11, fill: colour }));
+  }
+  const groups = [...new Set(p.shapes.map(r => r.group))];
+  return $("div", { class: "preview" }, svg,
+    $("div", { class: "legend" },
+      groups.map(g => $("span", { style: `--c: var(--g-${g})` }, GROUP_LABEL[g])),
+      p.wires.some(x => x.colour === "red") ? $("span", { style: "--c: var(--wire-red)" }, "Red wire") : null,
+      p.wires.some(x => x.colour === "green") ? $("span", { style: "--c: var(--wire-green)" }, "Green wire") : null));
+}
+
+async function copy(text, status) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = $("textarea", {}); ta.value = text; document.body.append(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }
+  status.textContent = "Copied — paste it into Factorio with Ctrl+V (Import string).";
+  setTimeout(() => status.textContent = "", 4000);
+}
+
+function select(path) {
+  if (location.hash.slice(1) !== encodeURIComponent(path)) location.hash = encodeURIComponent(path);
+  else render();
+}
+
+function render() {
+  const main = document.getElementById("main");
+  const n = byPath.get(decodeURIComponent(location.hash.slice(1)));
+  markCurrent();
+  if (!n) {
+    main.replaceChildren($("p", { class: "empty" },
+      byPath.size ? "Pick a blueprint or book on the left." : "Nothing filed yet."));
+    return;
+  }
+  const status = $("span", { class: "status", role: "status" });
+  const parts = [
+    $("span", { class: "badge" }, KIND[n.kind] || n.kind),
+    $("h2", {}, n.label),
+    $("div", { class: "where" }, "library/" + n.path),
+    n.description ? $("p", { class: "description" }, n.description) : null,
+    $("div", { class: "actions" },
+      $("button", { class: "primary", onclick: () => copy(n.string, status) },
+        n.kind === "blueprint_book" ? "Copy book string" : "Copy string"),
+      status),
+  ];
+  if (n.preview) parts.push(preview(n.preview));
+  if (n.entities) {
+    parts.push($("table", {},
+      $("tr", {}, $("th", {}, "Entity"), $("th", {}, "Count")),
+      Object.entries(n.entities).map(([name, c]) => $("tr", {}, $("td", {}, name), $("td", { class: "n" }, String(c))))));
+    parts.push($("p", { class: "where" }, `${n.wires} circuit/copper wire${n.wires === 1 ? "" : "s"}`));
+  }
+  if (n.children) {
+    parts.push($("h3", {}, `Contents (${n.children.length})`),
+      $("div", { class: "contents" }, n.children.map(c => itemButton(c, KIND[c.kind]))));
+  }
+  const ta = $("textarea", { readonly: "", "aria-label": "Blueprint string" }); ta.value = n.string;
+  parts.push($("details", {}, $("summary", {}, "Show string"), ta));
+  main.replaceChildren(...parts.filter(Boolean));
+}
+
+document.getElementById("count").textContent =
+  `${[...byPath.values()].filter(n => n.kind !== "blueprint_book").length} items`;
+document.getElementById("search").addEventListener("input", renderNav);
+document.getElementById("theme").addEventListener("click", () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem("theme", root.dataset.theme); } catch {}
+});
+try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+window.addEventListener("hashchange", render);
+renderNav();
+render();
+</script>
+</body>
+</html>
