@@ -4,10 +4,12 @@ import copy
 import tempfile
 import unittest
 import warnings
+from collections import Counter
 from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
+from generators import smelting_column
 from generators.gated_requester import build
 from tools.check import check
 from tools.codec import CodecError, decode, encode, root_key
@@ -61,6 +63,90 @@ class GatedRequester(unittest.TestCase):
 
     def test_generated_is_clean(self):
         self.assertEqual(check(generated()), [])
+
+
+COLUMN_VARIANTS = [
+    {},
+    {"furnace": "steel-furnace"},
+    {"furnace": "electric-furnace"},
+    {"furnace": "electric-furnace", "pole": "small-electric-pole"},
+    {"pole": "small-electric-pole"},
+    {"sides": 1},
+    {"recipe": "steel-plate", "belt": "turbo-transport-belt", "furnaces": 3},
+    {"furnaces": 1},
+]
+
+
+def column(**params) -> dict:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return smelting_column.build(**params).to_dict()["blueprint"]
+
+
+class SmeltingColumn(unittest.TestCase):
+    def test_default_saturates_a_yellow_belt(self):
+        # 24 stone furnaces per side fill one 7.5/s lane each: 15 iron-plate/s.
+        names = Counter(e["name"] for e in column()["entities"])
+        self.assertEqual(names, {"transport-belt": 144, "inserter": 96, "stone-furnace": 48,
+                                 "medium-electric-pole": 12})
+
+    def test_furnace_limit_follows_the_belts(self):
+        limit = {
+            ("stone-furnace", "iron-plate", "transport-belt"): 24,  # output lane: 7.5 / 0.3125
+            ("steel-furnace", "iron-plate", "transport-belt"): 12,
+            ("electric-furnace", "iron-plate", "transport-belt"): 12,
+            ("stone-furnace", "stone-brick", "transport-belt"): 12,  # ore lane: 7.5 / (2 * 0.3125)
+            ("steel-furnace", "steel-plate", "transport-belt"): 12,  # ore lane: 7.5 / (5 / 8)
+            ("electric-furnace", "stone-brick", "transport-belt"): 12,  # both ore lanes
+            ("stone-furnace", "iron-plate", "express-transport-belt"): 72,
+        }
+        for (furnace, recipe, belt), n in limit.items():
+            self.assertEqual(smelting_column.plan(furnace, recipe, belt).limit, n, (furnace, recipe, belt))
+
+    def test_variants_check_clean(self):
+        for params in COLUMN_VARIANTS:
+            self.assertEqual(check({"blueprint": column(**params)}), [], params)
+
+    def test_every_powered_entity_is_on_one_pole_network(self):
+        # Independent of the generator's own placement: supply areas against
+        # collision boxes, and the copper wires joining every pole.
+        from draftsman.data import entities as protos
+
+        for params in COLUMN_VARIANTS:
+            bp = column(**params)
+            ents = bp["entities"]
+            poles = {e["entity_number"]: e for e in ents if e["name"].endswith("electric-pole")}
+            for e in ents:
+                p = protos.raw[e["name"]]
+                if p.get("energy_source", {}).get("type") != "electric":
+                    continue
+                half = p["collision_box"][1][0]
+                self.assertTrue(any(
+                    all(abs(e["position"][k] - q["position"][k]) < protos.raw[q["name"]]["supply_area_distance"] + half
+                        for k in "xy")
+                    for q in poles.values()), (params, e))
+            group = {n: n for n in poles}
+
+            def root(n):
+                while group[n] != n:
+                    n = group[n]
+                return n
+
+            for a, ca, b, cb in bp.get("wires", []):
+                self.assertEqual((ca, cb), (5, 5))  # pole_copper
+                group[root(a)] = root(b)
+            self.assertEqual(len({root(n) for n in poles}), 1, params)
+
+    def test_flow_tests_name_built_belts(self):
+        for params in COLUMN_VARIANTS:
+            bp = smelting_column.build(**params)
+            ids = {e.id for e in bp.entities if e.id}
+            for flow in smelting_column.flow_tests(**params):
+                self.assertLessEqual({f.entity for f in flow.feed} | set(flow.drain), ids, params)
+
+    def test_bad_sides(self):
+        with self.assertRaises(ValueError):
+            smelting_column.build(sides=3)
 
 
 class Check(unittest.TestCase):

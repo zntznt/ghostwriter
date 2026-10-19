@@ -47,7 +47,11 @@ SRC is a string, a file path, or `-` (stdin).
    that inject signals and assert outputs or chest requests. Cover the
    boundaries: below, at and above every threshold, plus unrelated signals.
    Make the cases follow the parameters (an "unrelated" item must differ
-   from `item`).
+   from `item`). If it moves items (belts, inserters, machines), it also
+   exposes `flow_tests(**params) -> list[Flow]` (`validator/flow.py`): feed
+   belt lanes, drain output belts, and assert the rated items/s. Compute the
+   rate from the same prototype data the layout uses, and size the window so
+   whole crafts can't skew it (`generators/smelting_column.py`).
 3. Draftsman gotchas: `entities.append()` copies, so wire by `id=`; use
    `LogisticModeOfOperation` for chest circuit mode (2.1 migrates it); place
    `railgun-turret` by `position`, not `tile_position` (wrong footprint).
@@ -66,9 +70,11 @@ SRC is a string, a file path, or `-` (stdin).
 5. Add a test in `tests/` for anything verified, especially wires.
 6. Hand the string to the user with what it needs in game (wires to connect,
    items to set). Say what validation covered: import, settings, wires,
-   building on a test surface, and the circuit cases by name. Inputs in
-   circuit tests are synthetic (injected signals, script power), so name
-   what the user still has to check in a real factory.
+   building on a test surface, and the circuit and flow cases by name.
+   Inputs in circuit tests are synthetic (injected signals, script power),
+   and flow tests feed belts by script with no research on the force (one
+   item per inserter swing, all recipes unlocked for the run), so name what
+   the user still has to check in a real factory.
 7. If validation fails: read the error, fix the generator, re-run. A key
    the game drops is either a typo or something Draftsman writes in an older
    form. For the latter, verify the game's form in a round trip, then add a

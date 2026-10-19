@@ -379,6 +379,64 @@ local function circuit_teardown()
   storage.circuit = nil
 end
 
+-- Flow tests: build one blueprint and keep it, powered only through its own
+-- poles (a script-wired pole joins them to an unlimited source); every tick
+-- top up fed belt lanes from their back end and empty drain belts, counting
+-- what left them.
+
+local LANES = {left = defines.transport_line.left_line, right = defines.transport_line.right_line}
+
+local function flow_tick()
+  local f = storage.flow
+  if not (f and f.started) then return end
+  for _, feed in pairs(f.feeds) do
+    if feed.belt.valid then
+      local line = feed.belt.get_transport_line(feed.lane)
+      if line.can_insert_at_back() then line.insert_at_back({name = feed.item}) end
+    end
+  end
+  for _, belt in pairs(f.drains) do
+    if belt.valid then
+      for _, lane in pairs(LANES) do
+        local line = belt.get_transport_line(lane)
+        for _, item in pairs(line.get_contents()) do
+          f.counts[item.name] = (f.counts[item.name] or 0) + item.count
+        end
+        line.clear()
+      end
+    end
+  end
+end
+script.on_event(defines.events.on_tick, flow_tick)
+
+local function source_for(s, area, pole)
+  local spot = s.find_non_colliding_position("medium-electric-pole", {area[2][1] + 2, area[1][2] + 2}, 64, 1)
+  local helper = s.create_entity{name = "medium-electric-pole", position = spot, force = "player"}
+  local eei = s.create_entity{
+    name = "electric-energy-interface", force = "player",
+    position = s.find_non_colliding_position("electric-energy-interface", spot, 3, 0.5),
+  }
+  eei.power_production = 1e9
+  eei.electric_buffer_size = 1e9
+  local copper = defines.wire_connector_id.pole_copper
+  helper.get_wire_connector(copper, true).connect_to(pole.get_wire_connector(copper, true), false,
+                                                      defines.wire_origin.script)
+  return {helper, eei}
+end
+
+local function flow_teardown()
+  local f = storage.flow
+  if not f then return end
+  game.speed = 1
+  local recipes = game.forces.player.recipes
+  for _, name in pairs(f.locked) do recipes[name].enabled = false end
+  for _, e in pairs(f.helpers) do
+    if e.valid then e.destroy() end
+  end
+  clear(f.surface, f.area)
+  storage.flow = nil
+end
+
 local function reply(t)
   rcon.print(helpers.table_to_json(t))
 end
@@ -386,6 +444,7 @@ end
 remote.add_interface("ghostwriter", {
   circuit_setup = function(text)
     circuit_teardown()
+    flow_teardown()
     local inv = game.create_inventory(1)
     local stack = inv[1]
     local rc = stack.import_stack(text)
@@ -462,6 +521,97 @@ remote.add_interface("ghostwriter", {
 
   circuit_teardown = function()
     circuit_teardown()
+    reply{ok = true}
+  end,
+
+  flow_setup = function(json)
+    circuit_teardown()
+    flow_teardown()
+    local args = helpers.json_to_table(json)
+    local inv = game.create_inventory(1)
+    local stack = inv[1]
+    local rc = stack.import_stack(args.blueprint)
+    if not (stack.valid_for_read and stack.is_blueprint) then
+      inv.destroy()
+      return reply{error = "not a blueprint (import_stack returned " .. rc .. ")"}
+    end
+    local out, s, area, built = place(stack)
+    inv.destroy()
+    -- Circuit tests leave the surface on a global network, which would power
+    -- every entity whatever the poles do.
+    if s.has_global_electric_network then s.destroy_global_electric_network() end
+    local f = {surface = s, area = area, built = built, helpers = {}, feeds = {}, drains = {}, counts = {},
+               locked = {}}
+    for _, e in pairs(built) do
+      if e.valid and e.type == "electric-pole" then
+        f.helpers = source_for(s, area, e)
+        break
+      end
+    end
+    storage.flow = f
+    game.speed = args.speed or 1
+    -- Furnaces only take what an unlocked recipe smelts (iron plates need
+    -- Steel processing); flow tests measure throughput, not research.
+    -- (LuaForce.reset_recipes doesn't relock them, so teardown does.)
+    for name, recipe in pairs(game.forces.player.recipes) do
+      if not recipe.enabled then
+        f.locked[#f.locked + 1] = name
+        recipe.enabled = true
+      end
+    end
+    reply(out)
+  end,
+
+  flow_start = function(json)
+    local args = helpers.json_to_table(json)
+    local f = storage.flow
+    if not f then return reply{error = "no flow_setup"} end
+    for _, feed in pairs(args.feeds) do
+      local belt = f.built[feed.entity]
+      if not (belt and belt.valid and belt.get_max_transport_line_index() >= 2) then
+        return reply{error = "entity " .. feed.entity .. " is not a built belt"}
+      end
+      if not LANES[feed.lane] then return reply{error = "lane is left or right, not " .. feed.lane} end
+      if not prototypes.item[feed.item] then return reply{error = "unknown item " .. feed.item} end
+      f.feeds[#f.feeds + 1] = {belt = belt, lane = LANES[feed.lane], item = feed.item}
+    end
+    for _, n in pairs(args.drains) do
+      local belt = f.built[n]
+      if not (belt and belt.valid and belt.get_max_transport_line_index() >= 2) then
+        return reply{error = "entity " .. n .. " is not a built belt"}
+      end
+      f.drains[#f.drains + 1] = belt
+    end
+    f.started = true
+    reply{ok = true}
+  end,
+
+  flow_count = function()
+    local f = storage.flow
+    if not f then return reply{error = "no flow_setup"} end
+    f.counts, f.since = {}, game.tick
+    reply{ok = true}
+  end,
+
+  -- Counts since flow_count, and how many of each built entity aren't working.
+  flow_read = function()
+    local f = storage.flow
+    if not (f and f.since) then return reply{error = "no flow_count"} end
+    local names = {}
+    for k, v in pairs(defines.entity_status) do names[v] = k end
+    local stalled = {}
+    for _, e in pairs(f.built) do
+      local status = e.valid and e.status and names[e.status]
+      if status and status ~= "working" then
+        local key = e.name .. ": " .. status
+        stalled[key] = (stalled[key] or 0) + 1
+      end
+    end
+    reply{counts = f.counts, ticks = game.tick - f.since, stalled = stalled}
+  end,
+
+  flow_teardown = function()
+    flow_teardown()
     reply{ok = true}
   end,
 
