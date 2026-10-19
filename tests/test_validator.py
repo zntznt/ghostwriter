@@ -263,6 +263,30 @@ class Validator(unittest.TestCase):
             report = self.run_flow(bp.to_dict(), gen.flow_tests(**part_params), ids)
             self.assertTrue(report.ok, (name, part_params, report.lines()))
 
+    def test_production_chain_reaches_its_rate(self):
+        # The whole book as one: each row's products feed the rows that use them.
+        data, flows = production.chain_tests(item="electronic-circuit", rate=5)
+        self.assertPasses(data)
+        report = self.run_flow(data, flows, {})
+        self.assertTrue(report.ok, report.lines())
+
+    def test_production_chain_missing_a_row_fails(self):
+        # One copper-cable row short: the circuits starve below the target.
+        from dataclasses import replace
+        from unittest import mock
+
+        solve = production.solve
+
+        def short(*args, **kwargs):
+            steps, inputs = solve(*args, **kwargs)
+            return [replace(s, rows=s.rows - 1) if s.item == "copper-cable" else s for s in steps], inputs
+
+        with mock.patch.object(production, "solve", short):
+            data, flows = production.chain_tests(item="electronic-circuit", rate=5)
+        report = self.run_flow(data, flows, {})
+        self.assertFalse(report.ok)
+        self.assertTrue(any("electronic-circuit" in e for e in report.errors), report.lines())
+
     def test_fluid_rows_reach_rated_output(self):
         # Chemical plants and assemblers turned to the middle pipe, fed by an
         # infinity pipe at its end; a long-handed and a near-lane ingredient.

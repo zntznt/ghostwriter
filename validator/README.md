@@ -72,7 +72,14 @@ A generator that moves items declares `flow_tests(**params)` next to
 
 `gen --validate` runs them once structural validation passes. A generator that
 returns a book of other generators' blueprints (`production`) exposes
-`parts(**params)`, and each distinct child runs its own generator's tests. They
+`parts(**params)`, and each distinct child runs its own generator's tests.
+With `chain_tests(**params)` it also runs the whole book as one blueprint:
+
+- Every row is built side by side in one blueprint, and every pole network is powered.
+- What the book makes is passed from producers to consumers through a pool. Drains and fluid production add to it; a `Feed(..., pooled=True)` or `FluidFeed(..., pooled=True)` takes from it. Only what the book needs from outside is fed without limit.
+- `caps` maps a pooled item or fluid to the most the pool holds. At the cap its drains stop and its outputs back up, as a full belt or pipe would. The chain uses 20 s of output (at least 5).
+- Pooled fluid feeds draw in the order listed; cracking comes last, so it gets only surplus.
+- `at_least=True` checks only the lower bound, since rows are sized with slack. They
 run at game speed 100, so a 3-minute case takes a few seconds.
 
 Differences from circuit tests:

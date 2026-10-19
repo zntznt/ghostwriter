@@ -8,7 +8,8 @@
   gen NAME [k=v ...]    run generators/NAME.py build(), check, print string
       [--validate]        ...and validate in the game (plus the generator's
                           circuit_tests() and flow_tests(), and for a book
-                          generator with parts(), each row's own tests) before printing
+                          generator with parts(), each row's own tests and,
+                          with chain_tests(), the whole book run as one) before printing
   validate SRC...       import, round-trip and build in a headless server; runs
                         circuit and flow tests from a sibling NAME.tests.toml
 
@@ -104,6 +105,12 @@ def cmd_gen(args):
             child = {k: v for k, v in children[i].items() if k != "index"}
             label = f"{i}: {child['blueprint'].get('label', name)}"
             items.append((label, child, *_generator_tests(part, part_params, part_bp, child)))
+    if args.validate and hasattr(module, "chain_tests"):
+        # The whole book run as one: each row's products feed the rows that use them.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            chain, flows = module.chain_tests(**params)
+        items.append(("chain", chain, None, (flows, {})))
     if args.validate and not _validate(items, args.factorio):
         sys.exit(1)
     sys.stdout.write(dump_json(data) if args.json else encode(data) + "\n")

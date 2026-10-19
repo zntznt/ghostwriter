@@ -386,30 +386,72 @@ end
 
 local LANES = {left = defines.transport_line.left_line, right = defines.transport_line.right_line}
 
+-- A pool links blueprints run together (a whole production book): what drains
+-- off belts and the fluid machines make is credited to it, and pooled feeds
+-- only hand out what it holds.
 local function flow_tick()
   local f = storage.flow
   if not (f and f.started) then return end
+  local pool = f.pool
   for _, feed in pairs(f.feeds) do
     if feed.belt.valid then
       local line = feed.belt.get_transport_line(feed.lane)
-      if line.can_insert_at_back() then line.insert_at_back({name = feed.item}) end
+      if line.can_insert_at_back() and (not feed.pooled or (pool[feed.item] or 0) >= 1) then
+        if line.insert_at_back({name = feed.item}) and feed.pooled then pool[feed.item] = pool[feed.item] - 1 end
+      end
     end
   end
+  local caps = f.caps
   for _, belt in pairs(f.drains) do
     if belt.valid then
       for _, lane in pairs(LANES) do
         local line = belt.get_transport_line(lane)
-        for _, item in pairs(line.get_contents()) do
-          f.counts[item.name] = (f.counts[item.name] or 0) + item.count
+        local contents = line.get_contents()
+        -- Backpressure: a lane whose item the pool already holds enough of stays
+        -- put, so the belt backs up and the row making it slows, as in a factory.
+        local full = false
+        for _, item in pairs(contents) do
+          if caps[item.name] and (pool[item.name] or 0) >= caps[item.name] then full = true end
         end
-        line.clear()
+        if not full then
+          for _, item in pairs(contents) do
+            f.counts[item.name] = (f.counts[item.name] or 0) + item.count
+            pool[item.name] = (pool[item.name] or 0) + item.count
+          end
+          line.clear()
+        end
+      end
+    end
+  end
+  for _, sink in pairs(f.sinks) do
+    -- Same for fluids: a sink stops draining while the pool is full, so the line fills.
+    local cap = caps[sink.fluid]
+    if cap and sink.entity.valid then
+      local full = (pool[sink.fluid] or 0) >= cap
+      if full ~= sink.off then
+        sink.off = full
+        sink.entity.set_infinity_pipe_filter(not full and {name = sink.fluid, percentage = 0, mode = "at-most"} or nil)
+      end
+    end
+  end
+  if next(f.pooled_fluids) then
+    local stats = game.forces.player.get_fluid_production_statistics(f.surface)
+    for name, last in pairs(f.pooled_fluids) do
+      local now = stats.get_input_count(name)
+      pool[name] = (pool[name] or 0) + now - last
+      f.pooled_fluids[name] = now
+    end
+    for _, feed in pairs(f.fluid_feeds) do
+      local have = pool[feed.fluid] or 0
+      if have > 0 and feed.entity.valid then
+        pool[feed.fluid] = have - feed.entity.insert_fluid{name = feed.fluid, amount = math.min(have, 1000)}
       end
     end
   end
 end
 script.on_event(defines.events.on_tick, flow_tick)
 
-local function source_for(s, area, pole)
+local function source_for(s, area, poles)
   local spot = s.find_non_colliding_position("medium-electric-pole", {area[2][1] + 2, area[1][2] + 2}, 64, 1)
   local helper = s.create_entity{name = "medium-electric-pole", position = spot, force = "player"}
   local eei = s.create_entity{
@@ -418,9 +460,15 @@ local function source_for(s, area, pole)
   }
   eei.power_production = 1e9
   eei.electric_buffer_size = 1e9
+  -- One pole from each separate network (blueprints run side by side have one
+  -- each), chained to the source by script wires.
   local copper = defines.wire_connector_id.pole_copper
-  helper.get_wire_connector(copper, true).connect_to(pole.get_wire_connector(copper, true), false,
-                                                      defines.wire_origin.script)
+  local last = helper
+  for _, pole in pairs(poles) do
+    last.get_wire_connector(copper, true).connect_to(pole.get_wire_connector(copper, true), false,
+                                                     defines.wire_origin.script)
+    last = pole
+  end
   return {helper, eei}
 end
 
@@ -541,13 +589,15 @@ remote.add_interface("ghostwriter", {
     -- every entity whatever the poles do.
     if s.has_global_electric_network then s.destroy_global_electric_network() end
     local f = {surface = s, area = area, built = built, helpers = {}, feeds = {}, drains = {}, counts = {},
-               locked = {}}
+               locked = {}, pool = {}, fluid_feeds = {}, pooled_fluids = {}, sinks = {}, caps = {}}
+    local networks, poles = {}, {}
     for _, e in pairs(built) do
-      if e.valid and e.type == "electric-pole" then
-        f.helpers = source_for(s, area, e)
-        break
+      if e.valid and e.type == "electric-pole" and not networks[e.electric_network_id] then
+        networks[e.electric_network_id] = true
+        poles[#poles + 1] = e
       end
     end
+    if poles[1] then f.helpers = source_for(s, area, poles) end
     storage.flow = f
     game.speed = args.speed or 1
     -- Furnaces only take what an unlocked recipe smelts (iron plates need
@@ -573,7 +623,7 @@ remote.add_interface("ghostwriter", {
       end
       if not LANES[feed.lane] then return reply{error = "lane is left or right, not " .. feed.lane} end
       if not prototypes.item[feed.item] then return reply{error = "unknown item " .. feed.item} end
-      f.feeds[#f.feeds + 1] = {belt = belt, lane = LANES[feed.lane], item = feed.item}
+      f.feeds[#f.feeds + 1] = {belt = belt, lane = LANES[feed.lane], item = feed.item, pooled = feed.pooled}
     end
     for _, n in pairs(args.drains) do
       local belt = f.built[n]
@@ -586,6 +636,13 @@ remote.add_interface("ghostwriter", {
       local target = f.built[feed.entity]
       if not (target and target.valid) then return reply{error = "entity " .. feed.entity .. " was not built"} end
       if not prototypes.fluid[feed.fluid] then return reply{error = "unknown fluid " .. feed.fluid} end
+      if feed.pooled then
+        -- Fed from the pool straight into the entity; the pool counts what machines make.
+        f.fluid_feeds[#f.fluid_feeds + 1] = {entity = target, fluid = feed.fluid}
+        local stats = game.forces.player.get_fluid_production_statistics(f.surface)
+        f.pooled_fluids[feed.fluid] = stats.get_input_count(feed.fluid)
+        goto next_fluid
+      end
       -- An unlimited source (or, with sink, an unlimited drain) on the first free
       -- tile beside it, or on the given side; it connects like a pipe.
       local sides = {south = {0, 1}, north = {0, -1}, east = {1, 0}, west = {-1, 0}}
@@ -602,11 +659,14 @@ remote.add_interface("ghostwriter", {
       if not source then return reply{error = "no free tile beside entity " .. feed.entity} end
       if feed.sink then
         source.set_infinity_pipe_filter{name = feed.fluid, percentage = 0, mode = "at-most"}
+        f.sinks[#f.sinks + 1] = {entity = source, fluid = feed.fluid}
       else
         source.set_infinity_pipe_filter{name = feed.fluid, percentage = 1, mode = "at-least"}
       end
       f.helpers[#f.helpers + 1] = source
+      ::next_fluid::
     end
+    for name, cap in pairs(args.caps or {}) do f.caps[name] = cap end
     f.started = true
     reply{ok = true}
   end,
@@ -642,7 +702,7 @@ remote.add_interface("ghostwriter", {
       local made = stats.get_input_count(name) - base
       if made > 0 then fluids[name] = made end
     end
-    reply{counts = f.counts, fluids = fluids, ticks = game.tick - f.since, stalled = stalled}
+    reply{counts = f.counts, fluids = fluids, ticks = game.tick - f.since, stalled = stalled, pool = f.pool}
   end,
 
   flow_teardown = function()
