@@ -7,6 +7,7 @@ A generator declares cases next to build():
                      inject=[Inject("decider", "combinator_input_green", {"iron-plate": 150})],
                      expect=[Expect("chest", requests={"iron-plate": 100})])]
 
+Library blueprints keep theirs in a tests file (validator/tests_file.py).
 Entities are Draftsman ids (or entity_numbers). Connectors are
 defines.wire_connector_id names: circuit_red, circuit_green,
 combinator_input_red/green, combinator_output_red/green.
@@ -24,11 +25,7 @@ layout (validate() covers layout). Inputs are synthetic: a roboport's
 
 import json
 import time
-import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
-
-from draftsman.constants import WireConnectorID
 
 from tools.codec import encode
 from validator.server import Server, ServerError
@@ -56,94 +53,6 @@ class Case:
     inject: list[Inject] = field(default_factory=list)
     expect: list[Expect] = field(default_factory=list)
     ticks: int = 10
-
-
-# Library blueprints carry their cases in a sibling file:
-#   library/logistics/gated-requester.json
-#   library/logistics/gated-requester.tests.toml
-#
-#   [ids]                       # optional names for entity_numbers
-#   chest = 1
-#   decider = 2
-#
-#   [[case]]
-#   name = "surplus: request"
-#   ticks = 10                  # optional
-#   inject = [{ entity = "decider", connector = "combinator_input_green", signals = { iron-plate = 150 } }]
-#   expect = [{ entity = "chest", requests = { iron-plate = 100 } }]
-TESTS_SUFFIX = ".tests.toml"
-CONNECTORS = {name.lower() for name in WireConnectorID.__members__ if "COPPER" not in name}  # aliases included
-
-
-def tests_path(blueprint_file: Path) -> Path:
-    return blueprint_file.with_name(blueprint_file.stem + TESTS_SUFFIX)
-
-
-def load_cases(path: Path, data: dict | None = None) -> tuple[list[Case], dict[str, int]]:
-    """Parse a tests file. With the blueprint's data, also check every entity
-    and connector it names exists, so a typo fails without a game."""
-    where = path.name
-    spec = tomllib.loads(path.read_text())
-    _keys(spec, {"ids", "case"}, where)
-    ids = spec.get("ids", {})
-    if not all(isinstance(k, str) and isinstance(v, int) for k, v in ids.items()):
-        raise ValueError(f"{where}: [ids] maps names to entity_numbers")
-    numbers = {e["entity_number"] for e in data["blueprint"].get("entities", [])} if data else None
-
-    def entity(ref, ctx):
-        n = ids.get(ref) if isinstance(ref, str) else ref
-        if not isinstance(n, int) or (numbers is not None and n not in numbers):
-            raise ValueError(f"{ctx}: entity {ref!r} is not in the blueprint")
-        return ref
-
-    def connector(name, ctx):
-        if name is not None and name not in CONNECTORS:
-            raise ValueError(f"{ctx}: connector {name!r} is not one of {sorted(CONNECTORS)}")
-        return name
-
-    cases = []
-    for i, c in enumerate(spec.get("case", [])):
-        ctx = f"{where} case {i + 1} ({c.get('name', 'unnamed')})"
-        _keys(c, {"name", "inject", "expect", "ticks"}, ctx)
-        inject, expect = [], []
-        for x in c.get("inject", []):
-            _keys(x, {"entity", "connector", "signals"}, ctx)
-            inject.append(Inject(entity(x["entity"], ctx), connector(x["connector"], ctx), dict(x["signals"])))
-        for x in c.get("expect", []):
-            _keys(x, {"entity", "connector", "signals", "requests"}, ctx)
-            if "signals" in x and "connector" not in x:
-                raise ValueError(f"{ctx}: expected signals need a connector")
-            expect.append(Expect(entity(x["entity"], ctx), connector(x.get("connector"), ctx),
-                                 x.get("signals"), x.get("requests")))
-        if not expect:
-            raise ValueError(f"{ctx}: a case needs at least one expect")
-        cases.append(Case(c["name"], inject, expect, c.get("ticks", 10)))
-    if not cases:
-        raise ValueError(f"{where}: no [[case]]")
-    return cases, ids
-
-
-def library_tests(library: Path) -> list[tuple[str, dict, list[Case], dict[str, int]]]:
-    """(label, blueprint data, cases, ids) for every library blueprint with a tests file."""
-    out = []
-    for path in sorted(library.rglob("*" + TESTS_SUFFIX)):
-        blueprint_file = path.with_name(path.name[: -len(TESTS_SUFFIX)] + ".json")
-        label = str(blueprint_file.relative_to(library))
-        if not blueprint_file.is_file():
-            raise ValueError(f"{path.relative_to(library)}: no {blueprint_file.name} next to it")
-        data = json.loads(blueprint_file.read_text())
-        data.pop("index", None)
-        if "blueprint" not in data:
-            raise ValueError(f"{label}: circuit tests need a blueprint, not a {next(iter(data))}")
-        cases, ids = load_cases(path, data)
-        out.append((label, data, cases, ids))
-    return out
-
-
-def _keys(d: dict, allowed: set, ctx: str):
-    unknown = set(d) - allowed
-    if unknown:
-        raise ValueError(f"{ctx}: unknown keys {sorted(unknown)}; allowed: {sorted(allowed)}")
 
 
 def run_circuit_tests(server: Server, data: dict, cases: list[Case], ids: dict[str, int], report: Report):

@@ -87,12 +87,14 @@ SRC is a string, a file path, or `-` (stdin).
   children keep their `index`). Strings are never stored. Build them on
   demand with `book` / `encode`.
 - Only file blueprints the user has confirmed work in game, or that passed
-  the validator including circuit tests for any logic.
-- A filed blueprint with circuit logic gets `NAME.tests.toml` next to its
-  `NAME.json` (format: `validator/README.md`). For a generated one, write its
-  `circuit_tests()` cases for the filed parameters. For one the user imports,
-  ask what it should do, then write cases for the boundaries. CI runs them
-  before every publish, and the site lists them.
+  the validator including circuit and flow tests for any logic or throughput.
+- A filed blueprint with circuit logic or a rated throughput gets
+  `NAME.tests.toml` next to its `NAME.json` (`[[case]]` and `[[flow]]`
+  tables; format: `validator/README.md`). For a generated one, write its
+  `circuit_tests()` / `flow_tests()` for the filed parameters, with entity
+  numbers from the same build, and check the filed JSON equals `build()`.
+  For one the user imports, ask what it should do, then write cases for the
+  boundaries. CI runs them before every publish, and the site lists them.
   `add` refuses strings with check errors
   (`--force` for modded exports with names neither Draftsman nor `data/`
   knows). Expect "doesn't model" warnings on 2.1 exports; they are harmless.

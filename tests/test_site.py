@@ -53,6 +53,12 @@ class Site(unittest.TestCase):
         self.assertEqual(len(leaf["tests"]), 5)
         self.assertIn("network has surplus: request", leaf["tests"])
 
+    def test_flow_tested_entries_list_their_flows(self):
+        data = site.build(Path(__file__).parent.parent / "library")
+        leaf = next(n for n in self.nodes(data) if n["path"].startswith("smelting/"))
+        self.assertEqual(leaf["flows"], ["48 furnaces: 15 iron-plate/s"])
+        self.assertNotIn("tests", leaf)
+
     def test_page_embeds_data_safely(self):
         data = generated()
         data["blueprint"]["description"] = "</script><script>alert(1)</script>"
