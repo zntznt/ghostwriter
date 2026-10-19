@@ -8,7 +8,9 @@ A generator declares cases next to build():
                      drain=["plates"], expect={"iron-plate": 7.5})]
 
 A FluidFeed attaches an unlimited source of a fluid (an infinity pipe) to a
-free tile beside the named entity, usually the end of a pipe.
+free tile beside the named entity, usually the end of a pipe, or with
+sink=True an unlimited drain. `expect` may name fluids: their rate is what the
+machines made (the force's fluid production statistics), in units/s.
 
 Library blueprints keep theirs in a tests file (validator/tests_file.py).
 Entities are Draftsman ids (or entity_numbers). A Feed keeps one lane of a
@@ -26,6 +28,8 @@ per swing.
 
 import json
 from dataclasses import dataclass, field
+
+from draftsman.data import fluids as fluid_data
 
 from tools.codec import encode
 from validator.circuit import _ok, _wait_ticks
@@ -48,6 +52,8 @@ class Feed:
 class FluidFeed:
     entity: str | int  # a pipe (or anything with a fluid connection) to attach the source to
     fluid: str
+    side: str = ""  # north/south/east/west of the entity; default the first free tile
+    sink: bool = False  # drain the fluid instead of supplying it
 
 
 @dataclass
@@ -80,7 +86,8 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
             _ok(server.call("flow_start", json.dumps({
                 "feeds": [{"entity": number(f.entity), "lane": f.lane, "item": f.item} for f in flow.feed],
                 "drains": [number(d) for d in flow.drain],
-                "fluids": [{"entity": number(f.entity), "fluid": f.fluid} for f in flow.fluids],
+                "fluids": [{"entity": number(f.entity), "fluid": f.fluid, "side": f.side or None, "sink": f.sink}
+                           for f in flow.fluids],
             })))
             _wait_ticks(server, int(flow.warmup * 60), timeout=_timeout(flow.warmup))
             _ok(server.call("flow_count"))
@@ -89,8 +96,10 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
             _ok(got)
             seconds = got["ticks"] / 60
             counts = got["counts"] if isinstance(got["counts"], dict) else {}
+            made = got.get("fluids") if isinstance(got.get("fluids"), dict) else {}
             for item, rate in flow.expect.items():
-                measured = counts.get(item, 0) / seconds
+                # Items are counted at the drains; fluids from what machines made.
+                measured = (made.get(item, 0) if item in fluid_data.raw else counts.get(item, 0)) / seconds
                 if abs(measured - rate) > flow.tolerance * rate:
                     stalled = got.get("stalled") if isinstance(got.get("stalled"), dict) else {}
                     report.errors.append(

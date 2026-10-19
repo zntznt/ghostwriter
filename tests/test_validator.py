@@ -10,7 +10,7 @@ from draftsman.blueprintable import Blueprint
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import assembly_row, fluid_row, gated_requester, production, smelting_column
+from generators import assembly_row, fluid_block, fluid_row, gated_requester, production, smelting_column
 from tools.codec import decode, encode
 from tools import rates
 from tools.factorio import locate
@@ -273,6 +273,28 @@ class Validator(unittest.TestCase):
             self.assertPasses(data)
             report = self.run_flow(data, fluid_row.flow_tests(**params), ids)
             self.assertTrue(report.ok, (params, report.lines()))
+
+    def test_fluid_blocks_reach_rated_output(self):
+        # Fluid made is counted from production statistics, items at the belts.
+        for params in ({"machines": 2}, {"recipe": "advanced-oil-processing", "machines": 2},
+                       {"recipe": "sulfur", "machines": 3}, {"recipe": "sulfuric-acid", "machines": 2}):
+            bp = fluid_block.build(**params)
+            data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+            self.assertPasses(data)
+            report = self.run_flow(data, fluid_block.flow_tests(**params), ids)
+            self.assertTrue(report.ok, (params, report.lines()))
+
+    def test_fluids_in_the_wrong_lines_fail(self):
+        # Water and petroleum gas swapped: the game fills input boxes in recipe order.
+        import dataclasses
+
+        bp = fluid_block.build(recipe="sulfur", machines=2)
+        ids = {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+        swap = {"water": "petroleum-gas", "petroleum-gas": "water"}
+        flows = [dataclasses.replace(f, fluids=[dataclasses.replace(x, fluid=swap[x.fluid]) for x in f.fluids])
+                 for f in fluid_block.flow_tests(recipe="sulfur", machines=2)]
+        report = self.run_flow(bp.to_dict(), flows, ids)
+        self.assertTrue(any("fluid_ingredient_shortage" in e for e in report.errors), report.lines())
 
     def test_fluid_row_without_turned_machines_fails(self):
         bp = fluid_row.build(machines=1)

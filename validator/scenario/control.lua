@@ -586,9 +586,13 @@ remote.add_interface("ghostwriter", {
       local target = f.built[feed.entity]
       if not (target and target.valid) then return reply{error = "entity " .. feed.entity .. " was not built"} end
       if not prototypes.fluid[feed.fluid] then return reply{error = "unknown fluid " .. feed.fluid} end
-      -- An unlimited source on the first free tile beside it; it connects like a pipe.
+      -- An unlimited source (or, with sink, an unlimited drain) on the first free
+      -- tile beside it, or on the given side; it connects like a pipe.
+      local sides = {south = {0, 1}, north = {0, -1}, east = {1, 0}, west = {-1, 0}}
+      local tries = feed.side and {sides[feed.side]} or {sides.south, sides.north, sides.east, sides.west}
+      if not tries[1] then return reply{error = "side is north, south, east or west, not " .. feed.side} end
       local source
-      for _, d in pairs({{0, 1}, {0, -1}, {1, 0}, {-1, 0}}) do
+      for _, d in pairs(tries) do
         local at = {target.position.x + d[1], target.position.y + d[2]}
         if f.surface.can_place_entity{name = "infinity-pipe", position = at, force = "player"} then
           source = f.surface.create_entity{name = "infinity-pipe", position = at, force = "player"}
@@ -596,7 +600,11 @@ remote.add_interface("ghostwriter", {
         end
       end
       if not source then return reply{error = "no free tile beside entity " .. feed.entity} end
-      source.set_infinity_pipe_filter{name = feed.fluid, percentage = 1, mode = "at-least"}
+      if feed.sink then
+        source.set_infinity_pipe_filter{name = feed.fluid, percentage = 0, mode = "at-most"}
+      else
+        source.set_infinity_pipe_filter{name = feed.fluid, percentage = 1, mode = "at-least"}
+      end
       f.helpers[#f.helpers + 1] = source
     end
     f.started = true
@@ -607,6 +615,10 @@ remote.add_interface("ghostwriter", {
     local f = storage.flow
     if not f then return reply{error = "no flow_setup"} end
     f.counts, f.since = {}, game.tick
+    -- Fluids are counted from the force's production statistics: what machines made.
+    local stats = game.forces.player.get_fluid_production_statistics(f.surface)
+    f.fluid_base = {}
+    for name in pairs(prototypes.fluid) do f.fluid_base[name] = stats.get_input_count(name) end
     reply{ok = true}
   end,
 
@@ -624,7 +636,13 @@ remote.add_interface("ghostwriter", {
         stalled[key] = (stalled[key] or 0) + 1
       end
     end
-    reply{counts = f.counts, ticks = game.tick - f.since, stalled = stalled}
+    local stats = game.forces.player.get_fluid_production_statistics(f.surface)
+    local fluids = {}
+    for name, base in pairs(f.fluid_base) do
+      local made = stats.get_input_count(name) - base
+      if made > 0 then fluids[name] = made end
+    end
+    reply{counts = f.counts, fluids = fluids, ticks = game.tick - f.since, stalled = stalled}
   end,
 
   flow_teardown = function()
