@@ -615,6 +615,33 @@ remote.add_interface("ghostwriter", {
     reply{ok = true}
   end,
 
+  -- Fill containers of the built flow blueprint ({entities, item, count}),
+  -- or count an item across them ({entities, item}).
+  flow_fill = function(json)
+    local args = helpers.json_to_table(json)
+    local f = storage.flow
+    if not f then return reply{error = "no flow_setup"} end
+    for _, n in pairs(args.entities) do
+      local e = f.built[n]
+      if not (e and e.valid) then return reply{error = "entity " .. n .. " was not built"} end
+      e.insert{name = args.item, count = args.count}
+    end
+    reply{ok = true}
+  end,
+
+  flow_contents = function(json)
+    local args = helpers.json_to_table(json)
+    local f = storage.flow
+    if not f then return reply{error = "no flow_setup"} end
+    local total = 0
+    for _, n in pairs(args.entities) do
+      local e = f.built[n]
+      if not (e and e.valid) then return reply{error = "entity " .. n .. " was not built"} end
+      total = total + e.get_item_count(args.item)
+    end
+    reply{count = total}
+  end,
+
   tick = function()
     rcon.print(game.tick)
   end,

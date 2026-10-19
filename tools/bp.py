@@ -78,7 +78,10 @@ def cmd_gen(args):
     with warnings.catch_warnings():
         # check() below re-detects these from the output and reports them once.
         warnings.simplefilter("ignore")
-        blueprint = module.build(**params)
+        try:
+            blueprint = module.build(**params)
+        except ValueError as e:  # a generator saying these parameters can't work, and why
+            sys.exit(f"error: {e}")
         data = blueprint.to_dict()
     if _report(check(data)):
         sys.exit(1)
