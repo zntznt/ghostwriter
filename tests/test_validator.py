@@ -10,7 +10,7 @@ from draftsman.blueprintable import Blueprint
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import assembly_row, fluid_block, fluid_row, gated_requester, production, smelting_column
+from generators import assembly_row, factory, fluid_block, fluid_row, gated_requester, production, smelting_column
 from tools.codec import decode, encode
 from tools import rates
 from tools.factorio import locate
@@ -285,6 +285,24 @@ class Validator(unittest.TestCase):
             data, flows = production.chain_tests(item="electronic-circuit", rate=5)
         report = self.run_flow(data, flows, {})
         self.assertFalse(report.ok)
+        self.assertTrue(any("electronic-circuit" in e for e in report.errors), report.lines())
+
+    def test_factory_reaches_its_rate(self):
+        # A whole book on a bus: only inputs fed at the bottom, the product drained at the top.
+        for params in ({"item": "electronic-circuit", "rate": 5}, {"item": "advanced-circuit", "rate": 1, "oil": 1}):
+            bp = factory.build(**params)
+            data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+            self.assertPasses(data)
+            report = self.run_flow(data, factory.flow_tests(**params), ids)
+            self.assertTrue(report.ok, (params, report.lines()))
+
+    def test_factory_with_a_cut_line_fails(self):
+        # Without the first splitter on the copper line, nothing north of it gets copper.
+        bp = factory.build(item="electronic-circuit", rate=5)
+        data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+        cut = next(e for e in data["blueprint"]["entities"] if e["name"] == "splitter")
+        data["blueprint"]["entities"].remove(cut)
+        report = self.run_flow(data, factory.flow_tests(item="electronic-circuit", rate=5), ids)
         self.assertTrue(any("electronic-circuit" in e for e in report.errors), report.lines())
 
     def test_fluid_rows_reach_rated_output(self):

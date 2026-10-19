@@ -79,7 +79,9 @@ With `chain_tests(**params)` it also runs the whole book as one blueprint:
 - What the book makes is passed from producers to consumers through a pool. Drains and fluid production add to it; a `Feed(..., pooled=True)` or `FluidFeed(..., pooled=True)` takes from it. Only what the book needs from outside is fed without limit.
 - `caps` maps a pooled item or fluid to the most the pool holds. At the cap its drains stop and its outputs back up, as a full belt or pipe would. The chain uses 20 s of output (at least 5).
 - Pooled fluid feeds draw in the order listed; cracking comes last, so it gets only surplus.
-- `at_least=True` checks only the lower bound, since rows are sized with slack. They
+- `at_least=True` checks only the lower bound, since rows are sized with slack.
+
+`settle=N` measures up to N windows and passes at the first that meets `expect`. A factory fills its belts only as fast as its rows' slack allows, and rows near the bottom take more than their share until their own belts are full. `FluidFeed(..., sink=True, level=0.5)` drains a line only down to half full, so users along it still get some: a left-over outlet. They
 run at game speed 100, so a 3-minute case takes a few seconds.
 
 Differences from circuit tests:
