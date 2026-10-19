@@ -38,6 +38,7 @@ target rate: the whole factory, as a player would build it.
 """
 
 import math
+from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
 
@@ -70,7 +71,7 @@ GATE_LEVEL = 1000  # units in the gate's tank above which cracking runs
 N, E, S, W = Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST
 
 
-@dataclass
+@dataclass(eq=False)  # compared by identity: rows built alike have equal fields
 class Port:
     kind: str  # "in" and "out" (item belts), "fluid_in" and "fluid_out"
     x: int  # tile, relative to its row until the row is placed
@@ -80,10 +81,15 @@ class Port:
     side: str = "south"  # fluid ports: the side the bus connects to
     demand: dict[str, float] = field(default_factory=dict)  # "in" and fluid_in: per second
     filter: bool = False  # "out": the belt also carries an ingredient's leftovers
-    lines: dict = field(default_factory=dict)  # name -> Line
+    lines: dict = field(default_factory=dict)  # name -> Line (outputs and fluids)
+    feeds: dict = field(default_factory=dict)  # "in": lane -> the Line feeding it
+    outs: list = field(default_factory=list)  # "out": the Line it joins, or two (split by a splitter)
+
+    def all_lines(self) -> list:
+        return list({id(ln): ln for ln in [*self.feeds.values(), *self.lines.values(), *self.outs]}.values())
 
 
-@dataclass
+@dataclass(eq=False)
 class Row:
     step: production.Step
     bp: Blueprint
@@ -94,7 +100,7 @@ class Row:
     dy: int = 0
 
 
-@dataclass
+@dataclass(eq=False)
 class Line:
     name: str
     fluid: bool
@@ -108,15 +114,16 @@ class Line:
     jobs: list = field(default_factory=list)  # events in order along the bus
 
 
-@dataclass
+@dataclass(eq=False)
 class Job:
     kind: str  # "return", "tap", "fluid_tap", "side_in", "side_out", "gate"
     row: int  # index of the row it serves
     port: Port
     height: int = 0
     rows: list[int] = field(default_factory=list)  # allocated, south to north
-    first: dict = field(default_factory=dict)  # line name -> starts the line here
-    last: dict = field(default_factory=dict)  # line name -> its last user
+    part: int = 0  # a return from a split port: 0 west half, 1 east half
+    first: set = field(default_factory=set)  # ids of the lines it starts
+    last: set = field(default_factory=set)  # ids of the lines it is the last user of
 
 
 def plan(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
@@ -206,57 +213,97 @@ def _lines(rows: list[Row], inputs: dict[str, float], item: str, rate: float, be
         supplied = inputs.get(name, 0) > 0 or (name not in makers and name in users)
         if name not in users and name != item and inputs.get(name, 0) >= 0:
             continue
-        need = [(p, p.demand.get(name, 0)) for _, p in users.get(name, [])]
+        # A unit is what one tap delivers: a port's lanes of this item, or (split) one lane.
+        units = [(p, tuple(lane for lane, i in p.lanes.items() if i == name), p.demand.get(name, 0))
+                 for _, p in users.get(name, [])]
         top = "product" if name == item else "surplus" if inputs.get(name, 0) < 0 else ""
         if top == "product" and not fluid:  # the outlets at the top use it, a belt's share each
             count = max(1, math.ceil(rate / (MADE_FILL * cap) - 1e-9))
-            need = [(Port("outlet", 0, 0, name=name, demand={name: rate / count}), rate / count) for _ in range(count)]
+            units = [(Port("outlet", 0, 0, name=name), (), rate / count) for _ in range(count)]
+        total = sum(d for _, _, d in units)
         if fluid:  # one pipe carries any amount here
-            groups = [([p for p, _ in need], [p for _, p in makers.get(name, [])])]
+            groups = [(units, [p for _, p in makers.get(name, [])])]
         elif supplied:  # as many belts as the users need, each feeding some of them
-            groups = [(group, []) for group in _bins(need, [cap] * math.ceil(sum(d for _, d in need) / cap - 1e-9))]
-        else:  # rows split between belts, each a little under full, and users between those
-            made = {}
-            for r, p in makers.get(name, []):
-                made.setdefault(r, []).append(p)
-            fewest = max(1, math.ceil(sum(d for _, d in need) / (MADE_FILL * cap) - 1e-9))
-            groups = None
-            for count in range(min(fewest, len(made)), len(made) + 1):
-                shares = [list(made)[k::count] for k in range(count)]
-                supply = [min(MADE_FILL * cap if count > 1 else cap, sum(rows[r].flow.expect[name] for r in share))
-                          for share in shares]
-                try:
-                    groups = list(zip(_bins(need, supply, grow=False),
-                                      [[p for r in share for p in made[r]] for share in shares]))
+            groups = [(group, []) for group in _bins(units, [cap] * math.ceil(total / cap - 1e-9))]
+        else:  # users packed into belts a little under full, then the rows' output shared out
+            fewest = max(1, math.ceil(total / (MADE_FILL * cap) - 1e-9))
+            # Whole ports first; failing that, a port's two lanes may come from two lines.
+            split = [(p, (lane,), d / len(lanes)) for p, lanes, d in units for lane in lanes] + \
+                [u for u in units if not u[1]]
+            uses = None
+            for count in range(fewest, len(units) + 1):
+                size = MADE_FILL * cap if count > 1 else cap
+                for tried in (units, split):
+                    try:
+                        uses = _bins(tried, [size] * count, grow=False)
+                        break
+                    except ValueError:
+                        continue
+                if uses:
                     break
-                except ValueError:
-                    continue
-            if groups is None:
-                raise ValueError(f"{name}: {sum(d for _, d in need):.3g}/s doesn't fit its rows' belts; "
-                                 f"use a faster belt")
+            groups = list(zip(uses, _supply(name, uses, makers.get(name, []), rows)))
         lines[name] = []
         for use, make in groups:
-            line = Line(name, fluid, supplied, top, demand=sum(p.demand.get(name, 0) for p in use))
-            for p in use + make:
-                p.lines[name] = line
+            line = Line(name, fluid, supplied, top, demand=sum(d for _, _, d in use))
+            for p, lanes, _ in use:
+                for lane in lanes:
+                    p.feeds[lane] = line
+                if not lanes:
+                    p.lines[name] = line
+            for p in make:
+                if p.kind == "out":
+                    p.outs.append(line)
+                else:
+                    p.lines[name] = line
             lines[name].append(line)
     return lines
 
 
-def _bins(need, sizes, grow=True):
-    """Ports grouped into bins of the given sizes (per second), worst fit: the
-    largest demand first, into the bin with the most room. With grow, a bin is
-    added (the size of the first) when they don't fit."""
+def _supply(name, uses, makers, rows) -> list[list]:
+    """The rows' output ports for each line: shared out in proportion to each line's
+    demand, in order up the bus, so a port feeds one line or, at a boundary, two
+    (through a splitter as it leaves its row). A port that also carries leftovers
+    (behind a filter splitter) isn't split: it goes to the line it mostly feeds."""
+    ports_per_row = Counter(r for r, _ in makers)
+    outs = [(p, rows[r].flow.expect[name] / ports_per_row[r]) for r, p in makers]
+    demand = [sum(d for _, _, d in use) for use in uses]
+    total, supply = sum(demand), sum(rate for _, rate in outs)
+    room = [supply * d / total for d in demand]
+    shares = [[] for _ in uses]
+    j = 0
+    for p, rate in outs:
+        fed = []
+        while rate > 1e-9:
+            take = min(rate, room[j]) if j < len(room) - 1 else rate
+            fed.append((j, take))
+            rate -= take
+            room[j] -= take
+            if room[j] <= 1e-9 and j < len(room) - 1:
+                j += 1
+        if len(fed) > 2 or (p.filter and len(fed) > 1):
+            fed = [max(fed, key=lambda jt: jt[1])]
+        for k, _ in fed:
+            if p not in shares[k]:
+                shares[k].append(p)
+    if any(not share for share in shares):
+        raise ValueError(f"{name}: its rows can't be shared between {len(uses)} belts; use a faster belt")
+    return shares
+
+
+def _bins(units, sizes, grow=True):
+    """Units (port, lanes, demand) grouped into bins of the given sizes (per second),
+    worst fit: the largest demand first, into the bin with the most room. With grow,
+    a bin is added (the size of the first) when they don't fit."""
     sizes = list(sizes) or [0]
     while True:
         room = list(sizes)
         bins = [[] for _ in sizes]
-        for p, d in sorted(need, key=lambda pd: -pd[1]):
+        for unit in sorted(units, key=lambda u: -u[2]):
             b = max(range(len(room)), key=lambda b: room[b])
-            if d > room[b] * 1.001:
+            if unit[2] > room[b] * 1.001:
                 break
-            room[b] -= d
-            bins[b].append(p)
+            room[b] -= unit[2]
+            bins[b].append(unit)
         else:
             return [b for b in bins if b] or [[]]
         if not grow:
@@ -270,7 +317,8 @@ def _jobs(rows: list[Row], lines) -> list[Job]:
     for k, row in enumerate(rows + [None]):
         if k:  # the previous row's products return to the bus, westmost first (lowest)
             outs = [p for p in rows[k - 1].ports if p.kind == "out"]
-            jobs += [Job("return", k - 1, p) for p in sorted(outs, key=lambda p: p.x)]
+            # A port feeding two lines splits as it leaves: its west half returns first.
+            jobs += [Job("return", k - 1, p, part=i) for p in sorted(outs, key=lambda p: p.x) for i in range(len(p.outs))]
         if row is None:
             break
         taps = [p for p in row.ports if p.kind == "in" or (p.kind == "fluid_in" and p.side == "south")]
@@ -281,28 +329,23 @@ def _jobs(rows: list[Row], lines) -> list[Job]:
             # Cracking takes only what the oil's other users leave: its oil comes through a gate.
             gated = p.kind == "fluid_in" and row.step.item in production.CRACKING and p.name != "water"
             jobs.append(Job("gate" if gated else "side_in" if p.kind == "fluid_in" else "side_out", k, p))
-    seen = {}
     for job in jobs:
-        for name, line in job.port.lines.items():
+        for line in ([job.port.outs[job.part]] if job.kind == "return" else job.port.all_lines()):
+            if job.kind in ("return", "side_out") and not any(j.kind in ("return", "side_out") for j in line.jobs):
+                job.first.add(id(line))
             line.jobs.append(job)
-            makes = job.kind in ("return", "side_out")
-            if makes and id(line) not in seen:
-                seen[id(line)] = job
-                job.first[name] = True
     for named in lines.values():
         for line in named:
             users = [j for j in line.jobs if j.kind not in ("return", "side_out")]
             if users and not line.top:
-                users[-1].last[line.name] = True
+                users[-1].last.add(id(line))
     for job in jobs:
         p = job.port
         if job.kind == "return":
-            job.height = 1 if job.first.get(p.name) else 3
+            job.height = 1 if job.first else 3
         elif job.kind == "tap":
-            if len(set(p.lanes.values())) == 2:
-                job.height = 4
-            elif len(p.lanes) == 2:
-                job.height = 2
+            if len(p.lanes) == 2:  # one line on both lanes turns in; two side-load
+                job.height = 2 if len(p.all_lines()) == 1 else 4
             else:  # one lane: from above onto the left, from below onto the right
                 job.height = 2 if "left" in p.lanes else 3
         elif job.kind == "fluid_tap":
@@ -452,24 +495,29 @@ def _build(p):
     for job in jobs:
         port, owner = job.port, f"{job.kind} {job.row}"
         if job.kind == "return":
-            line = port.lines[port.name]
+            line = port.outs[job.part]
             c, r = line.column, job.rows[0]
-            y = port.y - 1
+            y, x_o = port.y - 1, port.x + job.part
             if port.filter:  # keep the ingredient's leftovers in the row; the product goes on
                 canvas.put(splitter, port.x, y, owner, width=2, direction=N, filter=port.name, output_priority="left")
                 canvas.reserve(port.x + 1, y + 1, owner)
                 canvas.reserve(port.x + 1, y - 1, owner)
                 y -= 1
+            elif len(port.outs) == 2:  # shared by two lines: split as it leaves, each half to one
+                if job.part == 0:
+                    canvas.put(splitter, port.x, y, owner, width=2, direction=N)
+                    canvas.nofeed.add((port.x + 1, y + 1))
+                y -= 1
             for yy in range(y, r, -1):
-                belt_at(port.x, yy, N, owner)
-            belt_at(port.x, r, W, owner)
-            if job.first.get(port.name):
-                for x in range(c + 1, port.x):
+                belt_at(x_o, yy, N, owner)
+            belt_at(x_o, r, W, owner)
+            if id(line) in job.first:
+                for x in range(c + 1, x_o):
                     belt_at(x, r, W, owner)
                 belt_at(c, r, N, owner)
                 line.events.add(r)
             else:  # merge through a splitter, whose other output stays empty
-                for x in range(c + 2, port.x):
+                for x in range(c + 2, x_o):
                     belt_at(x, r, W, owner)
                 belt_at(c + 1, r, N, owner)
                 canvas.put(splitter, c, r - 1, owner, width=2, direction=N)
@@ -477,30 +525,29 @@ def _build(p):
                 line.events.add(r - 1)
         elif job.kind == "tap":
             x_in = port.x
-            names = list(dict.fromkeys(port.lanes.values()))
-            if len(port.lanes) == 2 and len(names) == 1:  # one item on both lanes: turn into the belt
-                name = names[0]
+            feeding = port.all_lines()
+            if len(port.lanes) == 2 and len(feeding) == 1:  # one line on both lanes: turn into the belt
+                (line,) = feeding
                 r0, r1 = job.rows
-                x = feed(port.lines[name], r0, r1, job.last.get(name), owner)
+                x = feed(line, r0, r1, id(line) in job.last, owner)
                 for xx in range(x, x_in):
                     belt_at(xx, r1, E, owner)
                 belt_at(x_in, r1, N, owner)
                 climb = r1 - 1
             else:  # side-load onto lanes: from above onto the left lane, from below onto the right
-                if len(names) == 2:  # the item from the further west column goes left
-                    names.sort(key=lambda n: port.lines[n].column)
-                    left, right = names
+                if len(feeding) == 2:  # lanes on these belts are interchangeable: the west line goes left
+                    left, right = sorted(feeding, key=lambda ln: ln.column)
                 else:
-                    left, right = (names[0], None) if "left" in port.lanes else (None, names[0])
+                    left, right = (feeding[0], None) if "left" in port.lanes else (None, feeding[0])
                 t = job.rows[2] if len(job.rows) == 4 else job.rows[0] if left else job.rows[2]
                 x_t = x_in - 1
                 if right:
-                    x = feed(port.lines[right], t + 2, t + 1, job.last.get(right), owner)
+                    x = feed(right, t + 2, t + 1, id(right) in job.last, owner)
                     for xx in range(x, x_t):
                         belt_at(xx, t + 1, E, owner)
                     belt_at(x_t, t + 1, N, owner)
                 if left:
-                    x = feed(port.lines[left], t, t - 1, job.last.get(left), owner)
+                    x = feed(left, t, t - 1, id(left) in job.last, owner)
                     for xx in range(x, x_t):
                         belt_at(xx, t - 1, E, owner)
                     belt_at(x_t, t - 1, S, owner)

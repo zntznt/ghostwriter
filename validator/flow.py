@@ -114,6 +114,9 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
                 _ok(got)
                 errors = _shortfalls(flow, got)
                 if not errors:
+                    if window:
+                        report.warnings.append(f"flow '{flow.name}': reached its rate in window {window + 1} "
+                                               f"of {flow.settle}")
                     break
             if flow.settle > 1 and errors:
                 errors = [f"{e} (after {flow.settle} windows)" for e in errors]

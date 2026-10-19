@@ -573,6 +573,15 @@ class Factory(unittest.TestCase):
         self.assertEqual([round(ln.demand, 2) for ln in p["lines"]["iron-plate"]], [11.25, 11.25])
         self.assertEqual(len(p["lines"]["transport-belt"]), 2)  # and leaves on two
 
+    def test_a_row_can_feed_two_lines(self):
+        # 80 cable/s from three rows of 30 for two belts' worth of users: the middle
+        # row splits as it leaves, half to each line.
+        _, p, bp = factory_built(item="processing-unit", rate=1, oil=1, machine="assembling-machine-3",
+                                 belt="express-transport-belt")
+        outs = [len(q.outs) for r in p["rows"] if r.step.item == "copper-cable" for q in r.ports if q.kind == "out"]
+        self.assertEqual(outs, [1, 2, 1])
+        self.assertEqual(check({"blueprint": bp}), [])
+
     def test_flow_test_feeds_the_bottom_and_drains_the_top(self):
         for params in FACTORIES[:2]:
             bp, p, _ = factory_built(**params)
