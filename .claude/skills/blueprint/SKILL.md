@@ -40,6 +40,7 @@ SRC is a string, a file path, or `-` (stdin).
 1. Look for an existing generator in `generators/`. Extend one with
    parameters before writing a new one. Layout is where freeform design
    fails, so prefer small, parametric, tested generator functions.
+   - **"Make X per second":** use `production item=X rate=N`. It walks the recipe tree and sizes rows for every intermediate, returning a book. Options: `machine=` (fastest assembler allowed), `belt=`, `smelt=1` (ores in, with `furnace=`), and `raw=a,b` (items to supply rather than make). Items made with fluids are always supplied. Tell the user what to supply (the book description) and that the rows aren't connected to each other.
    - **Any item recipe in assemblers:** use `assembly_row`, e.g. `recipe=electronic-circuit machine=assembling-machine-1`. It sizes machines to the belts, inserters to the measured rates, and spreads ingredients over one or two input belts. When nothing fits, it says why.
    - **Smelting:** use `smelting_column`.
    - **Rates and layout:** take rates from `tools/rates.py` (recipes, machine speeds, belt lanes, measured inserter rates) and columns and poles from `tools/layout.py`. Never hard-code a speed.

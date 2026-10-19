@@ -10,7 +10,7 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
-from generators import assembly_row, smelting_column
+from generators import assembly_row, production, smelting_column
 from generators.gated_requester import build
 from tools import rates
 from tools.check import check
@@ -241,6 +241,46 @@ class AssemblyRow(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fluid"):
             assembly_row.build(recipe="processing-unit")
 
+
+
+class Production(unittest.TestCase):
+    def test_green_circuits(self):
+        steps, inputs = production.solve("electronic-circuit", 5)
+        self.assertEqual(inputs, {"iron-plate": 5, "copper-plate": 7.5})
+        self.assertEqual([(s.item, s.demand) for s in steps], [("copper-cable", 15), ("electronic-circuit", 5)])
+        for s in steps:
+            self.assertGreaterEqual(s.rows * s.rate, s.demand, s)
+
+    def test_rows_cover_demand_and_respect_the_tier(self):
+        for item, rate, kw in (("inserter", 2, {}), ("transport-belt", 15, {}), ("advanced-circuit", 1, {}),
+                               ("electronic-circuit", 5, {"machine": "assembling-machine-1"})):
+            steps, _ = production.solve(item, rate, **kw)
+            allowed = production.MACHINES[production.MACHINES.index(kw.get("machine", "assembling-machine-2")):]
+            for s in steps:
+                self.assertGreaterEqual(s.rows * s.rate + 1e-9, s.demand, (item, s))
+                self.assertIn(s.params["machine"], allowed, (item, s))
+
+    def test_inputs(self):
+        _, inputs = production.solve("advanced-circuit", 1)  # plastic is made with petroleum gas
+        self.assertIn("plastic-bar", inputs)
+        steps, inputs = production.solve("electronic-circuit", 5, smelt=1)
+        self.assertEqual(inputs, {"iron-ore": 5, "copper-ore": 7.5})
+        self.assertEqual(steps[0].generator, "smelting_column")
+        steps, inputs = production.solve("electronic-circuit", 5, raw="copper-cable")
+        self.assertEqual(inputs, {"iron-plate": 5, "copper-cable": 15})
+        self.assertEqual([s.item for s in steps], ["electronic-circuit"])
+
+    def test_book_matches_parts(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            data = production.build(item="inserter", rate=2).to_dict()
+        children = data["blueprint_book"]["blueprints"]
+        self.assertEqual(len(children), len(production.parts(item="inserter", rate=2)))
+        self.assertEqual(errors(data), [])
+
+    def test_unfeedable_item_says_how_to_supply_it(self):
+        with self.assertRaisesRegex(ValueError, "raw=assembling-machine-1"):
+            production.solve("assembling-machine-1", 0.5)
 
 class Check(unittest.TestCase):
     def test_real_2_1_exports_have_no_errors(self):

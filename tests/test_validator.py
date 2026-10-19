@@ -10,7 +10,7 @@ from draftsman.blueprintable import Blueprint
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import assembly_row, gated_requester, smelting_column
+from generators import assembly_row, gated_requester, production, smelting_column
 from tools.codec import decode
 from tools import rates
 from tools.factorio import locate
@@ -245,6 +245,23 @@ class Validator(unittest.TestCase):
             self.assertPasses(data)
             report = self.run_flow(data, assembly_row.flow_tests(**params), ids)
             self.assertTrue(report.ok, (params, report.lines()))
+
+    def test_production_book_rows_reach_their_rates(self):
+        # Smelting columns and assembly rows from the solver, each distinct row
+        # flow-tested on its own, and the book as a whole validated.
+        params = {"item": "electronic-circuit", "rate": 5, "smelt": 1}
+        self.assertPasses(production.build(**params).to_dict())
+        seen = set()
+        for name, part_params in production.parts(**params):
+            key = (name, tuple(sorted(part_params.items())))
+            if key in seen:
+                continue
+            seen.add(key)
+            gen = production.GENERATORS[name]
+            bp = gen.build(**part_params)
+            ids = {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+            report = self.run_flow(bp.to_dict(), gen.flow_tests(**part_params), ids)
+            self.assertTrue(report.ok, (name, part_params, report.lines()))
 
     def test_inserter_rates_were_measured_on_this_version(self):
         # Rows are sized from tools/inserter_rates.json; re-measure after a game

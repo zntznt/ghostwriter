@@ -7,7 +7,8 @@
   book DIR [--json]     library folder -> blueprint book string
   gen NAME [k=v ...]    run generators/NAME.py build(), check, print string
       [--validate]        ...and validate in the game (plus the generator's
-                          circuit_tests() and flow_tests(), if any) before printing
+                          circuit_tests() and flow_tests(), and for a book
+                          generator with parts(), each row's own tests) before printing
   validate SRC...       import, round-trip and build in a headless server; runs
                         circuit and flow tests from a sibling NAME.tests.toml
 
@@ -85,16 +86,37 @@ def cmd_gen(args):
         data = blueprint.to_dict()
     if _report(check(data)):
         sys.exit(1)
-    circuit = flow = None
-    if "blueprint" in data:
-        ids = {e.id: n for n, e in enumerate(blueprint.entities, start=1) if e.id}
-        if hasattr(module, "circuit_tests"):
-            circuit = (module.circuit_tests(**params), ids)
-        if hasattr(module, "flow_tests"):
-            flow = (module.flow_tests(**params), ids)
-    if args.validate and not _validate([("", data, circuit, flow)], args.factorio):
+    items = [("", data, *_generator_tests(module, params, blueprint, data))]
+    if hasattr(module, "parts"):
+        # A book of other generators' blueprints: each child runs its own tests.
+        # Identical rows are tested once; validating the book builds them all.
+        children = {c["index"]: c for c in data["blueprint_book"]["blueprints"]}
+        seen = set()
+        for i, (name, part_params) in enumerate(module.parts(**params)):
+            key = (name, tuple(sorted(part_params.items())))
+            if key in seen:
+                continue
+            seen.add(key)
+            part = importlib.import_module(f"generators.{name}")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                part_bp = part.build(**part_params)
+            child = {k: v for k, v in children[i].items() if k != "index"}
+            label = f"{i}: {child['blueprint'].get('label', name)}"
+            items.append((label, child, *_generator_tests(part, part_params, part_bp, child)))
+    if args.validate and not _validate(items, args.factorio):
         sys.exit(1)
     sys.stdout.write(dump_json(data) if args.json else encode(data) + "\n")
+
+
+def _generator_tests(module, params, blueprint, data) -> tuple:
+    """(circuit, flow) for _validate from a generator's circuit_tests() and flow_tests()."""
+    if "blueprint" not in data:
+        return None, None
+    ids = {e.id: n for n, e in enumerate(blueprint.entities, start=1) if e.id}
+    circuit = (module.circuit_tests(**params), ids) if hasattr(module, "circuit_tests") else None
+    flow = (module.flow_tests(**params), ids) if hasattr(module, "flow_tests") else None
+    return circuit, flow
 
 
 def cmd_validate(args):

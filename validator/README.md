@@ -68,8 +68,10 @@ A generator that moves items declares `flow_tests(**params)` next to
 - The game runs `warmup` seconds (default 60), the counts restart, then it runs `window` seconds (default 120).
 - `expect` maps items to rates in items/s. Each measured rate must be within `tolerance` (default 3%) of its target. On failure, the error lists every built entity that isn't working, by status (`inserter: no_power`, `stone-furnace: no_fuel`, ...).
 
-`gen --validate` runs them once structural validation passes. They run at
-game speed 100, so a 3-minute case takes a few seconds.
+`gen --validate` runs them once structural validation passes. A generator that
+returns a book of other generators' blueprints (`production`) exposes
+`parts(**params)`, and each distinct child runs its own generator's tests. They
+run at game speed 100, so a 3-minute case takes a few seconds.
 
 Differences from circuit tests:
 
