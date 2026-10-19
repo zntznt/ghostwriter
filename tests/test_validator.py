@@ -9,12 +9,13 @@ from draftsman.blueprintable import Blueprint
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import gated_requester
+from generators import gated_requester, smelting_column
 from tools.codec import decode
 from tools.factorio import locate
 from tools.library import entries
 from tools.settings import game_settings, registry
 from validator.circuit import Case, Expect, Inject, library_tests, run_circuit_tests
+from validator.flow import Flow, run_flow_tests
 from validator.server import Server
 from validator.validate import Report, validate
 
@@ -200,6 +201,46 @@ class Validator(unittest.TestCase):
         data["blueprint"]["entities"][1]["control_behavior"]["decider_conditions"]["conditions"][0]["comparator"] = "<"
         self.assertPasses(data)
         self.assertFalse(self.run_circuit(data, gated_requester.circuit_tests()).ok)
+
+
+    # Flow: belts and machines running, powered through the blueprint's own poles.
+
+    def run_flow(self, data, flows, ids):
+        report = Report(self.server.version)
+        run_flow_tests(self.server, data, flows, ids, report)
+        return report
+
+    def column(self, **params):
+        bp = smelting_column.build(**params)
+        return bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+
+    def test_smelting_columns_reach_rated_output(self):
+        # Burner furnaces fed ore + coal; electric ones ore on both lanes; steel
+        # needs its recipe unlocked, which flow tests do for the run only.
+        for params in ({}, {"furnace": "electric-furnace", "pole": "small-electric-pole"},
+                       {"furnace": "steel-furnace", "recipe": "steel-plate", "furnaces": 4}):
+            data, ids = self.column(**params)
+            self.assertPasses(data)
+            report = self.run_flow(data, smelting_column.flow_tests(**params), ids)
+            self.assertTrue(report.ok, (params, report.lines()))
+        recipes = self.server.command(
+            '/sc local r = game.forces.player.recipes rcon.print(tostring(r["steel-plate"].enabled))')
+        self.assertEqual(recipes.strip(), "false")
+
+    def test_unpowered_column_fails_flow(self):
+        # Passes validation (everything builds) but nothing runs without poles.
+        data, ids = self.column(furnaces=2)
+        data["blueprint"]["entities"] = [e for e in data["blueprint"]["entities"] if "pole" not in e["name"]]
+        del data["blueprint"]["wires"]
+        self.assertPasses(data)
+        report = self.run_flow(data, smelting_column.flow_tests(furnaces=2), ids)
+        self.assertTrue(any("no_power" in e for e in report.errors), report.lines())
+
+    def test_flow_expectation_is_a_rate(self):
+        data, ids = self.column(furnaces=2)
+        [flow] = smelting_column.flow_tests(furnaces=2)
+        report = self.run_flow(data, [Flow("too much", flow.feed, flow.drain, {"iron-plate": 2.0})], ids)
+        self.assertTrue(any("expected 2/s" in e for e in report.errors), report.lines())
 
 
 if __name__ == "__main__":

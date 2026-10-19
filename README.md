@@ -17,7 +17,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 |---|---|
 | `.claude/skills/blueprint/` | Claude Code skill: how to generate, check, file |
 | `tools/` | codec, checks, library/book builder, CLI (`python -m tools.bp`), data dump |
-| `generators/` | parametric designs, `build(**params)` |
+| `generators/` | parametric designs, `build(**params)`: `gated_requester`, `smelting_column` |
 | `library/` | decoded JSON, one file per blueprint; folders are books |
 | `validator/` | in-game validation: headless server, RCON, Lua harness, diff (`bp validate`) |
 | `site/` | library browser: `template.html`, built by `python -m tools.site` into `site/dist/` (gitignored) |

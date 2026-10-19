@@ -5,7 +5,7 @@ Checks blueprints, books and planners in a real headless Factorio server.
 ```
 python -m validator.fetch 2.1.22              # once: Linux headless server -> .factorio-headless/
 python -m tools.bp validate SRC...            # strings, files or library folders
-python -m tools.bp gen NAME k=v --validate    # generate, check, validate, run circuit tests, print
+python -m tools.bp gen NAME k=v --validate    # generate, check, validate, run circuit and flow tests, print
 python -m validator.harvest                   # refresh tools/game_settings.json (after a game update)
 python -m unittest tests.test_validator       # ~30 s; skipped without a Factorio binary
 ```
@@ -57,6 +57,30 @@ A generator with circuit logic declares `circuit_tests(**params)` next to `build
 
 The server runs with `auto_pause: false`. A server with no players otherwise sits paused, which is invisible until you need ticks.
 
+## Flow tests
+
+A generator that moves items declares `flow_tests(**params)` next to
+`build()`. It returns `validator.flow.Flow`s; see
+`generators/smelting_column.py`. Each case:
+
+- `Feed(entity, lane, item)` keeps one lane of a belt full from its back end. `lane` is `"left"` or `"right"` as seen along the belt.
+- `drain` lists belts that are emptied every tick; what leaves them is counted.
+- The game runs `warmup` seconds (default 60), the counts restart, then it runs `window` seconds (default 120).
+- `expect` maps items to rates in items/s. Each measured rate must be within `tolerance` (default 3%) of its target. On failure, the error lists every built entity that isn't working, by status (`inserter: no_power`, `stone-furnace: no_fuel`, ...).
+
+`gen --validate` runs them once structural validation passes. They run at
+game speed 100, so a 3-minute case takes a few seconds.
+
+Differences from circuit tests:
+
+- **Power** comes only through the blueprint's own poles. A script-wired pole joins them to an unlimited source. An inserter outside every supply area, or a pole off the network, shows up as a shortfall.
+- **Research:** the force has none, so inserters carry one item per swing. A design that keeps up here keeps up with any research.
+- **Recipes:** all are unlocked for the run, then relocked. A furnace won't take iron plates until Steel processing is researched, and flow tests measure throughput, not research.
+
+A window counts each machine's crafts to within one. Give it enough crafts
+that this stays well under the tolerance: the smelting column uses 50 crafts,
+under 2%.
+
 ## Game-settings harvest
 
 `harvest.py` asks the game which control-behaviour settings Draftsman 4.0.1
@@ -92,6 +116,8 @@ expect = [{ entity = "chest", requests = { iron-plate = 100 } }]
 - The site lists each entry's case names.
 
 ## Not covered yet
+
+- Flow tests for library blueprints: only generators can declare them so far.
 
 - Item requests (modules, fuel): ignored in the build diff because nothing delivers them.
 - Mods: the server loads only base and the DLC.

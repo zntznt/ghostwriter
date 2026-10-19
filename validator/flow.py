@@ -1,0 +1,95 @@
+"""Flow tests: run a blueprint's belts and machines in the game and measure throughput.
+
+A generator declares cases next to build():
+
+    def flow_tests(**params) -> list[Flow]:
+        return [Flow("rated output",
+                     feed=[Feed("ore_left", "left", "iron-ore"), Feed("ore_left", "right", "coal")],
+                     drain=["plates"], expect={"iron-plate": 7.5})]
+
+Entities are Draftsman ids (or entity_numbers). A Feed keeps one lane of a
+belt full from its back end ("left"/"right" as seen along the belt). A drain
+belt is emptied every tick and what left it is counted. After `warmup`
+seconds the counts restart, and after `window` more seconds each expected
+item's rate must be within `tolerance` of its target.
+
+Unlike circuit tests, power comes only through the blueprint's own poles: a
+script-wired pole joins them to an unlimited source. An inserter outside
+every supply area, or a pole off the network, starves its machine and the
+rate falls short. The force has no research, so inserters move one item
+per swing.
+"""
+
+import json
+from dataclasses import dataclass
+
+from tools.codec import encode
+from validator.circuit import _ok, _wait_ticks
+from validator.server import Server
+from validator.validate import Report
+
+# Game speed during flow tests. The headless server runs as fast as the CPU
+# allows up to 60 * SPEED ticks per second.
+SPEED = 100
+
+
+@dataclass
+class Feed:
+    entity: str | int
+    lane: str
+    item: str
+
+
+@dataclass
+class Flow:
+    name: str
+    feed: list[Feed]
+    drain: list[str | int]
+    expect: dict[str, float]  # items per second at the drains
+    warmup: float = 60  # seconds of game time
+    window: float = 120
+    tolerance: float = 0.03
+
+
+def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str, int], report: Report):
+    """Append failures to report. ids maps Draftsman entity ids to entity_numbers."""
+
+    def number(ref):
+        return ref if isinstance(ref, int) else ids[ref]
+
+    for flow in flows:
+        setup = server.call("flow_setup", json.dumps({"blueprint": encode(data), "speed": SPEED}))
+        if "error" in setup:
+            report.errors.append(f"flow: setup failed: {setup['error']}")
+            return
+        if setup.get("unplaced") or setup.get("unplaceable") or setup.get("unrevived"):
+            report.errors.append(f"flow: could not build everything for the test: {setup}")
+            return
+        try:
+            _ok(server.call("flow_start", json.dumps({
+                "feeds": [{"entity": number(f.entity), "lane": f.lane, "item": f.item} for f in flow.feed],
+                "drains": [number(d) for d in flow.drain],
+            })))
+            _wait_ticks(server, int(flow.warmup * 60), timeout=_timeout(flow.warmup))
+            _ok(server.call("flow_count"))
+            _wait_ticks(server, int(flow.window * 60), timeout=_timeout(flow.window))
+            got = server.call("flow_read")
+            _ok(got)
+            seconds = got["ticks"] / 60
+            counts = got["counts"] if isinstance(got["counts"], dict) else {}
+            for item, rate in flow.expect.items():
+                measured = counts.get(item, 0) / seconds
+                if abs(measured - rate) > flow.tolerance * rate:
+                    stalled = got.get("stalled") if isinstance(got.get("stalled"), dict) else {}
+                    report.errors.append(
+                        f"flow '{flow.name}': {item} {measured:.3g}/s, expected {rate:.3g}/s"
+                        + (f"; not working: {stalled}" if stalled else "")
+                    )
+        finally:
+            server.call("flow_teardown")
+
+
+def _timeout(game_seconds: float) -> float:
+    # Real time if the CPU can't keep up with SPEED at all, plus slack.
+    return game_seconds + 30
+
