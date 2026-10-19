@@ -54,6 +54,23 @@ def recipe(name: str, fluids: bool = False) -> Recipe:
                   tuple(r.get("categories", DEFAULT_CATEGORIES)), fluid_parts)
 
 
+def recipe_any(name: str) -> Recipe:
+    """Any recipe with fixed amounts: item ingredients in `ingredients`, fluid ones in
+    `fluids`, and item and fluid products together in `results`."""
+    if name not in recipes.raw:
+        raise ValueError(f"unknown recipe {name!r}")
+    r = recipes.raw[name]
+    items, fluids, results = {}, {}, {}
+    for p in r.get("ingredients", []):
+        (fluids if p.get("type") == "fluid" else items)[p["name"]] = p["amount"]
+    for p in r.get("results", []):
+        if "amount" not in p or {"probability", "shared_probability", "independent_probability"} & set(p):
+            raise ValueError(f"{name}: {p['name']} has a variable amount")
+        results[p["name"]] = results.get(p["name"], 0) + p["amount"]
+    return Recipe(name, r.get("energy_required", DEFAULT_CRAFT_TIME), items, results,
+                  tuple(r.get("categories", DEFAULT_CATEGORIES)), fluids)
+
+
 def crafts_per_second(machine: str, r: Recipe) -> float:
     proto = entities.raw[machine]
     if not set(r.categories) & set(proto.get("crafting_categories", [])):

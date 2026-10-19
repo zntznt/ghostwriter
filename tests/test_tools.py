@@ -10,7 +10,7 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
-from generators import assembly_row, fluid_row, production, smelting_column
+from generators import assembly_row, fluid_block, fluid_row, production, smelting_column
 from generators.gated_requester import build
 from tools import rates
 from tools.check import check
@@ -299,6 +299,111 @@ class FluidRow(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "is a fluid"):
             fluid_row.plan(recipe="sulfuric-acid")  # a fluid product
 
+
+VEC = {0: (0, -1), 4: (1, 0), 8: (0, 1), 12: (-1, 0)}
+
+
+def pipe_networks(bp: dict) -> dict:
+    """Tile -> network id for every pipe and pipe-to-ground, joined the way the game
+    joins them: pipes to any neighbour that connects back, pipe-to-ground by its
+    one surface side and to the first opposite-facing one underground (10 tiles)."""
+    tiles = {}
+    for e in bp["entities"]:
+        if e["name"] in ("pipe", "pipe-to-ground"):
+            tiles[(int(e["position"]["x"] // 1), int(e["position"]["y"] // 1))] = (e["name"], e.get("direction", 0))
+
+    def opens(tile, toward):  # does the thing at tile have a normal connection toward this side?
+        name, d = tiles[tile]
+        return name == "pipe" or VEC[d] == toward
+
+    group = {t: t for t in tiles}
+
+    def root(t):
+        while group[t] != t:
+            t = group[t]
+        return t
+
+    for (x, y), (name, d) in tiles.items():
+        sides = VEC.values() if name == "pipe" else [VEC[d]]
+        for dx, dy in sides:
+            n = (x + dx, y + dy)
+            if n in tiles and opens(n, (-dx, -dy)):
+                group[root((x, y))] = root(n)
+        if name == "pipe-to-ground":
+            dx, dy = VEC[d]
+            for k in range(1, 12):
+                n = (x - dx * k, y - dy * k)
+                if n in tiles and tiles[n] == ("pipe-to-ground", (d + 8) % 16):
+                    group[root((x, y))] = root(n)
+                    break
+    return {t: root(t) for t in tiles}
+
+
+BLOCK_VARIANTS = [
+    {},  # heavy oil cracking: water and heavy oil north, light oil south
+    {"recipe": "light-oil-cracking"},
+    {"recipe": "lubricant"},
+    {"recipe": "advanced-oil-processing"},  # three outputs north, two inputs south
+    {"recipe": "sulfur"},  # two fluids in, sulfur out on belts
+    {"recipe": "sulfuric-acid", "machines": 3},  # items in on belts, a belt per machine
+    {"recipe": "sulfuric-acid", "belt": "fast-transport-belt"},  # a belt per two machines
+]
+
+
+def block(**params) -> dict:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return fluid_block.build(**params).to_dict()["blueprint"]
+
+
+class FluidBlock(unittest.TestCase):
+    def test_variants_check_clean_and_are_powered(self):
+        for params in BLOCK_VARIANTS:
+            bp = block(**params)
+            self.assertEqual(check({"blueprint": bp}), [], params)
+            assert_powered(self, bp, params)
+
+    def test_every_pipe_network_carries_one_fluid(self):
+        # Each machine connection names its fluid; a network reaching two fluids would mix them.
+        for params in BLOCK_VARIANTS:
+            p = fluid_block.plan(**{k: v for k, v in params.items()})
+            bp = block(**params)
+            nets = pipe_networks(bp)
+            fluids = {}
+            for e in bp["entities"]:
+                if e["name"] != p.machine:
+                    continue
+                x0 = int(e["position"]["x"] - p.size / 2)
+                for side, conns in p.sides.items():
+                    row = -1 if side == "north" else p.size
+                    for offset, fluid in conns:
+                        tile = (x0 + offset, row)
+                        self.assertIn(tile, nets, (params, side, fluid))
+                        fluids.setdefault(nets[tile], set()).add(fluid)
+            self.assertTrue(all(len(f) == 1 for f in fluids.values()), (params, fluids))
+            # And one network per fluid line, all machines on it.
+            self.assertEqual(len(fluids), len(p.fluids("north")) + len(p.fluids("south")), params)
+
+    def test_fluids_go_to_boxes_in_recipe_order(self):
+        p = fluid_block.plan(recipe="sulfur")  # water, then petroleum gas
+        self.assertEqual(p.sides["north"], [(0, "water"), (2, "petroleum-gas")])
+        p = fluid_block.plan(recipe="advanced-oil-processing")
+        self.assertEqual(p.sides["south"], [(1, "water"), (3, "crude-oil")])
+        self.assertEqual([f for _, f in p.sides["north"]], ["heavy-oil", "light-oil", "petroleum-gas"])
+
+    def test_belts_share_or_not(self):
+        self.assertEqual(fluid_block.plan(recipe="sulfuric-acid").per_belt, 1)  # 10 sulfur/s > a yellow lane
+        self.assertEqual(fluid_block.plan(recipe="sulfuric-acid", belt="fast-transport-belt").per_belt, 2)
+        self.assertEqual(fluid_block.plan(recipe="sulfur").item_out, "sulfur")
+
+    def test_flow_tests_name_built_entities(self):
+        for params in BLOCK_VARIANTS:
+            bp = fluid_block.build(**params)
+            ids = {e.id for e in bp.entities if e.id}
+            for flow in fluid_block.flow_tests(**params):
+                named = {f.entity for f in flow.feed} | set(flow.drain) | {f.entity for f in flow.fluids}
+                self.assertLessEqual(named, ids, params)
+
 class Production(unittest.TestCase):
     def test_green_circuits(self):
         steps, inputs = production.solve("electronic-circuit", 5)
@@ -340,7 +445,7 @@ class Production(unittest.TestCase):
         self.assertEqual({s.item: s.generator for s in steps}["plastic-bar"], "fluid_row")
         self.assertEqual((inputs["petroleum-gas"], inputs["coal"]), (20, 1))
         _, inputs = production.solve("processing-unit", 0.5)
-        self.assertEqual(inputs["sulfuric-acid"], 2.5)  # a fluid product: supplied
+        self.assertEqual(inputs["water"], 8.75)  # sulfur and acid made here: 0.25 x 30/2 + 2.5 x 100/50
 
     def test_long_book_descriptions_fit_the_game(self):
         with warnings.catch_warnings():
@@ -348,6 +453,30 @@ class Production(unittest.TestCase):
             data = production.build(item="flying-robot-frame", rate=0.2).to_dict()
         self.assertEqual(errors(data), [])
         self.assertIn("Supply", data["blueprint_book"]["description"])
+
+    def test_oil_balance(self):
+        # 10 plastic/s needs 100 petroleum gas/s: refining 100/97.5 crafts/s with all
+        # heavy and light oil cracked down; water and crude oil follow.
+        steps, inputs = production.solve("plastic-bar", 10, oil=1)
+        self.assertAlmostEqual(inputs["crude-oil"], 100 * 100 / 97.5, places=6)
+        self.assertAlmostEqual(inputs["water"], 135.897, places=3)
+        self.assertEqual([s.item for s in steps[:3]],
+                         ["advanced-oil-processing", "heavy-oil-cracking", "light-oil-cracking"])
+        self.assertEqual(steps[0].params["machines"], 6)  # 1.03 crafts/s at 0.2 per refinery
+
+    def test_oil_surplus_is_reported(self):
+        _, inputs = production.solve("lubricant", 20, oil=1)  # heavy oil only: petroleum gas left over
+        self.assertLess(inputs["petroleum-gas"], 0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.assertIn("left over", production.build(item="lubricant", rate=20, oil=1).description)
+
+    def test_two_fluid_and_fluid_products_get_blocks(self):
+        steps, inputs = production.solve("processing-unit", 0.5)
+        kinds = {s.item: s.generator for s in steps}
+        self.assertEqual((kinds["sulfur"], kinds["sulfuric-acid"]), ("fluid_block", "fluid_block"))
+        self.assertIn("petroleum-gas", inputs)  # supplied without oil=1
+        self.assertNotIn("sulfuric-acid", inputs)
 
     def test_unfeedable_item_says_how_to_supply_it(self):
         with self.assertRaisesRegex(ValueError, "raw=assembling-machine-1"):
