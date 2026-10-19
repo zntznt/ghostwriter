@@ -9,7 +9,7 @@
       [--validate]        ...and validate in the game (plus the generator's
                           circuit_tests() and flow_tests(), if any) before printing
   validate SRC...       import, round-trip and build in a headless server; runs
-                        circuit tests from a sibling NAME.tests.toml if present
+                        circuit and flow tests from a sibling NAME.tests.toml
 
 SRC is a blueprint string, a path to a file holding one (or JSON), or - for
 stdin; `validate` also takes library folders (validated as books).
@@ -26,8 +26,9 @@ from pathlib import Path
 from tools.check import check
 from tools.codec import decode, dump_json, encode, read_input
 from tools.library import load_book, save
-from validator.circuit import library_tests, load_cases, run_circuit_tests, tests_path
+from validator.circuit import run_circuit_tests
 from validator.flow import run_flow_tests
+from validator.tests_file import Tests, library_tests, load_tests, tests_path
 from validator.server import Server
 from validator.validate import validate
 
@@ -99,25 +100,31 @@ def cmd_validate(args):
         path = Path(src)
         if path.is_dir():
             items.append((src, load_book(path), None, None))
-            # Circuit tests run on single blueprints: each tested child on its own.
+            # Circuit and flow tests run on single blueprints: each tested child on its own.
             try:
                 tested = library_tests(path)
             except ValueError as e:
                 sys.exit(f"error: {e}")
-            for label, data, cases, ids in tested:
-                items.append((f"{src}/{label}", data, (cases, ids), None))
+            for label, data, tests in tested:
+                items.append((f"{src}/{label}", data, *_split(tests)))
         else:
             label = src if path.is_file() else f"#{i + 1}"
             data = decode(read_input(src))
-            circuit = None
+            tests = Tests()
             if path.is_file() and tests_path(path).is_file():
                 try:
-                    circuit = load_cases(tests_path(path), data)
+                    tests = load_tests(tests_path(path), data)
                 except ValueError as e:
                     sys.exit(f"error: {e}")
-            items.append((label if len(args.src) > 1 else "", data, circuit, None))
+            items.append((label if len(args.src) > 1 else "", data, *_split(tests)))
     if not _validate(items, args.factorio):
         sys.exit(1)
+
+
+def _split(tests: Tests) -> tuple:
+    """(circuit, flow) arguments for _validate."""
+    return ((tests.cases, tests.ids) if tests.cases else None,
+            (tests.flows, tests.ids) if tests.flows else None)
 
 
 def _validate(items: list[tuple], factorio: str | None) -> bool:

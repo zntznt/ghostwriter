@@ -7,6 +7,7 @@ A generator declares cases next to build():
                      feed=[Feed("ore_left", "left", "iron-ore"), Feed("ore_left", "right", "coal")],
                      drain=["plates"], expect={"iron-plate": 7.5})]
 
+Library blueprints keep theirs in a tests file (validator/tests_file.py).
 Entities are Draftsman ids (or entity_numbers). A Feed keeps one lane of a
 belt full from its back end ("left"/"right" as seen along the belt). A drain
 belt is emptied every tick and what left it is counted. After `warmup`

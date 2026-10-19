@@ -92,11 +92,12 @@ lets generators set. `test_game_settings_registry_round_trips` validates
 every entry on every entity it lists, and fails if the registry was
 harvested for a different game version than the server's.
 
-### Tests for library blueprints
+## Tests for library blueprints
 
-Imported blueprints have no generator, so their cases live in a file next to
-them. `library/logistics/gated-requester.json` has
-`library/logistics/gated-requester.tests.toml`, which holds the same cases in
+A filed blueprint keeps its tests in a file next to it, since imported ones
+have no generator and a generator's defaults can drift from what was filed.
+`library/logistics/gated-requester.json` has
+`library/logistics/gated-requester.tests.toml`, which holds circuit cases in
 TOML:
 
 ```toml
@@ -110,14 +111,30 @@ inject = [{ entity = "decider", connector = "combinator_input_green", signals = 
 expect = [{ entity = "chest", requests = { iron-plate = 100 } }]
 ```
 
+Flow cases go in `[[flow]]` tables (`library/smelting/` has one):
+
+```toml
+[ids]
+ore_left = 143
+plates = 1
+
+[[flow]]
+name = "48 furnaces: 15 iron-plate/s"
+feed = [{ entity = "ore_left", lane = "left", item = "iron-ore" }]
+drain = ["plates"]
+expect = { iron-plate = 15 }
+window = 160          # optional, like warmup and tolerance
+```
+
+A file holds `[[case]]` tables, `[[flow]]` tables or both
+(`validator/tests_file.py`).
+
 - `bp validate FILE` runs them. `bp validate library/FOLDER` runs those of every tested child, each on its own blueprint.
-- CI runs all of them in game before publishing (`test_library_circuit_tests_pass`).
-- Without a game, `tests/test_tools.py` checks that every tests file parses and that it only names entities and connectors the blueprint has.
-- The site lists each entry's case names.
+- CI runs all of them in game before publishing (`test_library_tests_pass`).
+- Without a game, `tests/test_tools.py` checks that every tests file parses and that it only names entities, connectors, lanes and items that exist.
+- The site lists each entry's case names: "Circuit logic tested in game" and "Throughput measured in game".
 
 ## Not covered yet
-
-- Flow tests for library blueprints: only generators can declare them so far.
 
 - Item requests (modules, fuel): ignored in the build diff because nothing delivers them.
 - Mods: the server loads only base and the DLC.

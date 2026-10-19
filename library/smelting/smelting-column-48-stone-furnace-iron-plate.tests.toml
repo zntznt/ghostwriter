@@ -1,0 +1,20 @@
+# Flow test for smelting-column-48-stone-furnace-iron-plate.json, run in the
+# game by CI before every publish (validator/flow.py). Written from
+# generators/smelting_column.py flow_tests() for the default parameters.
+
+[ids]
+ore_left = 143
+ore_right = 144
+plates = 1
+
+[[flow]]
+name = "48 furnaces: 15 iron-plate/s"
+feed = [
+  { entity = "ore_left", lane = "left", item = "iron-ore" },
+  { entity = "ore_left", lane = "right", item = "coal" },
+  { entity = "ore_right", lane = "left", item = "iron-ore" },
+  { entity = "ore_right", lane = "right", item = "coal" },
+]
+drain = ["plates"]
+expect = { iron-plate = 15 }
+window = 160  # 50 crafts of 3.2 s: whole crafts skew the rate by under 2%

@@ -17,7 +17,7 @@ from draftsman.blueprintable import get_blueprintable_from_JSON
 
 from tools.codec import encode, root_key
 from tools.library import BOOK_META, load_book
-from validator.circuit import load_cases, tests_path
+from validator.tests_file import load_tests, tests_path
 
 ROOT = Path(__file__).resolve().parent.parent
 LIBRARY = ROOT / "library"
@@ -85,7 +85,11 @@ def _node(path: Path, library: Path) -> dict:
         if tests.is_file():
             # CI runs these in the game before publishing, so a published page
             # means they passed.
-            node["tests"] = [case.name for case in load_cases(tests, data)[0]]
+            loaded = load_tests(tests, data)
+            if loaded.cases:
+                node["tests"] = [case.name for case in loaded.cases]
+            if loaded.flows:
+                node["flows"] = [flow.name for flow in loaded.flows]
     return node
 
 

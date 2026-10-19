@@ -15,7 +15,7 @@ from tools.check import check
 from tools.codec import CodecError, decode, encode, root_key
 from tools.library import entries, load_book, save
 from tools.settings import game_settings, known, registry
-from validator.circuit import library_tests
+from validator.tests_file import library_tests
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # The hand-built string from the planning handoff. Not in library/ until it
@@ -247,7 +247,7 @@ class GameSettings(unittest.TestCase):
 LIBRARY = Path(__file__).parent.parent / "library"
 
 
-class LibraryCircuitTests(unittest.TestCase):
+class LibraryTests(unittest.TestCase):
     """Tests files parse and name real entities and connectors (no game needed)."""
 
     def write(self, folder: Path, tests: str) -> Path:
@@ -257,8 +257,30 @@ class LibraryCircuitTests(unittest.TestCase):
         return path
 
     def test_library_tests_parse(self):
-        found = {label: cases for label, _, cases, _ in library_tests(LIBRARY)}
-        self.assertEqual(len(found["logistics/gated-requester.json"]), 5)
+        found = {label: tests for label, _, tests in library_tests(LIBRARY)}
+        self.assertEqual(len(found["logistics/gated-requester.json"].cases), 5)
+        [flow] = found["smelting/smelting-column-48-stone-furnace-iron-plate.json"].flows
+        self.assertEqual(flow.expect, {"iron-plate": 15})
+
+    def test_flow_typos_fail_statically(self):
+        base = ('[ids]\nchest = 1\n[[flow]]\nname = "x"\n'
+                'feed = [{ entity = "chest", lane = "left", item = "iron-ore" }]\n'
+                'drain = ["chest"]\nexpect = { iron-plate = 1 }\n')
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write(Path(tmp), base)
+            self.assertEqual(len(library_tests(Path(tmp))[0][2].flows), 1)  # the base itself parses
+        bad = {
+            "unknown lane": ('lane = "left"', 'lane = "middle"'),
+            "unknown item": ('item = "iron-ore"', 'item = "iron-ore-"'),
+            "unknown expected item": ("iron-plate = 1", "iron-plates = 1"),
+            "unknown drain": ('drain = ["chest"]', 'drain = ["chset"]'),
+            "unknown key": ("expect =", "expects ="),
+        }
+        for what, (old, new) in bad.items():
+            with self.subTest(what), tempfile.TemporaryDirectory() as tmp:
+                self.write(Path(tmp), base.replace(old, new))
+                with self.assertRaises(ValueError):
+                    library_tests(Path(tmp))
 
     def test_typos_fail_statically(self):
         bad = {

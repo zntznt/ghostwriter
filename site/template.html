@@ -223,6 +223,11 @@ function render() {
       $("h3", {}, `Circuit logic tested in game (${n.tests.length} case${n.tests.length === 1 ? "" : "s"})`),
       $("ul", {}, n.tests.map(t => $("li", {}, t)))));
   }
+  if (n.flows) {
+    parts.push($("div", { class: "tests" },
+      $("h3", {}, `Throughput measured in game (${n.flows.length} case${n.flows.length === 1 ? "" : "s"})`),
+      $("ul", {}, n.flows.map(t => $("li", {}, t)))));
+  }
   if (n.entities) {
     parts.push($("table", {},
       $("tr", {}, $("th", {}, "Entity"), $("th", {}, "Count")),
