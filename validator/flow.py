@@ -7,6 +7,9 @@ A generator declares cases next to build():
                      feed=[Feed("ore_left", "left", "iron-ore"), Feed("ore_left", "right", "coal")],
                      drain=["plates"], expect={"iron-plate": 7.5})]
 
+A FluidFeed attaches an unlimited source of a fluid (an infinity pipe) to a
+free tile beside the named entity, usually the end of a pipe.
+
 Library blueprints keep theirs in a tests file (validator/tests_file.py).
 Entities are Draftsman ids (or entity_numbers). A Feed keeps one lane of a
 belt full from its back end ("left"/"right" as seen along the belt). A drain
@@ -22,7 +25,7 @@ per swing.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from tools.codec import encode
 from validator.circuit import _ok, _wait_ticks
@@ -42,6 +45,12 @@ class Feed:
 
 
 @dataclass
+class FluidFeed:
+    entity: str | int  # a pipe (or anything with a fluid connection) to attach the source to
+    fluid: str
+
+
+@dataclass
 class Flow:
     name: str
     feed: list[Feed]
@@ -50,6 +59,7 @@ class Flow:
     warmup: float = 60  # seconds of game time
     window: float = 120
     tolerance: float = 0.03
+    fluids: list[FluidFeed] = field(default_factory=list)
 
 
 def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str, int], report: Report):
@@ -70,6 +80,7 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
             _ok(server.call("flow_start", json.dumps({
                 "feeds": [{"entity": number(f.entity), "lane": f.lane, "item": f.item} for f in flow.feed],
                 "drains": [number(d) for d in flow.drain],
+                "fluids": [{"entity": number(f.entity), "fluid": f.fluid} for f in flow.fluids],
             })))
             _wait_ticks(server, int(flow.warmup * 60), timeout=_timeout(flow.warmup))
             _ok(server.call("flow_count"))

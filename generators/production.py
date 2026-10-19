@@ -4,11 +4,13 @@
 
 Walks the recipe tree from the target. Each item an assembler makes from
 items gets as many assembly rows (generators/assembly_row.py) as its demand
-needs, in the fastest allowed machine whose row can be fed. With smelt=1,
-items a furnace makes from one ore get smelting columns. Everything else is
-an input to supply: plates by default, anything made with fluids, and
-whatever `raw` lists (comma-separated). The book's description gives those
-input rates.
+needs, in the fastest allowed machine whose row can be fed. Items made with
+one fluid (plastic, batteries, processing units) get fluid rows
+(generators/fluid_row.py). With smelt=1, items a furnace makes from one ore
+get smelting columns. Everything else is an input to supply: plates by
+default, fluids (units/s), items made with two fluids or as a fluid (sulfur,
+sulfuric acid), and whatever `raw` lists (comma-separated). The book's
+description gives those input rates.
 
 Rows aren't connected to each other. Each row's description says which item
 goes on which input lane; the book says what each row makes and how much of
@@ -21,11 +23,12 @@ from dataclasses import dataclass
 from draftsman.blueprintable import BlueprintBook
 from draftsman.data import recipes
 
-from generators import assembly_row, smelting_column
+from generators import assembly_row, fluid_row, smelting_column
 from tools import rates
+from tools.check import TEXT_LIMITS
 
 MACHINES = ("assembling-machine-3", "assembling-machine-2", "assembling-machine-1")
-GENERATORS = {"assembly_row": assembly_row, "smelting_column": smelting_column}
+GENERATORS = {"assembly_row": assembly_row, "fluid_row": fluid_row, "smelting_column": smelting_column}
 
 
 @dataclass
@@ -54,7 +57,7 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
             raise ValueError(f"recipe loop: {' -> '.join(path + [i])}")
         how[i] = _how(i, tiers, smelt, furnace, forced_raw)
         if how[i]:
-            for ingredient in how[i][1].ingredients:
+            for ingredient in [*how[i][1].ingredients, *how[i][1].fluids]:
                 visit(ingredient, path + [i])
         order.append(i)  # after its ingredients
 
@@ -65,7 +68,7 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
         if how[i] and demand[i]:
             r = how[i][1]
             crafts = demand[i] / r.results[i]
-            for ingredient, amount in r.ingredients.items():
+            for ingredient, amount in [*r.ingredients.items(), *r.fluids.items()]:
                 demand[ingredient] += crafts * amount
 
     steps = [_size(i, demand[i], how[i], belt, furnace, tiers) for i in order if how[i]]
@@ -78,11 +81,14 @@ def _how(item, tiers, smelt, furnace, forced_raw):
     if item in forced_raw or item not in recipes.raw:
         return None
     try:
-        r = rates.recipe(item)
-    except ValueError:  # fluids or variable results
+        r = rates.recipe(item, fluids=True)
+    except ValueError:  # a fluid product, or variable results
         return None
     if list(r.results) != [item]:
         return None
+    if r.fluids:
+        ok = len(r.fluids) == 1 and any(_crafts(m, r) for m in _fluid_machines(tiers))
+        return ("fluid_row", r) if ok else None
     if any(_crafts(m, r) for m in tiers):
         return "assembly_row", r
     if smelt and len(r.ingredients) == 1 and _crafts(furnace, r):
@@ -95,9 +101,10 @@ def _size(item, demand, how, belt, furnace, tiers) -> Step:
     full-size rows, then just enough machines in each."""
     kind, r = how
     errors = []
-    options = ([{"recipe": item, "machine": m, "belt": belt} for m in tiers if _crafts(m, r)]
-               if kind == "assembly_row" else [{"recipe": item, "furnace": furnace, "belt": belt}])
-    count_key = "machines" if kind == "assembly_row" else "furnaces"
+    machines = {"assembly_row": tiers, "fluid_row": _fluid_machines(tiers)}.get(kind, ())
+    options = ([{"recipe": item, "machine": m, "belt": belt} for m in machines if _crafts(m, r)]
+               if kind != "smelting_column" else [{"recipe": item, "furnace": furnace, "belt": belt}])
+    count_key = "furnaces" if kind == "smelting_column" else "machines"
     for base in options:
         try:
             full = _rated(kind, {**base, "sides": 2})
@@ -116,6 +123,11 @@ def _size(item, demand, how, belt, furnace, tiers) -> Step:
     raise ValueError(f"{item}: no row fits ({errors[-1]}); pass raw={item} to supply it instead")
 
 
+def _fluid_machines(tiers):
+    # Chemical plants have one tier; assemblers follow the cap.
+    return ("chemical-plant",) + tuple(m for m in tiers if m != "assembling-machine-1")
+
+
 def _crafts(machine, r) -> bool:
     try:
         rates.crafts_per_second(machine, r)
@@ -125,10 +137,7 @@ def _crafts(machine, r) -> bool:
 
 
 def _rated(kind, params) -> float:
-    if kind == "assembly_row":
-        p = assembly_row.plan(**params)
-    else:
-        p = smelting_column.plan(**params)
+    p = GENERATORS[kind].plan(**params)
     return p.sides * p.per_side
 
 
@@ -147,8 +156,10 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     supply = ", ".join(f"{v:g} {k}/s" for k, v in inputs.items()) or "nothing"
     plan = "; ".join(f"{s.item}: {s.rows} row{'s' if s.rows > 1 else ''} of {s.rate:g}/s "
                      f"for {s.demand:g}/s" for s in steps)
-    book.description = (f"Supply {supply}. Rows, ingredients first: {plan}. The rows aren't connected: "
-                        "belt each row's product to the rows that use it.")
+    tail = "The rows aren't connected: belt each row's product to the rows that use it."
+    book.description = f"Supply {supply}. Rows, ingredients first: {plan}. {tail}"
+    if len(book.description.encode()) > TEXT_LIMITS["description"]:  # the game would cut it
+        book.description = f"Supply {supply}. Each row's description gives its share. {tail}"
     book.icons = [item]
     for s in steps:
         for k in range(s.rows):

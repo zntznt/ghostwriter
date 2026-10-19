@@ -10,7 +10,7 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
-from generators import assembly_row, production, smelting_column
+from generators import assembly_row, fluid_row, production, smelting_column
 from generators.gated_requester import build
 from tools import rates
 from tools.check import check
@@ -243,6 +243,62 @@ class AssemblyRow(unittest.TestCase):
 
 
 
+
+FLUID_VARIANTS = [
+    {},  # plastic: coal through a long-handed inserter, petroleum gas from the pipe
+    {"recipe": "battery", "machines": 3},
+    {"recipe": "explosives"},
+    {"recipe": "processing-unit", "machines": 2},  # assembling-machine-2, gap rows for poles
+    {"recipe": "solid-fuel-from-light-oil", "sides": 1, "machines": 2},
+]
+
+
+def fluid(**params) -> dict:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return fluid_row.build(**params).to_dict()["blueprint"]
+
+
+class FluidRow(unittest.TestCase):
+    def test_variants_check_clean_and_are_powered(self):
+        for params in FLUID_VARIANTS:
+            bp = fluid(**params)
+            self.assertEqual(check({"blueprint": bp}), [], params)
+            assert_powered(self, bp, params)
+
+    def test_machines_face_the_pipe(self):
+        # Chemical plant inputs are on its north face: turned east on the left, west on the right.
+        bp = fluid()
+        (pipe_x,) = {e["position"]["x"] for e in bp["entities"] if e["name"] == "pipe"}
+        plants = [e for e in bp["entities"] if e["name"] == "chemical-plant"]
+        self.assertEqual({e["direction"] for e in plants if e["position"]["x"] < pipe_x}, {4})
+        self.assertEqual({e["direction"] for e in plants if e["position"]["x"] > pipe_x}, {12})
+
+    def test_product_belt_carries_only_the_product(self):
+        p = fluid_row.plan()
+        self.assertEqual((p.near, p.far), (None, ["coal"]))
+        self.assertEqual(p.feeders[1][0], "long-handed-inserter")
+        self.assertEqual((p.fluid, p.fluid_rate), ("petroleum-gas", 120))  # 6 plants x 1 craft/s x 20
+
+    def test_full_lanes_get_fast_outputs(self):
+        # 15 explosives plants per side fill a yellow lane; basic inserters fall short there.
+        self.assertEqual(fluid_row.plan(recipe="explosives").output[0], "fast-inserter")
+        self.assertEqual(fluid_row.plan(recipe="explosives", machines=5).output[0], "inserter")
+
+    def test_flow_tests_name_built_entities(self):
+        for params in FLUID_VARIANTS:
+            bp = fluid_row.build(**params)
+            ids = {e.id for e in bp.entities if e.id}
+            for flow in fluid_row.flow_tests(**params):
+                named = {f.entity for f in flow.feed} | set(flow.drain) | {f.entity for f in flow.fluids}
+                self.assertLessEqual(named, ids, params)
+
+    def test_refuses_what_one_pipe_cant_do(self):
+        with self.assertRaisesRegex(ValueError, "exactly one fluid"):
+            fluid_row.plan(recipe="sulfur")  # water and petroleum gas
+        with self.assertRaisesRegex(ValueError, "is a fluid"):
+            fluid_row.plan(recipe="sulfuric-acid")  # a fluid product
+
 class Production(unittest.TestCase):
     def test_green_circuits(self):
         steps, inputs = production.solve("electronic-circuit", 5)
@@ -258,11 +314,12 @@ class Production(unittest.TestCase):
             allowed = production.MACHINES[production.MACHINES.index(kw.get("machine", "assembling-machine-2")):]
             for s in steps:
                 self.assertGreaterEqual(s.rows * s.rate + 1e-9, s.demand, (item, s))
-                self.assertIn(s.params["machine"], allowed, (item, s))
+                self.assertIn(s.params["machine"], allowed + ("chemical-plant",), (item, s))
 
     def test_inputs(self):
-        _, inputs = production.solve("advanced-circuit", 1)  # plastic is made with petroleum gas
-        self.assertIn("plastic-bar", inputs)
+        _, inputs = production.solve("advanced-circuit", 1)  # plastic is made from petroleum gas and coal
+        self.assertNotIn("plastic-bar", inputs)
+        self.assertIn("petroleum-gas", inputs)
         steps, inputs = production.solve("electronic-circuit", 5, smelt=1)
         self.assertEqual(inputs, {"iron-ore": 5, "copper-ore": 7.5})
         self.assertEqual(steps[0].generator, "smelting_column")
@@ -277,6 +334,20 @@ class Production(unittest.TestCase):
         children = data["blueprint_book"]["blueprints"]
         self.assertEqual(len(children), len(production.parts(item="inserter", rate=2)))
         self.assertEqual(errors(data), [])
+
+    def test_fluid_recipes_get_fluid_rows(self):
+        steps, inputs = production.solve("advanced-circuit", 1)
+        self.assertEqual({s.item: s.generator for s in steps}["plastic-bar"], "fluid_row")
+        self.assertEqual((inputs["petroleum-gas"], inputs["coal"]), (20, 1))
+        _, inputs = production.solve("processing-unit", 0.5)
+        self.assertEqual(inputs["sulfuric-acid"], 2.5)  # a fluid product: supplied
+
+    def test_long_book_descriptions_fit_the_game(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            data = production.build(item="flying-robot-frame", rate=0.2).to_dict()
+        self.assertEqual(errors(data), [])
+        self.assertIn("Supply", data["blueprint_book"]["description"])
 
     def test_unfeedable_item_says_how_to_supply_it(self):
         with self.assertRaisesRegex(ValueError, "raw=assembling-machine-1"):
@@ -324,6 +395,12 @@ class Check(unittest.TestCase):
         data = generated()
         data["blueprint"]["entities"][2]["control_behavior"]["sections"]["sections"][0]["filters"][0]["name"] = "iron-plates"
         self.assertTrue(any("iron-plates" in p for p in errors(data)))
+
+    def test_text_the_game_would_cut(self):
+        data = generated()
+        data["blueprint"]["description"] = "é" * 251  # 502 bytes
+        data["blueprint"]["label"] = "x" * 201
+        self.assertEqual(sorted(e.split(" is ")[0] for e in errors(data)), ["error: description", "error: label"])
 
     def test_wire_reach(self):
         data = generated()
