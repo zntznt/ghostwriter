@@ -18,11 +18,11 @@ the bottom, taking plates off the top, and connecting any pole to your grid.
 
 import math
 from dataclasses import dataclass
-from itertools import combinations
 
 from draftsman.blueprintable import Blueprint
 from draftsman.constants import Direction
-from draftsman.data import entities, recipes
+
+from tools import layout, rates
 
 LANES = ("left", "right")
 
@@ -52,20 +52,17 @@ class Plan:
 def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, **_) -> Plan:
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
-    proto = entities.raw[furnace]
-    r = recipes.raw[recipe]
-    if len(r["ingredients"]) != 1 or len(r["results"]) != 1:
+    r = rates.recipe(recipe)
+    if len(r.ingredients) != 1 or len(r.results) != 1:
         raise ValueError(f"{recipe}: a column belt carries one ore and one product")
-    crafts = proto["crafting_speed"] / r.get("energy_required", 0.5)
-    (ingredient,), (result,) = r["ingredients"], r["results"]
-    burner = proto["energy_source"]["type"] == "burner"
-    # A belt lane holds 4 items per tile; speed is tiles per tick.
-    lane = entities.raw[belt]["speed"] * 60 * 4
-    ore_rate, product_rate = ingredient["amount"] * crafts, result["amount"] * crafts
+    crafts = rates.crafts_per_second(furnace, r)
+    ((ore, ore_amount),), ((product, product_amount),) = r.ingredients.items(), r.results.items()
+    burner = not rates.electric(furnace)
+    lane = rates.lane_rate(belt)
+    ore_rate, product_rate = ore_amount * crafts, product_amount * crafts
     ore_lanes = 1 if burner else 2
     limit = math.floor(min(lane / product_rate, ore_lanes * lane / ore_rate) + 1e-9)
-    (x1, _), (x2, _) = proto["collision_box"]
-    return Plan(furnaces or limit, sides, math.ceil(x2 - x1), burner, ingredient["name"], result["name"],
+    return Plan(furnaces or limit, sides, rates.size(furnace), burner, ore, product,
                 ore_rate, product_rate, lane, limit, 1 / crafts)
 
 
@@ -103,68 +100,25 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
                                **({"id": f"ore_{side}"} if bottom else {}))
 
     powered = []  # (centre x, centre y, half width) of everything that needs power
-    ins_half = entities.raw[inserter]["collision_box"][1][0]
+    ins_half = rates.half_width(inserter)
     for side, (ore_x, in_x, furnace_x, out_x) in columns.items():
         west = side == "left"
         for k in range(n):
             y = k * s
             bp.entities.append(furnace, tile_position=(furnace_x, y))
             if not p.burner:
-                powered.append((furnace_x + s / 2, y + s / 2, entities.raw[furnace]["collision_box"][1][0]))
+                powered.append((furnace_x + s / 2, y + s / 2, rates.half_width(furnace)))
             # Input takes from the ore belt, output drops toward the plate belt.
             for x, pick_from_west in ((in_x, west), (out_x, west)):
-                bp.entities.append(inserter, tile_position=(x, y + ins_offset), direction=_facing(pick_from_west))
+                bp.entities.append(inserter, tile_position=(x, y + ins_offset), direction=layout.facing(pick_from_west))
                 powered.append((x + 0.5, y + ins_offset + 0.5, ins_half))
 
     inserter_columns = sorted(c for cols in columns.values() for c in (cols[1], cols[3]))
     free_rows = [k * s + o for k in range(n) for o in range(s) if o != ins_offset]
-    for x, y in _poles(pole, powered, inserter_columns, free_rows):
+    for x, y in layout.poles(pole, powered, {c: free_rows for c in inserter_columns}):
         bp.entities.append(pole, tile_position=(x, y))
     bp.generate_power_connections()
     return bp
-
-
-def _facing(pick_from_west: bool) -> Direction:
-    # An inserter's direction points at the side it picks up from (prototype
-    # pickup_position is north of an unrotated inserter); checked in game.
-    return Direction.WEST if pick_from_west else Direction.EAST
-
-
-def _poles(pole, powered, columns, rows):
-    """Tiles for poles: the smallest set of columns (from `columns`) whose
-    supply areas reach every powered entity across, times the fewest rows
-    (from `rows`) that reach them all along, each within wire reach."""
-    reach = entities.raw[pole]["maximum_wire_distance"]
-    supply = entities.raw[pole]["supply_area_distance"]
-
-    def covers(c, centre, half):  # supply area overlaps the collision box
-        return abs(centre - (c + 0.5)) < supply + half
-
-    if not powered:
-        return []
-    chosen = None
-    for size in range(1, len(columns) + 1):
-        for subset in combinations(columns, size):
-            if all(any(covers(c, x, h) for c in subset) for x, _, h in powered) and \
-                    all(b - a <= reach for a, b in zip(subset, subset[1:])):
-                chosen = subset
-                break
-        if chosen:
-            break
-    if not chosen:
-        raise ValueError(f"{pole} can't power every inserter from the inserter columns")
-
-    # Interval point cover: take entities by the last row that still reaches
-    # them, and put each new row as far down as it can go.
-    placed = []
-    for _, y, h in sorted(powered, key=lambda e: e[1] + e[2]):
-        if any(covers(r, y, h) for r in placed):
-            continue
-        options = [r for r in rows if covers(r, y, h) and (not placed or r - placed[-1] <= reach)]
-        if not options:
-            raise ValueError(f"{pole} can't reach row {y - 0.5:g} within wire reach")
-        placed.append(max(options))
-    return [(x, y) for y in placed for x in chosen]
 
 
 def flow_tests(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, **_):

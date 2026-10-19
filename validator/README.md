@@ -92,6 +92,17 @@ lets generators set. `test_game_settings_registry_round_trips` validates
 every entry on every entity it lists, and fails if the registry was
 harvested for a different game version than the server's.
 
+## Inserter measurement
+
+`python -m validator.measure` times every inserter tier on every belt tier with
+no research. It measures both directions: off a full, moving belt into a
+chest, and from a full chest onto a moving belt, with two inserters per rig
+so the belt is never the limit. It writes `tools/inserter_rates.json`, which
+`tools/rates.py` serves to generators. Rows keep a 15% margin below these
+rates, since a chest takes anything and a machine only what it needs, and
+flow tests check the result. `test_inserter_rates_were_measured_on_this_version`
+fails after a game update until it is re-run.
+
 ## Tests for library blueprints
 
 A filed blueprint keeps its tests in a file next to it, since imported ones

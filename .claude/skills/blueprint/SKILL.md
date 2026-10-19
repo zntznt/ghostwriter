@@ -40,6 +40,9 @@ SRC is a string, a file path, or `-` (stdin).
 1. Look for an existing generator in `generators/`. Extend one with
    parameters before writing a new one. Layout is where freeform design
    fails, so prefer small, parametric, tested generator functions.
+   - **Any item recipe in assemblers:** use `assembly_row`, e.g. `recipe=electronic-circuit machine=assembling-machine-1`. It sizes machines to the belts, inserters to the measured rates, and spreads ingredients over one or two input belts. When nothing fits, it says why.
+   - **Smelting:** use `smelting_column`.
+   - **Rates and layout:** take rates from `tools/rates.py` (recipes, machine speeds, belt lanes, measured inserter rates) and columns and poles from `tools/layout.py`. Never hard-code a speed.
 2. A new generator is `generators/<name>.py` exposing
    `build(**params) -> Blueprintable` (Draftsman). Docstring: what it does and
    how to hook it up in game. If it has circuit logic, it also exposes

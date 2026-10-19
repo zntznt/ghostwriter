@@ -1,6 +1,7 @@
 """In-game validation tests. Need a Factorio executable (see tools/factorio.py);
 skipped without one. One server for the whole class, ~30 s."""
 
+import json
 import os
 import unittest
 from pathlib import Path
@@ -9,8 +10,9 @@ from draftsman.blueprintable import Blueprint
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import gated_requester, smelting_column
+from generators import assembly_row, gated_requester, smelting_column
 from tools.codec import decode
+from tools import rates
 from tools.factorio import locate
 from tools.library import entries
 from tools.settings import game_settings, registry
@@ -231,6 +233,24 @@ class Validator(unittest.TestCase):
         recipes = self.server.command(
             '/sc local r = game.forces.player.recipes rcon.print(tostring(r["steel-plate"].enabled))')
         self.assertEqual(recipes.strip(), "false")
+
+    def test_assembly_rows_reach_rated_output(self):
+        # One per layout feature: two fast inserters, two ingredients on one
+        # belt, a second belt through long-handed inserters, poles in gap rows.
+        for params in ({}, {"recipe": "electronic-circuit", "machine": "assembling-machine-1"},
+                       {"recipe": "inserter", "machine": "assembling-machine-1", "machines": 3},
+                       {"recipe": "electronic-circuit"}):
+            bp = assembly_row.build(**params)
+            data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+            self.assertPasses(data)
+            report = self.run_flow(data, assembly_row.flow_tests(**params), ids)
+            self.assertTrue(report.ok, (params, report.lines()))
+
+    def test_inserter_rates_were_measured_on_this_version(self):
+        # Rows are sized from tools/inserter_rates.json; re-measure after a game
+        # update (python -m validator.measure).
+        version = json.loads(rates.INSERTER_RATES.read_text())["game_version"]
+        self.assertEqual(version, self.server.version)
 
     def test_unpowered_column_fails_flow(self):
         # Passes validation (everything builds) but nothing runs without poles.

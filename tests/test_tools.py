@@ -1,6 +1,7 @@
 """Run: python -m unittest discover tests"""
 
 import copy
+import json
 import tempfile
 import unittest
 import warnings
@@ -9,8 +10,9 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
-from generators import smelting_column
+from generators import assembly_row, smelting_column
 from generators.gated_requester import build
+from tools import rates
 from tools.check import check
 from tools.codec import CodecError, decode, encode, root_key
 from tools.library import entries, load_book, save
@@ -83,6 +85,35 @@ def column(**params) -> dict:
         return smelting_column.build(**params).to_dict()["blueprint"]
 
 
+def assert_powered(test: unittest.TestCase, bp: dict, label):
+    """Every electric entity overlaps a pole's supply area and every pole is on
+    one copper network. Independent of how a generator placed them."""
+    from draftsman.data import entities as protos
+
+    ents = bp["entities"]
+    poles = {e["entity_number"]: e for e in ents if e["name"].endswith("electric-pole")}
+    for e in ents:
+        p = protos.raw[e["name"]]
+        if p.get("energy_source", {}).get("type") != "electric":
+            continue
+        half = p["collision_box"][1][0]
+        test.assertTrue(any(
+            all(abs(e["position"][k] - q["position"][k]) < protos.raw[q["name"]]["supply_area_distance"] + half
+                for k in "xy")
+            for q in poles.values()), (label, e))
+    group = {n: n for n in poles}
+
+    def root(n):
+        while group[n] != n:
+            n = group[n]
+        return n
+
+    for a, ca, b, cb in bp.get("wires", []):
+        test.assertEqual((ca, cb), (5, 5))  # pole_copper
+        group[root(a)] = root(b)
+    test.assertEqual(len({root(n) for n in poles}), 1, label)
+
+
 class SmeltingColumn(unittest.TestCase):
     def test_default_saturates_a_yellow_belt(self):
         # 24 stone furnaces per side fill one 7.5/s lane each: 15 iron-plate/s.
@@ -108,34 +139,8 @@ class SmeltingColumn(unittest.TestCase):
             self.assertEqual(check({"blueprint": column(**params)}), [], params)
 
     def test_every_powered_entity_is_on_one_pole_network(self):
-        # Independent of the generator's own placement: supply areas against
-        # collision boxes, and the copper wires joining every pole.
-        from draftsman.data import entities as protos
-
         for params in COLUMN_VARIANTS:
-            bp = column(**params)
-            ents = bp["entities"]
-            poles = {e["entity_number"]: e for e in ents if e["name"].endswith("electric-pole")}
-            for e in ents:
-                p = protos.raw[e["name"]]
-                if p.get("energy_source", {}).get("type") != "electric":
-                    continue
-                half = p["collision_box"][1][0]
-                self.assertTrue(any(
-                    all(abs(e["position"][k] - q["position"][k]) < protos.raw[q["name"]]["supply_area_distance"] + half
-                        for k in "xy")
-                    for q in poles.values()), (params, e))
-            group = {n: n for n in poles}
-
-            def root(n):
-                while group[n] != n:
-                    n = group[n]
-                return n
-
-            for a, ca, b, cb in bp.get("wires", []):
-                self.assertEqual((ca, cb), (5, 5))  # pole_copper
-                group[root(a)] = root(b)
-            self.assertEqual(len({root(n) for n in poles}), 1, params)
+            assert_powered(self, column(**params), params)
 
     def test_flow_tests_name_built_belts(self):
         for params in COLUMN_VARIANTS:
@@ -147,6 +152,94 @@ class SmeltingColumn(unittest.TestCase):
     def test_bad_sides(self):
         with self.assertRaises(ValueError):
             smelting_column.build(sides=3)
+
+    def test_filed_column_is_still_what_build_makes(self):
+        # The library copy and its tests file were written from build(); a
+        # generator change that alters it needs a refile.
+        filed = json.loads((LIBRARY / "smelting" / "smelting-column-48-stone-furnace-iron-plate.json").read_text())
+        self.assertEqual({"blueprint": column()}, filed)
+
+
+class Rates(unittest.TestCase):
+    def test_recipe_defaults(self):
+        gear = rates.recipe("iron-gear-wheel")  # 2.1 omits the default time and categories
+        self.assertEqual((gear.time, gear.categories), (0.5, ("crafting",)))
+        self.assertEqual(gear.ingredients, {"iron-plate": 2})
+        self.assertEqual(rates.recipe("copper-cable").results, {"copper-cable": 2})
+
+    def test_refuses_fluids_and_wrong_machines(self):
+        with self.assertRaisesRegex(ValueError, "fluid"):
+            rates.recipe("plastic-bar")
+        with self.assertRaisesRegex(ValueError, "can't craft"):
+            rates.crafts_per_second("assembling-machine-2", rates.recipe("iron-plate"))
+
+    def test_belts_and_inserters(self):
+        self.assertEqual(rates.lane_rate("transport-belt"), 7.5)
+        self.assertEqual(rates.lane_rate("turbo-transport-belt"), 30)
+        fast = rates.inserter_rate("fast-inserter", "transport-belt", True)
+        self.assertGreater(fast, 2 * rates.inserter_rate("inserter", "transport-belt", True))
+
+    def test_inserter_rates_match_settings_registry_version(self):
+        version = json.loads(rates.INSERTER_RATES.read_text())["game_version"]
+        self.assertEqual(version, registry()["game_version"])
+
+
+ROW_VARIANTS = [
+    {},
+    {"recipe": "copper-cable"},
+    {"recipe": "electronic-circuit", "machine": "assembling-machine-1"},
+    {"recipe": "electronic-circuit"},  # three input inserters: poles in gap rows
+    {"recipe": "inserter", "machine": "assembling-machine-1"},  # three ingredients: second belt
+    {"recipe": "iron-gear-wheel", "machine": "assembling-machine-3", "belt": "express-transport-belt"},
+    {"sides": 1, "machines": 2},
+    {"pole": "small-electric-pole"},
+]
+
+
+def row(**params) -> dict:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return assembly_row.build(**params).to_dict()["blueprint"]
+
+
+class AssemblyRow(unittest.TestCase):
+    def test_variants_check_clean_and_are_powered(self):
+        for params in ROW_VARIANTS:
+            bp = row(**params)
+            self.assertEqual(check({"blueprint": bp}), [], params)
+            assert_powered(self, bp, params)
+
+    def test_inserters_follow_the_measured_rates(self):
+        # Gears in assembling-machine-2: 1.5 crafts/s need 3 iron-plate/s in,
+        # more than three basic inserters move with the margin; two fast ones do.
+        p = assembly_row.plan()
+        self.assertEqual((p.feeders, p.output), ([("fast-inserter", 2)], ("fast-inserter", 1)))
+        self.assertEqual(p.limit, 5)  # 5 x 3 plates/s fills both lanes of a yellow belt
+        # 2 plates/s: one fast inserter beats three basic ones; forcing basic gives three.
+        self.assertEqual(assembly_row.plan(machine="assembling-machine-1").feeders, [("fast-inserter", 1)])
+        self.assertEqual(assembly_row.plan(machine="assembling-machine-1", inserter="inserter").feeders,
+                         [("inserter", 3)])
+
+    def test_ingredients_spread_over_belts(self):
+        p = assembly_row.plan(recipe="inserter", machine="assembling-machine-1")
+        self.assertEqual(len(p.lanes), 2)
+        self.assertEqual(p.feeders[1][0], "long-handed-inserter")
+        self.assertEqual({i for ls in p.lanes for i in ls.values()},
+                         {"electronic-circuit", "iron-gear-wheel", "iron-plate"})
+        self.assertEqual(assembly_row.plan(recipe="electronic-circuit").gap, 1)
+
+    def test_flow_tests_name_built_belts(self):
+        for params in ROW_VARIANTS:
+            bp = assembly_row.build(**params)
+            ids = {e.id for e in bp.entities if e.id}
+            for flow in assembly_row.flow_tests(**params):
+                self.assertLessEqual({f.entity for f in flow.feed} | set(flow.drain), ids, params)
+
+    def test_impossible_rows_say_why(self):
+        with self.assertRaisesRegex(ValueError, "no input layout"):
+            assembly_row.build(recipe="electronic-circuit", machine="assembling-machine-3")
+        with self.assertRaisesRegex(ValueError, "fluid"):
+            assembly_row.build(recipe="processing-unit")
 
 
 class Check(unittest.TestCase):
