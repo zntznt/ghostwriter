@@ -482,6 +482,40 @@ class Production(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "raw=assembling-machine-1"):
             production.solve("assembling-machine-1", 0.5)
 
+    def test_chain_packs_every_row(self):
+        from tools.check import check
+
+        params = {"item": "advanced-circuit", "rate": 1, "oil": 1}
+        data, (flow,) = production.chain_tests(**params)
+        book = production.build(**params).to_dict()["blueprint_book"]["blueprints"]
+        entities = data["blueprint"]["entities"]
+        self.assertEqual(len(entities), sum(len(b["blueprint"]["entities"]) for b in book))
+        self.assertEqual([e["entity_number"] for e in entities], list(range(1, len(entities) + 1)))
+        spots = [(e["position"]["x"], e["position"]["y"]) for e in entities]
+        self.assertEqual(len(spots), len(set(spots)))
+        self.assertEqual(check(data), [])
+        # Every feed, drain and fluid line names a real entity.
+        named = {e["entity_number"] for e in entities}
+        self.assertLessEqual({f.entity for f in flow.feed + flow.fluids} | set(flow.drain), named)
+
+    def test_chain_pools_intermediates_only(self):
+        _, (flow,) = production.chain_tests(item="advanced-circuit", rate=1, oil=1)
+        self.assertTrue(flow.at_least)
+        self.assertEqual(flow.expect, {"advanced-circuit": 1.0})
+        self.assertNotIn("advanced-circuit", flow.caps)
+        self.assertIn("plastic-bar", flow.caps)
+        pooled = {f.item for f in flow.feed if f.pooled}
+        self.assertIn("electronic-circuit", pooled)
+        self.assertNotIn("iron-plate", pooled)  # the book's own input
+        self.assertTrue(all(f.pooled for f in flow.fluids if f.fluid == "petroleum-gas" and not f.sink))
+        self.assertFalse(any(f.pooled for f in flow.fluids if f.fluid in ("crude-oil", "water")))
+        # Cracking feeds (the only heavy and light oil users here) come last:
+        # they get what the other rows leave.
+        pooled = [f.fluid for f in flow.fluids if f.pooled]
+        cracked = [k for k, fluid in enumerate(pooled) if fluid in ("heavy-oil", "light-oil")]
+        self.assertTrue(cracked)
+        self.assertEqual(cracked, list(range(len(pooled) - len(cracked), len(pooled))))
+
 class Check(unittest.TestCase):
     def test_real_2_1_exports_have_no_errors(self):
         self.assertTrue(GAME_21)
