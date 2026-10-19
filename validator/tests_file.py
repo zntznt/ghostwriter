@@ -18,6 +18,7 @@
   feed = [{ entity = "ore", lane = "left", item = "iron-ore" }]
   drain = ["plates"]
   expect = { iron-plate = 7.5 }
+  fluids = [{ entity = "pipe_end", fluid = "water" }]   # optional: unlimited sources
   warmup = 60                 # optional, like window and tolerance
 
 Loading checks every entity, connector, lane and item name, so a typo fails
@@ -30,10 +31,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from draftsman.constants import WireConnectorID
-from draftsman.data import items
+from draftsman.data import fluids, items
 
 from validator.circuit import Case, Expect, Inject
-from validator.flow import Feed, Flow
+from validator.flow import Feed, FluidFeed, Flow
 
 TESTS_SUFFIX = ".tests.toml"
 CONNECTORS = {name.lower() for name in WireConnectorID.__members__ if "COPPER" not in name}  # aliases included
@@ -97,20 +98,26 @@ def load_tests(path: Path, data: dict | None = None) -> Tests:
         tests.cases.append(Case(c["name"], inject, expect, c.get("ticks", 10)))
     for i, f in enumerate(spec.get("flow", [])):
         ctx = f"{where} flow {i + 1} ({f.get('name', 'unnamed')})"
-        _keys(f, {"name", "feed", "drain", "expect", "warmup", "window", "tolerance"}, ctx)
+        _keys(f, {"name", "feed", "drain", "expect", "warmup", "window", "tolerance", "fluids"}, ctx)
         feed = []
         for x in f.get("feed", []):
             _keys(x, {"entity", "lane", "item"}, ctx)
             if x["lane"] not in LANES:
                 raise ValueError(f"{ctx}: lane {x['lane']!r} is not one of {sorted(LANES)}")
             feed.append(Feed(entity(x["entity"], ctx), x["lane"], item(x["item"], ctx)))
+        sources = []
+        for x in f.get("fluids", []):
+            _keys(x, {"entity", "fluid"}, ctx)
+            if x["fluid"] not in fluids.raw:
+                raise ValueError(f"{ctx}: unknown fluid {x['fluid']!r}")
+            sources.append(FluidFeed(entity(x["entity"], ctx), x["fluid"]))
         drain = [entity(d, ctx) for d in f.get("drain", [])]
         expect = {item(k, ctx): v for k, v in f.get("expect", {}).items()}
         if not (feed and drain and expect):
             raise ValueError(f"{ctx}: a flow needs feed, drain and expect")
         defaults = Flow("", [], [], {})
         tests.flows.append(Flow(f["name"], feed, drain, expect, f.get("warmup", defaults.warmup),
-                                f.get("window", defaults.window), f.get("tolerance", defaults.tolerance)))
+                                f.get("window", defaults.window), f.get("tolerance", defaults.tolerance), sources))
     if not (tests.cases or tests.flows):
         raise ValueError(f"{where}: no [[case]] or [[flow]]")
     return tests

@@ -7,6 +7,8 @@ Draftsman 4.0.1 on import, verified by probing:
   catches   unknown entity/signal names, overlaps, bad enums
   misses    wires to missing entities (crashes), connector IDs on the wrong
             entity kind, out-of-range connector IDs, wire reach
+  never     checks label/description length: the game cuts them at 200/500
+            bytes without a warning; checked here (TEXT_LIMITS)
   unreliable on 2.1: it rejects many keys real 2.1.22 exports contain and
             crashes on some entities (NOTES.md), so unknown keys and its own
             crashes are warnings here. The game validator is the authority.
@@ -35,18 +37,27 @@ _CIRCUIT = {WireConnectorID.CIRCUIT_RED, WireConnectorID.CIRCUIT_GREEN} | _COMBI
 _DUMP = Path(__file__).resolve().parent.parent / "data" / "data-raw-dump.json"
 
 
+# The game keeps this many bytes of UTF-8 and silently drops the rest (2.1.22).
+TEXT_LIMITS = {"label": 200, "description": 500}
+
+
 def check(data: dict, prefix: str = "") -> list[str]:
     """Return problems as "error: ..." / "warning: ..." lines; empty means clean."""
     kind = root_key(data)
+    out = [prefix + p for p in _text_problems(data[kind])]
     if kind == "blueprint":
-        return _check_blueprint(data, prefix)
+        return out + _check_blueprint(data, prefix)
     if kind == "blueprint_book":
-        out = []
         for child in data["blueprint_book"].get("blueprints", []):
             label = child[root_key(child)].get("label", "")
             out += check(child, f"{prefix}[{child.get('index')}:{label}] ")
         return out
-    return [prefix + p for p in _load(data)[0]]
+    return out + [prefix + p for p in _load(data)[0]]
+
+
+def _text_problems(body: dict) -> list[str]:
+    return [f"error: {key} is {len(body[key].encode())} bytes; the game keeps {limit}"
+            for key, limit in TEXT_LIMITS.items() if len(body.get(key, "").encode()) > limit]
 
 
 def _check_blueprint(data: dict, prefix: str) -> list[str]:

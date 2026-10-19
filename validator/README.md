@@ -65,6 +65,7 @@ A generator that moves items declares `flow_tests(**params)` next to
 
 - `Feed(entity, lane, item)` keeps one lane of a belt full from its back end. `lane` is `"left"` or `"right"` as seen along the belt.
 - `drain` lists belts that are emptied every tick; what leaves them is counted.
+- `fluids=[FluidFeed(entity, fluid)]` attaches an unlimited source (a script-placed infinity pipe) on a free tile beside the named entity, usually the end of a pipe.
 - The game runs `warmup` seconds (default 60), the counts restart, then it runs `window` seconds (default 120).
 - `expect` maps items to rates in items/s. Each measured rate must be within `tolerance` (default 3%) of its target. On failure, the error lists every built entity that isn't working, by status (`inserter: no_power`, `stone-furnace: no_fuel`, ...).
 
@@ -137,6 +138,7 @@ feed = [{ entity = "ore_left", lane = "left", item = "iron-ore" }]
 drain = ["plates"]
 expect = { iron-plate = 15 }
 window = 160          # optional, like warmup and tolerance
+fluids = [{ entity = "pipe_end", fluid = "water" }]   # optional
 ```
 
 A file holds `[[case]]` tables, `[[flow]]` tables or both

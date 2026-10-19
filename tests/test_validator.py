@@ -10,8 +10,8 @@ from draftsman.blueprintable import Blueprint
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import assembly_row, gated_requester, production, smelting_column
-from tools.codec import decode
+from generators import assembly_row, fluid_row, gated_requester, production, smelting_column
+from tools.codec import decode, encode
 from tools import rates
 from tools.factorio import locate
 from tools.library import entries
@@ -262,6 +262,36 @@ class Validator(unittest.TestCase):
             ids = {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
             report = self.run_flow(bp.to_dict(), gen.flow_tests(**part_params), ids)
             self.assertTrue(report.ok, (name, part_params, report.lines()))
+
+    def test_fluid_rows_reach_rated_output(self):
+        # Chemical plants and assemblers turned to the middle pipe, fed by an
+        # infinity pipe at its end; a long-handed and a near-lane ingredient.
+        for params in ({}, {"recipe": "battery", "machines": 3}, {"recipe": "processing-unit", "machines": 2},
+                       {"recipe": "explosives", "machines": 4, "sides": 1}):
+            bp = fluid_row.build(**params)
+            data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+            self.assertPasses(data)
+            report = self.run_flow(data, fluid_row.flow_tests(**params), ids)
+            self.assertTrue(report.ok, (params, report.lines()))
+
+    def test_fluid_row_without_turned_machines_fails(self):
+        bp = fluid_row.build(machines=1)
+        data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+        for e in data["blueprint"]["entities"]:
+            if e["name"] == "chemical-plant":
+                e.pop("direction", None)  # inputs face north, away from the pipe
+        report = self.run_flow(data, fluid_row.flow_tests(machines=1), ids)
+        self.assertTrue(any("fluid_ingredient_shortage" in e for e in report.errors), report.lines())
+
+    def test_game_cuts_long_text(self):
+        # tools/check.py TEXT_LIMITS: bytes of UTF-8 the game keeps.
+        from tools.check import TEXT_LIMITS
+
+        for key, limit in TEXT_LIMITS.items():
+            data = generated()
+            data["blueprint"][key] = "é" * limit  # twice the limit in bytes
+            kept = decode(self.server.call("validate", encode(data))["export"])
+            self.assertEqual(len(kept["blueprint"][key].encode()), limit, key)
 
     def test_inserter_rates_were_measured_on_this_version(self):
         # Rows are sized from tools/inserter_rates.json; re-measure after a game

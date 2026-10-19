@@ -582,6 +582,23 @@ remote.add_interface("ghostwriter", {
       end
       f.drains[#f.drains + 1] = belt
     end
+    for _, feed in pairs(args.fluids or {}) do
+      local target = f.built[feed.entity]
+      if not (target and target.valid) then return reply{error = "entity " .. feed.entity .. " was not built"} end
+      if not prototypes.fluid[feed.fluid] then return reply{error = "unknown fluid " .. feed.fluid} end
+      -- An unlimited source on the first free tile beside it; it connects like a pipe.
+      local source
+      for _, d in pairs({{0, 1}, {0, -1}, {1, 0}, {-1, 0}}) do
+        local at = {target.position.x + d[1], target.position.y + d[2]}
+        if f.surface.can_place_entity{name = "infinity-pipe", position = at, force = "player"} then
+          source = f.surface.create_entity{name = "infinity-pipe", position = at, force = "player"}
+          break
+        end
+      end
+      if not source then return reply{error = "no free tile beside entity " .. feed.entity} end
+      source.set_infinity_pipe_filter{name = feed.fluid, percentage = 1, mode = "at-least"}
+      f.helpers[#f.helpers + 1] = source
+    end
     f.started = true
     reply{ok = true}
   end,

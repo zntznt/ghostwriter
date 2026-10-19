@@ -78,10 +78,7 @@ def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transp
     tiers = (inserter,) if inserter else REGULAR
 
     def pick(demand, from_belt, options):
-        """(inserter, count) needing the fewest inserters, then the cheapest."""
-        best = min(((math.ceil(demand / (MARGIN * rates.inserter_rate(i, belt, from_belt)) - 1e-9), k), i)
-                   for k, i in enumerate(options))
-        return best[1], best[0][0]
+        return rates.fewest_inserters(demand, belt, from_belt, options, MARGIN)
 
     candidates, why, fewest = [], set(), None
     groupings = _groupings(list(r.ingredients), input_belts)
@@ -236,4 +233,5 @@ def flow_tests(**params):
     total = p.sides * p.per_side
     # A window counts each machine's crafts to within one, so give it 50.
     return [Flow(f"{p.machines * p.sides} machines: {total:g} {p.product}/s", feeds, ["product"],
-                 {p.product: total}, window=max(120, 50 / p.crafts))]
+                 {p.product: total}, warmup=rates.warmup_seconds(p.belt, p.machines * (p.size + p.gap), 1 / p.crafts),
+                 window=max(120, 50 / p.crafts))]
