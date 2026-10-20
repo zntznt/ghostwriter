@@ -171,9 +171,9 @@ def _validate(items: list[tuple], factorio: str | None) -> bool:
             for kind, tests, run in (("circuit", circuit, run_circuit_tests), ("flow", flow, run_flow_tests)):
                 if tests and report.ok:
                     cases, ids = tests
-                    run(server, data, cases, ids, report)
+                    measured = run(server, data, cases, ids, report)
                     if report.ok:
-                        names = "; ".join(c.name for c in cases)
+                        names = "; ".join(_measured_text(c, m) for c, m in zip(cases, measured or [None] * len(cases)))
                         print(f"{label + ': ' if label else ''}{kind}: {len(cases)} cases pass ({names})", file=sys.stderr)
             prefix = f"{label}: " if label else ""
             for line in report.lines():
@@ -181,6 +181,15 @@ def _validate(items: list[tuple], factorio: str | None) -> bool:
             print(prefix + ("pass" if report.ok else "FAIL"), file=sys.stderr)
             all_ok &= report.ok
     return all_ok
+
+
+def _measured_text(case, measured) -> str:
+    """A case's name, and for flow cases what its passing window measured."""
+    if measured is None or not measured.windows:
+        return case.name
+    window = measured.windows[(measured.passed or len(measured.windows)) - 1]
+    rates = ", ".join(f"{window.get(k, 0):.3g} {k}/s" for k in case.expect)
+    return f"{case.name}: measured {rates}" + (f" in window {measured.passed}" if (measured.passed or 1) > 1 else "")
 
 
 def _param(text: str):

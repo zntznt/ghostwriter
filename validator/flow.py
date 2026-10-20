@@ -83,20 +83,40 @@ class Flow:
     settle: int = 1
 
 
-def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str, int], report: Report):
-    """Append failures to report. ids maps Draftsman entity ids to entity_numbers."""
+@dataclass
+class Measured:
+    """What one flow case measured in game, window by window."""
+    name: str
+    windows: list[dict[str, float]] = field(default_factory=list)  # per window: item or fluid -> per second
+    stalled: dict[str, int] = field(default_factory=dict)  # at the end: "entity: status" -> how many
+    passed: int | None = None  # the window (from 1) that met expect, or None
+    error: str = ""  # the case couldn't run
+
+    def rate(self, name: str) -> float:
+        """Per second in the last window measured: the most settled."""
+        return self.windows[-1].get(name, 0.0) if self.windows else 0.0
+
+
+def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str, int], report: Report) -> list[Measured]:
+    """Append failures to report, and return what each case measured. ids maps
+    Draftsman entity ids to entity_numbers."""
 
     def number(ref):
         return ref if isinstance(ref, int) else ids[ref]
 
+    results = []
     for flow in flows:
+        result = Measured(flow.name)
+        results.append(result)
         setup = server.call("flow_setup", json.dumps({"blueprint": encode(data), "speed": SPEED}))
         if "error" in setup:
-            report.errors.append(f"flow: setup failed: {setup['error']}")
-            return
+            result.error = f"flow: setup failed: {setup['error']}"
+            report.errors.append(result.error)
+            return results
         if setup.get("unplaced") or setup.get("unplaceable") or setup.get("unrevived"):
-            report.errors.append(f"flow: could not build everything for the test: {setup}")
-            return
+            result.error = f"flow: could not build everything for the test: {setup}"
+            report.errors.append(result.error)
+            return results
         try:
             _ok(server.call("flow_start", json.dumps({
                 "feeds": [{"entity": number(f.entity), "lane": f.lane, "item": f.item, "pooled": f.pooled}
@@ -112,8 +132,11 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
                 _wait_ticks(server, int(flow.window * 60), timeout=_timeout(flow.window))
                 got = server.call("flow_read")
                 _ok(got)
+                result.windows.append(_rates(got))
+                result.stalled = got.get("stalled") if isinstance(got.get("stalled"), dict) else {}
                 errors = _shortfalls(flow, got)
                 if not errors:
+                    result.passed = window + 1
                     if window:
                         report.warnings.append(f"flow '{flow.name}': reached its rate in window {window + 1} "
                                                f"of {flow.settle}")
@@ -123,16 +146,24 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
             report.errors += errors
         finally:
             server.call("flow_teardown")
+    return results
 
 
-def _shortfalls(flow: Flow, got: dict) -> list[str]:
+def _rates(got: dict) -> dict[str, float]:
+    """Per second: items counted at the drains, fluids from what machines made."""
     seconds = got["ticks"] / 60
     counts = got["counts"] if isinstance(got["counts"], dict) else {}
     made = got.get("fluids") if isinstance(got.get("fluids"), dict) else {}
+    rates = {name: n / seconds for name, n in counts.items()}
+    rates.update({name: n / seconds for name, n in made.items() if name in fluid_data.raw})
+    return rates
+
+
+def _shortfalls(flow: Flow, got: dict) -> list[str]:
+    rates = _rates(got)
     errors = []
     for item, rate in flow.expect.items():
-        # Items are counted at the drains; fluids from what machines made.
-        measured = (made.get(item, 0) if item in fluid_data.raw else counts.get(item, 0)) / seconds
+        measured = rates.get(item, 0.0)
         short = measured < (1 - flow.tolerance) * rate
         if short or (not flow.at_least and measured > (1 + flow.tolerance) * rate):
             stalled = got.get("stalled") if isinstance(got.get("stalled"), dict) else {}
