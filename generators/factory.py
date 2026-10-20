@@ -25,8 +25,8 @@ their line through a splitter, fluids at a junction. Fluid blocks reach the
 bus straight from the west end of their lines.
 
 Each item has one line, or as many as its users need: an input past a belt's
-worth, or anything made here past 90% of one (a belt filled to the top falls
-short), each line feeding some of the users. Fluid inputs and outlets each get
+worth, or anything made here past 95% of one (measured: fuller lines
+meet their target, but only just), each line feeding some of the users. Fluid inputs and outlets each get
 their own row, so pipes brought up to them don't join. Fluid rows whose
 product belt also carries an ingredient's leftovers pass it through a filter
 splitter that keeps the ingredient in the row. Cracking takes its oil through
@@ -60,9 +60,10 @@ BAND = 2  # empty rows before each corridor job, where crossed lines come back u
 PIPE_REACH = 10  # pipe-to-ground pairs up to this many tiles apart (NOTES.md)
 POLE = "medium-electric-pole"
 # A line the factory makes is split once its users need more than this share
-# of a belt: one filled to the top falls short (5 circuits/s took 99% of the
-# 15 cable/s a yellow belt carries).
-MADE_FILL = 0.9
+# of a belt. Measured (python -m tools.optimise belt-fill, NOTES.md): lines up
+# to 95% of a yellow belt met their target in the first window; full ones made
+# 99-100% but some needed a second.
+MADE_FILL = 0.95
 SURPLUS_LEVEL = 0.5  # flow tests: a left-over fluid's outlet keeps its line half full
 # Flow tests measure up to this many windows: belts fill only as fast as each
 # row's 5% slack allows, and upstream users take more until theirs are full.
