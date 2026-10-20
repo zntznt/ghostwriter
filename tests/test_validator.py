@@ -1,6 +1,7 @@
 """In-game validation tests. Need a Factorio executable (see tools/factorio.py);
 skipped without one. One server for the whole class, ~30 s."""
 
+import dataclasses
 import json
 import os
 import unittest
@@ -377,6 +378,20 @@ class Validator(unittest.TestCase):
         [flow] = smelting_column.flow_tests(furnaces=2)
         report = self.run_flow(data, [Flow("too much", flow.feed, flow.drain, {"iron-plate": 2.0})], ids)
         self.assertTrue(any("expected 2/s" in e for e in report.errors), report.lines())
+
+    def test_flow_tests_return_what_they_measured(self):
+        # Two stone furnaces per side make 4 x 0.3125 = 1.25 plates/s; every window is kept.
+        data, ids = self.column(furnaces=2)
+        [flow] = smelting_column.flow_tests(furnaces=2)
+        report = Report(self.server.version)
+        [ok] = run_flow_tests(self.server, data, [flow], ids, report)
+        self.assertEqual(ok.passed, 1)
+        self.assertAlmostEqual(ok.rate("iron-plate"), 1.25, delta=0.03 * 1.25)
+        [short] = run_flow_tests(self.server, data, [dataclasses.replace(flow, expect={"iron-plate": 2.0}, settle=2)],
+                                 ids, report)
+        self.assertIsNone(short.passed)
+        self.assertEqual(len(short.windows), 2)
+        self.assertAlmostEqual(short.rate("iron-plate"), 1.25, delta=0.03 * 1.25)
 
 
 if __name__ == "__main__":

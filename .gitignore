@@ -6,3 +6,4 @@ data/*
 !data/.gitkeep
 .factorio-headless/
 site/dist/
+.optimise-cache/

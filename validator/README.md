@@ -81,6 +81,8 @@ With `chain_tests(**params)` it also runs the whole book as one blueprint:
 - Pooled fluid feeds draw in the order listed; cracking comes last, so it gets only surplus.
 - `at_least=True` checks only the lower bound, since rows are sized with slack.
 
+`run_flow_tests` also returns a `Measured` per case: every window's rates (items at the drains, fluids made), what wasn't working at the end, and which window passed. `rate(name)` is the last window's, the most settled. `gen --validate` prints the measured rates; with `at_least`, that's what the blueprint can do, not just whether it meets the target.
+
 `settle=N` measures up to N windows and passes at the first that meets `expect`. A factory fills its belts only as fast as its rows' slack allows, and rows near the bottom take more than their share until their own belts are full. `FluidFeed(..., sink=True, level=0.5)` drains a line only down to half full, so users along it still get some: a left-over outlet. They
 run at game speed 100, so a 3-minute case takes a few seconds.
 
