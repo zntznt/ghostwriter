@@ -96,6 +96,16 @@ A window counts each machine's crafts to within one. Give it enough crafts
 that this stays well under the tolerance: the smelting column uses 50 crafts,
 under 2%.
 
+## Flight tests
+
+`validator/flight.py` flies a space platform blueprint: `run_flight(server, data, Flight(...))`, or
+`python -m tools.bp fly SRC --runs 3 --seconds 600 [--fuel] [--supply item=n,...]`.
+
+- The blueprint is built around a fresh platform's hub: its origin is the hub's centre (the 8x8 hub is already there). Foundation comes from its tiles, or from under each entity if it has none. It is built through ghosts, so the game's placement rules hold: a thruster needs empty space behind it.
+- Supplies go into the hub. The platform leaves `origin` for `destination` (default: the solar system edge toward the shattered planet) on its own thrusters. `fuel=True` keeps thrusters full by script, to test defence before a design makes its own fuel.
+- The game is paused and advanced by exact tick counts until the hub dies or `seconds` pass. A `Flown` holds the furthest km, top speed, every death as "entity <- cause", the hub's cargo (asteroid chunks included), and a log every 10 game seconds.
+- Flights differ run to run, even each first flight in a fresh server, so judge a design over several.
+
 ## Game-settings harvest
 
 `harvest.py` asks the game which control-behaviour settings Draftsman 4.0.1

@@ -18,6 +18,7 @@ from tools.factorio import locate
 from tools.library import entries
 from tools.settings import game_settings, registry
 from validator.circuit import Case, Expect, Inject, run_circuit_tests
+from validator.flight import Flight, run_flight
 from validator.flow import Flow, run_flow_tests
 from validator.tests_file import library_tests
 from validator.server import Server
@@ -372,6 +373,37 @@ class Validator(unittest.TestCase):
         self.assertPasses(data)
         report = self.run_flow(data, smelting_column.flow_tests(furnaces=2), ids)
         self.assertTrue(any("no_power" in e for e in report.errors), report.lines())
+
+    def thrusters(self, behind=0):
+        """Two thrusters south of the hub on foundation, and `behind` rows of it behind them."""
+        bp = Blueprint()
+        for x in range(-12, 12):
+            for y in range(5, 13 + behind):
+                bp.tiles.append("space-platform-foundation", position=(x, y))
+        for cx in (-6, 6):
+            bp.entities.append("thruster", position=(cx, 10.5))
+        return bp.to_dict()
+
+    def test_platform_flies_until_an_asteroid_kills_the_hub(self):
+        # Fuelled by script and undefended: it leaves the solar system edge on its
+        # own thrust and a huge asteroid soon destroys the hub.
+        report = Report(self.server.version)
+        flown = run_flight(self.server, self.thrusters(), Flight("undefended", seconds=120, fuel=True), report)
+        self.assertEqual((flown.built, flown.entities), (2, 2), report.lines())
+        self.assertGreater(flown.km, 500)
+        self.assertGreater(flown.speed_max, 1)
+        self.assertFalse(flown.survived)
+        self.assertRegex(flown.ended, r"hub destroyed by huge-\w+-asteroid")
+        self.assertTrue(any(k.startswith("space-platform-hub <- ") for k in flown.deaths), flown.deaths)
+
+    def test_thrusters_need_empty_space_behind(self):
+        # A thruster's exhaust needs empty space behind it (about 88 tiles):
+        # with foundation there, the game won't build it, and the platform goes nowhere.
+        report = Report(self.server.version)
+        flown = run_flight(self.server, self.thrusters(behind=4), Flight("blocked", seconds=10, fuel=True), report)
+        self.assertEqual(flown.built, 0)
+        self.assertTrue(any("built 0 of 2" in w for w in report.warnings), report.lines())
+        self.assertEqual(flown.km, 0)
 
     def test_flow_expectation_is_a_rate(self):
         data, ids = self.column(furnaces=2)
