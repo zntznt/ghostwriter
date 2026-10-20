@@ -2,6 +2,7 @@
 
 import copy
 import json
+import math
 import tempfile
 import unittest
 import warnings
@@ -10,9 +11,9 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
-from generators import assembly_row, fluid_block, fluid_row, production, smelting_column
+from generators import assembly_row, factory, fluid_block, fluid_row, production, smelting_column
 from generators.gated_requester import build
-from tools import rates
+from tools import pipes, rates
 from tools.check import check
 from tools.codec import CodecError, decode, encode, root_key
 from tools.library import entries, load_book, save
@@ -109,7 +110,9 @@ def assert_powered(test: unittest.TestCase, bp: dict, label):
         return n
 
     for a, ca, b, cb in bp.get("wires", []):
-        test.assertEqual((ca, cb), (5, 5))  # pole_copper
+        if (ca, cb) != (5, 5):  # pole_copper; others are circuit wires
+            test.assertTrue(ca in (1, 2, 3, 4) and cb in (1, 2, 3, 4), (label, a, ca, b, cb))
+            continue
         group[root(a)] = root(b)
     test.assertEqual(len({root(n) for n in poles}), 1, label)
 
@@ -300,43 +303,8 @@ class FluidRow(unittest.TestCase):
             fluid_row.plan(recipe="sulfuric-acid")  # a fluid product
 
 
-VEC = {0: (0, -1), 4: (1, 0), 8: (0, 1), 12: (-1, 0)}
-
-
 def pipe_networks(bp: dict) -> dict:
-    """Tile -> network id for every pipe and pipe-to-ground, joined the way the game
-    joins them: pipes to any neighbour that connects back, pipe-to-ground by its
-    one surface side and to the first opposite-facing one underground (10 tiles)."""
-    tiles = {}
-    for e in bp["entities"]:
-        if e["name"] in ("pipe", "pipe-to-ground"):
-            tiles[(int(e["position"]["x"] // 1), int(e["position"]["y"] // 1))] = (e["name"], e.get("direction", 0))
-
-    def opens(tile, toward):  # does the thing at tile have a normal connection toward this side?
-        name, d = tiles[tile]
-        return name == "pipe" or VEC[d] == toward
-
-    group = {t: t for t in tiles}
-
-    def root(t):
-        while group[t] != t:
-            t = group[t]
-        return t
-
-    for (x, y), (name, d) in tiles.items():
-        sides = VEC.values() if name == "pipe" else [VEC[d]]
-        for dx, dy in sides:
-            n = (x + dx, y + dy)
-            if n in tiles and opens(n, (-dx, -dy)):
-                group[root((x, y))] = root(n)
-        if name == "pipe-to-ground":
-            dx, dy = VEC[d]
-            for k in range(1, 12):
-                n = (x - dx * k, y - dy * k)
-                if n in tiles and tiles[n] == ("pipe-to-ground", (d + 8) % 16):
-                    group[root((x, y))] = root(n)
-                    break
-    return {t: root(t) for t in tiles}
+    return pipes.networks(bp)
 
 
 BLOCK_VARIANTS = [
@@ -515,6 +483,86 @@ class Production(unittest.TestCase):
         cracked = [k for k, fluid in enumerate(pooled) if fluid in ("heavy-oil", "light-oil")]
         self.assertTrue(cracked)
         self.assertEqual(cracked, list(range(len(pooled) - len(cracked), len(pooled))))
+
+FACTORIES = [
+    {"item": "electronic-circuit", "rate": 5},
+    {"item": "advanced-circuit", "rate": 1, "oil": 1},  # refinery, cracking, a fluid row
+    {"item": "electronic-circuit", "rate": 5, "smelt": 1},  # burner furnaces: coal comes up the bus too
+]
+
+
+def factory_built(**params):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        bp, p = factory._build(factory.plan(**params))
+        return bp, p, bp.to_dict()["blueprint"]
+
+
+def footprint(e) -> list[tuple[int, int]]:
+    """Tiles an entity in blueprint form covers, from its collision box and direction."""
+    from draftsman.data import entities as protos
+
+    (x1, y1), (x2, y2) = protos.raw[e["name"]]["collision_box"]
+    w, h = math.ceil(x2 - x1), math.ceil(y2 - y1)
+    if e.get("direction", 0) in (4, 12):
+        w, h = h, w
+    x0, y0 = round(e["position"]["x"] - w / 2), round(e["position"]["y"] - h / 2)
+    return [(x0 + dx, y0 + dy) for dx in range(w) for dy in range(h)]
+
+
+class Factory(unittest.TestCase):
+    def test_checks_clean_powered_and_nothing_overlaps(self):
+        for params in FACTORIES:
+            _, _, bp = factory_built(**params)
+            self.assertEqual(check({"blueprint": bp}), [], params)
+            assert_powered(self, bp, params)
+            tiles = Counter(t for e in bp["entities"] for t in footprint(e))
+            self.assertEqual([t for t, n in tiles.items() if n > 1], [], params)
+
+    def test_each_fluid_line_is_one_network_of_its_own(self):
+        _, p, bp = factory_built(**FACTORIES[1])
+        nets = pipe_networks(bp)
+        fluids = {}
+        for tile, fluid in p["fluid_tiles"].items():
+            fluids.setdefault(nets[tile], set()).add(fluid)
+        self.assertTrue(all(len(f) == 1 for f in fluids.values()), fluids)
+        # Each fluid's bus pipes are one network (past a cracking gate's pump is another).
+        made = Counter(f for f in fluids.values() for f in f)
+        self.assertEqual(made, {"water": 1, "crude-oil": 1, "heavy-oil": 1, "light-oil": 1, "petroleum-gas": 1})
+
+    def test_busy_lines_split_between_belts(self):
+        # 15 cable/s would fill a yellow belt to the top: two lines, each from its own rows.
+        _, p, _ = factory_built(item="electronic-circuit", rate=5)
+        self.assertEqual(len(p["lines"]["copper-cable"]), 2)
+        _, p, _ = factory_built(item="transport-belt", rate=15)  # 22.5 iron/s comes in on two belts
+        self.assertEqual([round(ln.demand, 2) for ln in p["lines"]["iron-plate"]], [11.25, 11.25])
+        self.assertEqual(len(p["lines"]["transport-belt"]), 2)  # and leaves on two
+
+    def test_a_row_can_feed_two_lines(self):
+        # 80 cable/s from three rows of 30 for two belts' worth of users: the middle
+        # row splits as it leaves, half to each line.
+        _, p, bp = factory_built(item="processing-unit", rate=1, oil=1, machine="assembling-machine-3",
+                                 belt="express-transport-belt")
+        outs = [len(q.outs) for r in p["rows"] if r.step.item == "copper-cable" for q in r.ports if q.kind == "out"]
+        self.assertEqual(outs, [1, 2, 1])
+        self.assertEqual(check({"blueprint": bp}), [])
+
+    def test_flow_test_feeds_the_bottom_and_drains_the_top(self):
+        for params in FACTORIES[:2]:
+            bp, p, _ = factory_built(**params)
+            ids = {e.id for e in bp.entities if e.id}
+            (flow,) = factory.flow_tests(**params)
+            named = {f.entity for f in flow.feed} | set(flow.drain) | {f.entity for f in flow.fluids}
+            self.assertLessEqual(named, ids, params)
+            self.assertEqual(flow.drain, [f"out {ln.name} {ln.column}" for ln in p["lines"][params["item"]]])
+            self.assertEqual({f.item for f in flow.feed}, {ln.name for named in p["lines"].values()
+                                                           for ln in named if ln.supplied and not ln.fluid})
+
+    def test_description_fits_the_game(self):
+        for params in FACTORIES:
+            _, _, bp = factory_built(**params)
+            self.assertLessEqual(len(bp["description"].encode()), 500, params)
+
 
 class Check(unittest.TestCase):
     def test_real_2_1_exports_have_no_errors(self):

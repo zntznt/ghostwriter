@@ -63,6 +63,7 @@ class FluidFeed:
     side: str = ""  # north/south/east/west of the entity; default the first free tile
     sink: bool = False  # drain the fluid instead of supplying it
     pooled: bool = False  # insert only what machines have made, straight into the entity
+    level: float = 0  # sink: drain down to this share of full, leaving the rest for users on the line
 
 
 @dataclass
@@ -77,6 +78,9 @@ class Flow:
     fluids: list[FluidFeed] = field(default_factory=list)
     at_least: bool = False  # a target to reach, not a rate to match
     caps: dict[str, float] = field(default_factory=dict)  # pool level that stops draining an item or fluid
+    # Windows to measure in all, stopping at the first that passes: a big factory
+    # fills its belts slowly, with only its rows' slack to spare.
+    settle: int = 1
 
 
 def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str, int], report: Report):
@@ -99,32 +103,47 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
                           for f in flow.feed],
                 "drains": [number(d) for d in flow.drain],
                 "fluids": [{"entity": number(f.entity), "fluid": f.fluid, "side": f.side or None, "sink": f.sink,
-                            "pooled": f.pooled} for f in flow.fluids],
+                            "pooled": f.pooled, "level": f.level} for f in flow.fluids],
                 "caps": flow.caps or None,
             })))
             _wait_ticks(server, int(flow.warmup * 60), timeout=_timeout(flow.warmup))
-            _ok(server.call("flow_count"))
-            _wait_ticks(server, int(flow.window * 60), timeout=_timeout(flow.window))
-            got = server.call("flow_read")
-            _ok(got)
-            seconds = got["ticks"] / 60
-            counts = got["counts"] if isinstance(got["counts"], dict) else {}
-            made = got.get("fluids") if isinstance(got.get("fluids"), dict) else {}
-            for item, rate in flow.expect.items():
-                # Items are counted at the drains; fluids from what machines made.
-                measured = (made.get(item, 0) if item in fluid_data.raw else counts.get(item, 0)) / seconds
-                short = measured < (1 - flow.tolerance) * rate
-                if short or (not flow.at_least and measured > (1 + flow.tolerance) * rate):
-                    stalled = got.get("stalled") if isinstance(got.get("stalled"), dict) else {}
-                    pool = got.get("pool") if isinstance(got.get("pool"), dict) else {}
-                    pool = {k: round(v) for k, v in pool.items() if v}
-                    report.errors.append(
-                        f"flow '{flow.name}': {item} {measured:.3g}/s, expected {'at least ' if flow.at_least else ''}"
-                        f"{rate:.3g}/s" + (f"; not working: {stalled}" if stalled else "")
-                        + (f"; pooled: {pool}" if pool else "")
-                    )
+            for window in range(flow.settle):
+                _ok(server.call("flow_count"))
+                _wait_ticks(server, int(flow.window * 60), timeout=_timeout(flow.window))
+                got = server.call("flow_read")
+                _ok(got)
+                errors = _shortfalls(flow, got)
+                if not errors:
+                    if window:
+                        report.warnings.append(f"flow '{flow.name}': reached its rate in window {window + 1} "
+                                               f"of {flow.settle}")
+                    break
+            if flow.settle > 1 and errors:
+                errors = [f"{e} (after {flow.settle} windows)" for e in errors]
+            report.errors += errors
         finally:
             server.call("flow_teardown")
+
+
+def _shortfalls(flow: Flow, got: dict) -> list[str]:
+    seconds = got["ticks"] / 60
+    counts = got["counts"] if isinstance(got["counts"], dict) else {}
+    made = got.get("fluids") if isinstance(got.get("fluids"), dict) else {}
+    errors = []
+    for item, rate in flow.expect.items():
+        # Items are counted at the drains; fluids from what machines made.
+        measured = (made.get(item, 0) if item in fluid_data.raw else counts.get(item, 0)) / seconds
+        short = measured < (1 - flow.tolerance) * rate
+        if short or (not flow.at_least and measured > (1 + flow.tolerance) * rate):
+            stalled = got.get("stalled") if isinstance(got.get("stalled"), dict) else {}
+            pool = got.get("pool") if isinstance(got.get("pool"), dict) else {}
+            pool = {k: round(v) for k, v in pool.items() if v}
+            errors.append(
+                f"flow '{flow.name}': {item} {measured:.3g}/s, expected {'at least ' if flow.at_least else ''}"
+                f"{rate:.3g}/s" + (f"; not working: {stalled}" if stalled else "")
+                + (f"; pooled: {pool}" if pool else "")
+            )
+    return errors
 
 
 def _timeout(game_seconds: float) -> float:

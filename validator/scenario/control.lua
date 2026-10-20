@@ -658,7 +658,8 @@ remote.add_interface("ghostwriter", {
       end
       if not source then return reply{error = "no free tile beside entity " .. feed.entity} end
       if feed.sink then
-        source.set_infinity_pipe_filter{name = feed.fluid, percentage = 0, mode = "at-most"}
+        -- level > 0 keeps the line that full, so users along it still get some.
+        source.set_infinity_pipe_filter{name = feed.fluid, percentage = feed.level or 0, mode = "at-most"}
         f.sinks[#f.sinks + 1] = {entity = source, fluid = feed.fluid}
       else
         source.set_infinity_pipe_filter{name = feed.fluid, percentage = 1, mode = "at-least"}
