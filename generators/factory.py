@@ -132,13 +132,13 @@ class Job:
 
 
 def plan(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-         furnace="steel-furnace", raw="", oil=0):
+         furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL):
     """Rows, lines and corridor jobs, with every row and line placed."""
     if belt not in KITS:
         raise ValueError(f"belt is one of {list(KITS)}")
     steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil)
     rows = [_row(s) for s in steps for _ in range(s.rows)]
-    lines = _lines(rows, inputs, item, rate, belt)
+    lines = _lines(rows, inputs, item, rate, belt, fill)
     jobs = _jobs(rows, lines)
     layout = _allocate(rows, jobs, lines)
     _columns(lines)
@@ -201,7 +201,8 @@ def _joules(text: str) -> float:
     return float(number.rstrip("kMG")) * scale
 
 
-def _lines(rows: list[Row], inputs: dict[str, float], item: str, rate: float, belt: str) -> dict[str, list[Line]]:
+def _lines(rows: list[Row], inputs: dict[str, float], item: str, rate: float, belt: str, fill: float
+           ) -> dict[str, list[Line]]:
     """Bus lines per item or fluid, with each port's line set."""
     cap = 2 * rates.lane_rate(belt)
     users, makers, order = {}, {}, list(inputs)
@@ -223,7 +224,7 @@ def _lines(rows: list[Row], inputs: dict[str, float], item: str, rate: float, be
                  for _, p in users.get(name, [])]
         top = "product" if name == item else "surplus" if inputs.get(name, 0) < 0 else ""
         if top == "product" and not fluid:  # the outlets at the top use it, a belt's share each
-            count = max(1, math.ceil(rate / (MADE_FILL * cap) - 1e-9))
+            count = max(1, math.ceil(rate / (fill * cap) - 1e-9))
             units = [(Port("outlet", 0, 0, name=name), (), rate / count) for _ in range(count)]
         total = sum(d for _, _, d in units)
         if fluid:  # one pipe carries any amount here
@@ -231,13 +232,13 @@ def _lines(rows: list[Row], inputs: dict[str, float], item: str, rate: float, be
         elif supplied:  # as many belts as the users need, each feeding some of them
             groups = [(group, []) for group in _bins(units, [cap] * math.ceil(total / cap - 1e-9))]
         else:  # users packed into belts a little under full, then the rows' output shared out
-            fewest = max(1, math.ceil(total / (MADE_FILL * cap) - 1e-9))
+            fewest = max(1, math.ceil(total / (fill * cap) - 1e-9))
             # Whole ports first; failing that, a port's two lanes may come from two lines.
             split = [(p, (lane,), d / len(lanes)) for p, lanes, d in units for lane in lanes] + \
                 [u for u in units if not u[1]]
             uses = None
             for count in range(fewest, len(units) + 1):
-                size = MADE_FILL * cap if count > 1 else cap
+                size = fill * cap if count > 1 else cap
                 for tried in (units, split):
                     try:
                         uses = _bins(tried, [size] * count, grow=False)
@@ -461,8 +462,9 @@ class Canvas:
 
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0) -> Blueprint:
-    return _build(plan(item, rate, machine, belt, smelt, furnace, raw, oil))[0]
+          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL) -> Blueprint:
+    """fill: the share of a belt a line made here may carry before it's split."""
+    return _build(plan(item, rate, machine, belt, smelt, furnace, raw, oil, fill))[0]
 
 
 def _build(p):
