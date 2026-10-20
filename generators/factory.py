@@ -31,7 +31,8 @@ their own row, so pipes brought up to them don't join. Fluid rows whose
 product belt also carries an ingredient's leftovers pass it through a filter
 splitter that keeps the ingredient in the row. Cracking takes its oil through
 a pump that runs only while a storage tank on the oil line holds some, so the
-oil's other users come first. Poles join every row into one network.
+oil's other users come first. A long fluid line gets a pump every 200 rows: a
+pipe network over 320 tiles stops. Poles join every row into one network.
 
 `flow_tests` feeds the inputs at the bottom, drains the top and expects the
 target rate: the whole factory, as a player would build it.
@@ -47,7 +48,7 @@ from draftsman.constants import Direction
 from draftsman.data import entities, fluids as fluid_data, items
 
 from generators import production
-from tools import rates
+from tools import pipes, rates
 from tools.check import TEXT_LIMITS
 from tools.settings import game_settings
 
@@ -68,6 +69,10 @@ SURPLUS_LEVEL = 0.5  # flow tests: a left-over fluid's outlet keeps its line hal
 SETTLE = 4
 GATE_HEIGHT = 6  # rows a cracking gate takes north of its block
 GATE_LEVEL = 1000  # units in the gate's tank above which cracking runs
+# Rows between pumps on a fluid line. A pipe segment over 320 tiles stops (NOTES.md);
+# this leaves room for the rows' own pipes beyond the line's ends.
+PUMP_SPAN = 200
+PIPELINE_EXTENT = 320  # from the 2.1 dump's default_pipeline_extent
 N, E, S, W = Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST
 
 
@@ -405,14 +410,20 @@ def _columns(lines):
     width = 0
     for fluid in (False, True):
         band = sorted((ln for named in lines.values() for ln in named if ln.fluid == fluid), key=lambda ln: -ln.start)
-        ends = []  # per column: northmost row used so far
+        ends, hosts = [], []  # per column: northmost row used so far, its lines
         for line in band:
             free = [c for c, e in enumerate(ends) if e > line.start + 3]
             c = free[0] if free else len(ends)
             if c == len(ends):
                 ends.append(line.end)
+                hosts.append([])
             ends[c] = line.end
-            line.column = width + c
+            hosts[c].append(line)
+        # Columns of fluid lines long enough for pumps go east, where a pole can reach them.
+        order = sorted(range(len(hosts)), key=lambda c: fluid and any(ln.start - ln.end > PUMP_SPAN for ln in hosts[c]))
+        for k, c in enumerate(order):
+            for line in hosts[c]:
+                line.column = width + k
         width += len(ends)
 
 
@@ -576,6 +587,8 @@ def _build(p):
             for x in range(c, port.x):
                 pipe_at(x, r, owner, line.name)
 
+    _pump_long_lines(canvas, [ln for ln in all_lines if ln.fluid], width)
+
     # Ends of the bus: inputs at the bottom, the product and left-overs at the top.
     # Fluid ends are pipe-to-ground open only to the outside. The tile beyond is where
     # the player's pipe connects: kept free, and checked like a pipe of that fluid.
@@ -622,6 +635,10 @@ def _build(p):
     for tile in poles:
         bp.entities.append(POLE, tile_position=tile)
     bp.generate_power_connections()
+    data = bp.to_dict()["blueprint"]
+    longest = max(pipes.extents(data).values(), default=0)
+    if longest > PIPELINE_EXTENT - 2:  # the player's pipes at the bus ends count too
+        raise ValueError(f"layout: a pipe network spans {longest} tiles; the game stops one past {PIPELINE_EXTENT}")
     p["fluid_tiles"] = {tile: canvas.fluid[tile][0] for name, tile, _ in canvas.items
                         if name in ("pipe", "pipe-to-ground")}
     return bp, p
@@ -660,15 +677,51 @@ def _gate(canvas, job, x0, pipe_at):
     canvas.fluid[(x0, t - 2)] = (fluid, {(0, -1)})
     canvas.fluid[(x0, t - 1)] = (fluid, {(0, 1)})
     canvas.wires.append(("red", tank, pump))
-    # The pump needs power: a pole beside it (joined to the rest later).
-    supply = entities.raw[POLE]["supply_area_distance"]
-    spot = next(((x, y) for d in range(1, 4) for x in range(x0 - d, x0 + d + 1) for y in range(t - 1 - d, t + d - 1)
-                 if canvas.free(x, y) and abs(x - x0) < supply + 0.29 and abs(y + 0.5 - (t - 1)) < supply + 0.9),
-                None)
-    if spot is None:
+    if not _pole_by_pump(canvas, x0, t - 2, owner, x0 - 3):
         raise ValueError(f"{owner}: no room for a pole by the pump")
+
+
+def _pole_by_pump(canvas, x, y, owner, east_of) -> bool:
+    """A pole on a free tile east of the bus (column east_of and beyond) powering the
+    pump whose top tile is (x, y), joined to the rest later. False if there's no room."""
+    supply = entities.raw[POLE]["supply_area_distance"]
+    (x1, y1), (x2, y2) = entities.raw["pump"]["collision_box"]  # north-facing: tall and thin
+    spot = next(((px, py) for d in range(1, 5) for px in range(max(x - d, east_of), x + d + 1)
+                 for py in range(y - d, y + d + 2)
+                 if canvas.free(px, py) and abs(px - x) < supply + x2 and abs(py - (y + 0.5)) < supply + y2), None)
+    if spot is None:
+        return False
     canvas.take(*spot, owner)
     canvas.extra_poles.append(spot)
+    return True
+
+
+def _pump_long_lines(canvas, lines, east_of):
+    """A pump every PUMP_SPAN rows up a long fluid line, so no pipe segment passes the
+    game's 320-tile limit (NOTES.md). Fluid on the bus always flows north, so the
+    pumps face north; each is its own pair of rows in the line, with a pole by it."""
+    for line in lines:
+        south = line.start if line.supplied else max(line.events)
+        north = line.end if line.top else min(line.events)
+        c, owner = line.column, f"pump {line.name}"
+        y = south
+        while y - north > PUMP_SPAN:
+            # The northmost spot within reach whose rows (and the ones around) are free.
+            for top in range(y - PUMP_SPAN, y - PUMP_SPAN // 2):
+                rows = range(top - 1, top + 3)
+                if any(not canvas.free(c, r) or r in line.events for r in rows):
+                    continue
+                if not _pole_by_pump(canvas, c, top, owner, east_of):
+                    continue
+                canvas.put("pump", c, top, owner, fluid=line.name, direction=N)
+                canvas.take(c, top + 1, owner)
+                canvas.fluid[(c, top)] = (line.name, {(0, -1)})  # out to the north
+                canvas.fluid[(c, top + 1)] = (line.name, {(0, 1)})  # in from the south
+                line.events |= {top, top + 1}
+                y = top
+                break
+            else:
+                raise ValueError(f"{line.name}: no room for a pump between rows {y - PUMP_SPAN} and {y}")
 
 
 def _fill_belt(canvas, line, belt, underground):

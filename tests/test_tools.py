@@ -13,7 +13,7 @@ from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlan
 
 from generators import assembly_row, factory, fluid_block, fluid_row, production, smelting_column
 from generators.gated_requester import build
-from tools import rates
+from tools import pipes, rates
 from tools.check import check
 from tools.codec import CodecError, decode, encode, root_key
 from tools.library import entries, load_book, save
@@ -303,43 +303,8 @@ class FluidRow(unittest.TestCase):
             fluid_row.plan(recipe="sulfuric-acid")  # a fluid product
 
 
-VEC = {0: (0, -1), 4: (1, 0), 8: (0, 1), 12: (-1, 0)}
-
-
 def pipe_networks(bp: dict) -> dict:
-    """Tile -> network id for every pipe and pipe-to-ground, joined the way the game
-    joins them: pipes to any neighbour that connects back, pipe-to-ground by its
-    one surface side and to the first opposite-facing one underground (10 tiles)."""
-    tiles = {}
-    for e in bp["entities"]:
-        if e["name"] in ("pipe", "pipe-to-ground"):
-            tiles[(int(e["position"]["x"] // 1), int(e["position"]["y"] // 1))] = (e["name"], e.get("direction", 0))
-
-    def opens(tile, toward):  # does the thing at tile have a normal connection toward this side?
-        name, d = tiles[tile]
-        return name == "pipe" or VEC[d] == toward
-
-    group = {t: t for t in tiles}
-
-    def root(t):
-        while group[t] != t:
-            t = group[t]
-        return t
-
-    for (x, y), (name, d) in tiles.items():
-        sides = VEC.values() if name == "pipe" else [VEC[d]]
-        for dx, dy in sides:
-            n = (x + dx, y + dy)
-            if n in tiles and opens(n, (-dx, -dy)):
-                group[root((x, y))] = root(n)
-        if name == "pipe-to-ground":
-            dx, dy = VEC[d]
-            for k in range(1, 12):
-                n = (x - dx * k, y - dy * k)
-                if n in tiles and tiles[n] == ("pipe-to-ground", (d + 8) % 16):
-                    group[root((x, y))] = root(n)
-                    break
-    return {t: root(t) for t in tiles}
+    return pipes.networks(bp)
 
 
 BLOCK_VARIANTS = [
