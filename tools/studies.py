@@ -205,6 +205,50 @@ def platform_front(server) -> dict:
     return {"start": BELT_START, "research": HIGH_RESEARCH, "trials": rows}
 
 
+REPAIR_SHAPES = [{"railguns": 32, "guns": 32, "thrusters": 1}, {"railguns": 20, "guns": 24, "thrusters": 1}]
+REPAIR_PACKS = {"repair-pack": 500}
+# Spares for the hub to rebuild from; with REPAIR_PACKS they fill about 55 of its 59 slots.
+SPARES = {"railgun-turret": 50, "gun-turret": 100, "medium-electric-pole": 100, "space-platform-foundation": 4000}
+# Asteroids destroy foundation too, and the 4000 ran out in every flight while most
+# spare turrets and poles were left: these fill 58 slots with what the hub used.
+FOUNDATION_FIRST = {"railgun-turret": 20, "medium-electric-pole": 50, "space-platform-foundation": 5400}
+REPAIR_MODES = {
+    "nothing": ({}, {}),
+    "repair": ({}, REPAIR_PACKS),
+    "rebuild": ({"construction-robotics": 1}, SPARES),
+    "both": ({"construction-robotics": 1}, {**SPARES, **REPAIR_PACKS}),
+    "rebuild, foundation first": ({"construction-robotics": 1}, FOUNDATION_FIRST),
+}
+
+
+def platform_repair(server) -> dict:
+    """Does keeping the platform up change how long it lives where promethium is?
+    Each of REPAIR_SHAPES flown 4 times from BELT_START with HIGH_RESEARCH for up
+    to 600 s, with nothing, with repair packs in the hub (it repairs with them, no
+    research needed), with spares and construction-robotics (destroyed entities
+    and tiles leave ghosts the hub rebuilds), and with both."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=4)
+    rows = []
+    for shape in REPAIR_SHAPES:
+        for mode, (research, supplies) in REPAIR_MODES.items():
+            t = evaluate({**shape, "research": {**HIGH_RESEARCH, **research}, "start": BELT_START, "seconds": 600,
+                          "supplies": supplies})
+            lost = sum(n for k, n in t.counts.items() if not k.split(" <- ")[0].endswith("asteroid"))
+            print(f"{shape['railguns']} railguns, {shape['guns']} gun turrets, {mode}: " + (
+                f"{t.rates['seconds_mean']:.0f}s mean, {t.rates['km_mean']:,.0f} km, survived "
+                f"{t.rates['survived']:.0%}; entities lost {lost}" if t.passed else f"FAIL {t.error}"),
+                file=sys.stderr, flush=True)
+            rows.append({**shape, "mode": mode, "passed": t.passed, "rates": t.rates, "counts": t.counts,
+                         "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"start": BELT_START, "research": HIGH_RESEARCH, "modes": {k: {"research": r, "supplies": s}
+                                                                     for k, (r, s) in REPAIR_MODES.items()},
+            "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
-           "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600)}
+           "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
+           "platform-repair": platform_repair}
