@@ -573,6 +573,12 @@ class Validator(unittest.TestCase):
         data = platform.build(railguns=4, guns=6, thrusters=1, power=True).to_dict()
         [flight] = platform.flight_tests(power=True, supplies={"fusion-power-cell": 10})
         flight = dataclasses.replace(flight, origin="nauvis", destination="vulcanus", seconds=60)
+        # Power is sampled every 60 ticks: start 1 tick before a sample, while the reactor
+        # is still starting, the phase CI once hit by chance (a start isn't a shortage).
+        self.server.command("/sc game.tick_paused = true")
+        tick = int(self.server.command("/sc rcon.print(game.tick)").strip())
+        if (59 - tick) % 60:
+            _step(self.server, (59 - tick) % 60, timeout=60)
         report = Report(self.server.version)
         flown = run_flight(self.server, data, flight, report)
         self.assertEqual((flown.built, flown.entities), (flown.entities, len(data["blueprint"]["entities"])),

@@ -528,8 +528,9 @@ local function flight_tick()
     end
     -- Short of power: a fusion reactor that takes power first (as railguns do) and still
     -- gets less than it asks. A railgun reads low_power whenever it refills after a shot,
-    -- even on unlimited power, so it can't tell (NOTES.md).
-    for _, r in pairs(p.surface.find_entities_filtered{type = "fusion-reactor"}) do
+    -- even on unlimited power, so it can't tell (NOTES.md). Not in the first second: a
+    -- readied reactor still starting reads low_power for its first few ticks.
+    for _, r in pairs(game.tick - fl.start >= 60 and p.surface.find_entities_filtered{type = "fusion-reactor"} or {}) do
       if r.status == defines.entity_status.low_power or r.status == defines.entity_status.no_power then
         fl.brownout = fl.brownout + 1
         break
