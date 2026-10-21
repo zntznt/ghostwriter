@@ -78,12 +78,18 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     bottom = HUB - 1 + back_gap + th  # last row of the thrusters: the foundation ends here
 
     bp = Blueprint()
-    bp.label = (f"Platform: {railguns} railguns, {guns} gun turrets{' among them' if front else ''}, "
-                f"{thrusters} thrusters" + (f", {cargo_bays} cargo bays" if cargo_bays else ""))
+    def count(n, thing):
+        return f"{n} {thing}{'' if n == 1 else 's'}"
+
+    bp.label = (f"Platform: {count(railguns, 'railgun')}, {count(guns, 'gun turret')}{' among them' if front else ''}, "
+                f"{count(thrusters, 'thruster')}" + (f", {count(cargo_bays, 'cargo bay')}" if cargo_bays else ""))
     where = "between the railguns" if front else "behind them"
     bp.description = ("Railguns across the front for big and huge asteroids only, gun turrets " + where +
                       " for the rest, thrusters at the back, the hub in the middle (the blueprint's origin is the "
                       "hub's centre). Supply power, railgun ammo, magazines and thruster fuel and oxidizer.")
+    if cargo_bays:
+        bp.description += (" With construction-robotics researched the hub rebuilds what asteroids destroy from its "
+                           "stock: fill the bays with spare turrets, poles and foundation, which goes fastest.")
     bp.icons = ["railgun-turret", "thruster"]
     for x in range(-half - margin, half + margin):
         for y in range(top, bottom + 1):

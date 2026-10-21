@@ -666,6 +666,26 @@ class Platform(unittest.TestCase):
         self.assertEqual(sorted((e["position"]["x"], e["position"]["y"]) for e in nearest if e["name"] == "cargo-bay"),
                          [(-6, -2), (6, -2), (6, 2)])
 
+    def test_description_says_how_a_platform_with_bays_rebuilds(self):
+        # The hub rebuilds only with construction-robotics researched, from what it
+        # holds; bays are for that stock (NOTES.md). Without bays, nothing to say.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            bays = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8).description
+            plain = platform.build(railguns=32, guns=32, thrusters=1).description
+        self.assertIn("construction-robotics", bays)
+        self.assertIn("foundation", bays)
+        self.assertNotIn("construction-robotics", plain)
+        self.assertLessEqual(len(bays.encode()), 500)  # the game cuts the rest
+
+    def test_label_counts_in_the_singular_and_plural(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.assertEqual(platform.build(railguns=1, guns=1, thrusters=1, cargo_bays=1).label,
+                             "Platform: 1 railgun, 1 gun turret, 1 thruster, 1 cargo bay")
+            self.assertEqual(platform.build(railguns=2, guns=0, thrusters=2).label,
+                             "Platform: 2 railguns, 0 gun turrets, 2 thrusters")
+
     def test_margin_is_spare_foundation_at_the_sides(self):
         # Asteroids eat foundation from the side ends inward, every row alike (NOTES.md):
         # margin adds columns there. Nothing moves, and nothing changes in front or
