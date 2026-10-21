@@ -580,6 +580,11 @@ script.on_event(defines.events.on_entity_died, function(event)
     or (event.damage_type and event.damage_type.name) or "unknown"
   local key = event.entity.name .. " <- " .. cause
   fl.deaths[key] = (fl.deaths[key] or 0) + 1
+  if event.entity.name == "cargo-bay" then
+    -- By |x|, tiles from the hub's centre: a dead bay cuts off the ones beyond it (NOTES.md).
+    local x = tostring(math.floor(math.abs(event.entity.position.x)))
+    fl.bays_lost[x] = (fl.bays_lost[x] or 0) + 1
+  end
   if event.entity.name == "space-platform-hub" then
     fl.ended = {tick = event.tick, reason = "hub destroyed by " .. cause}
   end
@@ -1116,7 +1121,7 @@ remote.add_interface("ghostwriter", {
                       turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
                       cargo = {}, hub_health = p.hub.health, start = game.tick, research = research,
                       supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0, made = {},
-                      generated_j = 0, plant_j = 0, brownout = 0, take = args.take, taken = {}}
+                      generated_j = 0, plant_j = 0, brownout = 0, take = args.take, taken = {}, bays_lost = {}}
     -- charged and coolant: a plant readied before leaving, every accumulator and railgun
     -- full and each reactor's fuel slot filled with cells, and cold fluoroketone into
     -- each fusion reactor's line. Railguns take power first, as reactors do: empty,
@@ -1162,7 +1167,8 @@ remote.add_interface("ghostwriter", {
           speed_max = fl.speed_max, hub_health = alive and p.hub.health or 0, deaths = fl.deaths,
           ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo,
           supplied = fl.supplied, held = fl.held, rebuilt = fl.rebuilt, power_j = fl.power_j, made = fl.made,
-          generated_j = fl.generated_j, plant_j = fl.plant_j, brownout = fl.brownout, taken = fl.taken}
+          generated_j = fl.generated_j, plant_j = fl.plant_j, brownout = fl.brownout, taken = fl.taken,
+          bays_lost = fl.bays_lost}
   end,
 
   flight_step = function(ticks)

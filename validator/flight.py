@@ -98,6 +98,7 @@ class Flown:
     plant_j: float = 0.0
     brownout: int = 0
     taken: dict[str, int] = field(default_factory=dict)  # Flight.take: what the script emptied from the hub
+    bays_lost: dict[str, int] = field(default_factory=dict)  # cargo bays that died, by |x| from the hub's centre
 
     def chunks(self, kind: str = "promethium") -> int:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
@@ -119,6 +120,7 @@ class Flown:
             out.update({f"{k}/1000 km": n / self.km * 1000 for k, n in used.items()})
             out.update({f"rebuilt {k}/1000 km": n / self.km * 1000 for k, n in self.rebuilt.items()})
             out.update({f"taken {k}/1000 km": n / self.km * 1000 for k, n in self.taken.items()})
+            out.update({f"cargo bays lost at |x| {k}/1000 km": n / self.km * 1000 for k, n in self.bays_lost.items()})
             if self.generated_j:
                 out["fusion cells/1000 km"] = self.generated_j / FUSION_CELL_J / self.km * 1000
         late = [r for r in self.log if r["seconds"] >= self.log[-1]["seconds"] / 2] if self.log else []
@@ -176,8 +178,9 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.deaths = got["deaths"] if isinstance(got["deaths"], dict) else {}
             flown.cargo = {c["name"]: c["count"] for c in got.get("cargo") or [] if isinstance(c, dict)}
             # An empty Lua table comes back as a JSON list.
-            flown.supplied, flown.held, flown.rebuilt, flown.made, flown.taken = (
-                got.get(k) if isinstance(got.get(k), dict) else {} for k in ("supplied", "held", "rebuilt", "made", "taken"))
+            flown.supplied, flown.held, flown.rebuilt, flown.made, flown.taken, flown.bays_lost = (
+                got.get(k) if isinstance(got.get(k), dict) else {}
+                for k in ("supplied", "held", "rebuilt", "made", "taken", "bays_lost"))
             flown.power_j = got.get("power_j") or 0.0
             flown.generated_j, flown.plant_j = got.get("generated_j") or 0.0, got.get("plant_j") or 0.0
             flown.brownout = got.get("brownout") or 0
