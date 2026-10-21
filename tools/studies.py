@@ -172,5 +172,34 @@ def platform_belt(server) -> dict:
                         "ended": t.stalled, "error": t.error} for t in trials]}
 
 
+FRONT_SHAPES = [(8, 12), (12, 16), (16, 20), (20, 24)]  # railguns, gun turrets: platform-belt's path
+
+
+def platform_front(server) -> dict:
+    """Do gun turrets do better in the railguns' row than behind it? Each of
+    FRONT_SHAPES (1 thruster) in both layouts, flown 4 times from BELT_START
+    with HIGH_RESEARCH for up to 300 s. Counts show friendly fire: a gun turret
+    killed by a railgun stood in its line."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=4)
+    rows = []
+    for railguns, guns in FRONT_SHAPES:
+        for layout in ("rows", "front"):
+            t = evaluate({"railguns": railguns, "guns": guns, "thrusters": 1, "layout": layout,
+                          "research": HIGH_RESEARCH, "start": BELT_START})
+            friendly = {k: n for k, n in t.counts.items() if k.endswith("<- railgun-turret")
+                        and not k.split(" <- ")[0].endswith("asteroid")}
+            print(f"{railguns} railguns, {guns} gun turrets, {layout}: " + (
+                f"{t.rates['seconds_mean']:.0f}s mean, survived {t.rates['survived']:.0%}; "
+                f"railguns lost {sum(n for k, n in t.counts.items() if k.startswith('railgun-turret <-'))}, "
+                f"gun turrets lost {sum(n for k, n in t.counts.items() if k.startswith('gun-turret <-'))}; "
+                f"friendly fire {friendly or 'none'}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+            rows.append({"railguns": railguns, "guns": guns, "layout": layout, "passed": t.passed, "rates": t.rates,
+                         "counts": t.counts, "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"start": BELT_START, "research": HIGH_RESEARCH, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
-           "platform-promethium": platform_promethium, "platform-belt": platform_belt}
+           "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front}

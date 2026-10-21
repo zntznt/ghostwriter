@@ -32,6 +32,7 @@ RAILGUN = (3, 5)  # tiles; Draftsman says 3x4 (NOTES.md)
 THRUSTER = (4, 5)
 GUN = 2
 POLE = "medium-electric-pole"
+POLE_REACH = 9  # its wire reach, tiles
 # Railguns hold their slow, heavy shots for these; gun turrets take the rest.
 BIG_TARGETS = [f"{size}-{kind}-asteroid" for size in ("huge", "big") for kind in ("metallic", "carbonic", "oxide",
                                                                                     "promethium")]
@@ -40,42 +41,72 @@ TARGETS = [signatures.TargetID(index=i + 1, name=name) for i, name in enumerate(
 AMMO = {"railgun-turret": "railgun-ammo", "gun-turret": "uranium-rounds-magazine"}
 
 
-def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1) -> Blueprint:
+def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, layout="rows") -> Blueprint:
+    """layout: "rows" puts the gun turrets in a row behind the railguns; "front"
+    spreads them through the railguns' row, front edges flush. A railgun fires
+    only in a 72-degree arc ahead of it (turn_range 0.2, NOTES.md), so turrets
+    beside it are out of its line, and from the front row they reach 18 tiles
+    ahead of the railguns instead of 13."""
     if railguns < 1 or thrusters < 1:
         raise ValueError("a platform needs at least one railgun and one thruster")
+    if layout not in ("rows", "front"):
+        raise ValueError(f"layout is rows or front, not {layout!r}")
     rw, rh = RAILGUN
     tw, th = THRUSTER
     gw = GUN
-    widths = [railguns * rw + (railguns - 1) * spacing, thrusters * tw + (thrusters - 1) * spacing,
-              guns * gw + max(guns - 1, 0) * spacing, 2 * HUB + 2]
+    front = layout == "front"
+    row = (railguns * rw + (guns * gw if front else 0)
+           + (railguns + (guns if front else 0) - 1) * spacing)
+    widths = [row, thrusters * tw + (thrusters - 1) * spacing,
+              0 if front else guns * gw + max(guns - 1, 0) * spacing, 2 * HUB + 2]
     half = max(widths) // 2 + 1
-    # North to south: railguns, a row of poles, gun turrets, the gap, the hub. Railgun
-    # shots hit everything along their line, own turrets included, so nothing stands in front.
-    gun_top = -HUB - front_gap - (gw if guns else 0)
+    # North to south: railguns, a row of poles, gun turrets (rows), the gap, the hub.
+    # Railgun shots hit everything along their line, own turrets included, so
+    # nothing stands in front.
+    gun_top = -HUB - front_gap - (0 if front or not guns else gw)
     rail_top = gun_top - 1 - rh
     top = rail_top
     bottom = HUB - 1 + back_gap + th  # last row of the thrusters: the foundation ends here
 
     bp = Blueprint()
-    bp.label = f"Platform: {railguns} railguns, {guns} gun turrets, {thrusters} thrusters"
-    bp.description = ("Railguns across the front for big and huge asteroids only, gun turrets behind them for the "
-                      "rest, thrusters at the back, the hub in the middle (the blueprint's origin is the hub's "
-                      "centre). Supply power, railgun ammo, magazines and thruster fuel and oxidizer.")
+    bp.label = (f"Platform: {railguns} railguns, {guns} gun turrets{' among them' if front else ''}, "
+                f"{thrusters} thrusters")
+    where = "between the railguns" if front else "behind them"
+    bp.description = ("Railguns across the front for big and huge asteroids only, gun turrets " + where +
+                      " for the rest, thrusters at the back, the hub in the middle (the blueprint's origin is the "
+                      "hub's centre). Supply power, railgun ammo, magazines and thruster fuel and oxidizer.")
     bp.icons = ["railgun-turret", "thruster"]
     for x in range(-half, half):
         for y in range(top, bottom + 1):
             bp.tiles.append("space-platform-foundation", position=(x, y))
 
-    left = -(widths[2] // 2)
-    for k in range(guns):
-        bp.entities.append("gun-turret", tile_position=(left + k * (gw + spacing), gun_top))
-    left = -(widths[0] // 2)
-    for k in range(railguns):
-        cx = left + k * (rw + spacing) + rw / 2
-        bp.entities.append("railgun-turret", position=(cx, rail_top + rh / 2), priority_list=TARGETS)
-        bp.entities[-1].extra_keys = {"ignore-unprioritised": True}  # the game's key; Draftsman's is dropped
-        # A pole behind each: inside its supply area, a turret's width from the next.
-        bp.entities.append(POLE, tile_position=(int(cx), rail_top + rh))
+    poles = []
+    x = -(widths[0] // 2)
+    if front:
+        # Gun turrets spread evenly through the railguns+1 gaps (between and at the ends).
+        slots = railguns + 1
+        share = [guns * (i + 1) // slots - guns * i // slots for i in range(slots)]
+    else:
+        share = [0] * (railguns + 1)
+        left = -(widths[2] // 2)
+        for k in range(guns):
+            bp.entities.append("gun-turret", tile_position=(left + k * (gw + spacing), gun_top))
+    for i in range(railguns + 1):
+        for _ in range(share[i]):
+            bp.entities.append("gun-turret", tile_position=(x, rail_top))
+            x += gw + spacing
+        if i < railguns:
+            cx = x + rw / 2
+            bp.entities.append("railgun-turret", position=(cx, rail_top + rh / 2), priority_list=TARGETS)
+            bp.entities[-1].extra_keys = {"ignore-unprioritised": True}  # the game's key; Draftsman's is dropped
+            poles.append(int(cx))  # behind it: inside its supply area
+            x += rw + spacing
+    # Poles more than a wire's reach apart (gun turrets between) get one between.
+    for a, b in zip(poles, poles[1:]):
+        for k in range(1, -(-(b - a) // POLE_REACH)):
+            poles.append(a + (b - a) * k // -(-(b - a) // POLE_REACH))
+    for px in sorted(poles):
+        bp.entities.append(POLE, tile_position=(px, rail_top + rh))
 
     left = -(widths[1] // 2)
     for k in range(thrusters):

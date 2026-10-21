@@ -598,10 +598,43 @@ class Platform(unittest.TestCase):
                 self.assertTrue(all(t["name"].startswith(("big-", "huge-")) for t in e["priority-list"]))
                 self.assertIs(e["ignore-unprioritised"], True)
 
+    def test_nothing_stands_in_a_railguns_arc(self):
+        # A railgun fires in a 72-degree arc ahead of it (turn_range 0.2); with gun
+        # turrets in its row, none may have a corner inside that arc.
+        for params in ({"railguns": 6, "guns": 9, "thrusters": 1, "layout": "front"},
+                       {"railguns": 3, "guns": 8, "thrusters": 1, "layout": "front"},
+                       {"railguns": 6, "guns": 9, "thrusters": 1}):
+            bp = self.build(**params)
+            rails = [e for e in bp["entities"] if e["name"] == "railgun-turret"]
+            guns = [e for e in bp["entities"] if e["name"] == "gun-turret"]
+            for r in rails:
+                for g in guns:
+                    for cx in (-1, 1):
+                        for cy in (-1, 1):
+                            dx = g["position"]["x"] + cx - r["position"]["x"]
+                            ahead = r["position"]["y"] - (g["position"]["y"] + cy)
+                            if ahead > 0:
+                                self.assertGreater(math.degrees(math.atan2(abs(dx), ahead)), 36, (params, g))
+
+    def test_front_layout_puts_gun_turrets_in_the_railguns_row(self):
+        bp = self.build(railguns=3, guns=8, thrusters=1, layout="front")
+        row = sorted((e["position"]["x"], e["name"]) for e in bp["entities"]
+                     if e["name"] in ("railgun-turret", "gun-turret"))
+        self.assertEqual([n[:4] for _, n in row], ["gun-", "gun-", "rail"] * 3 + ["gun-", "gun-"])
+        tops = {e["name"]: e["position"]["y"] - (2.5 if e["name"] == "railgun-turret" else 1) for e in bp["entities"]
+                if e["name"] in ("railgun-turret", "gun-turret")}
+        self.assertEqual(tops["railgun-turret"], tops["gun-turret"])  # front edges flush
+        with self.assertRaises(ValueError):
+            self.build(layout="ring")
+
     def test_powered_and_check_clean(self):
-        bp = self.build(railguns=6, guns=9, thrusters=1)
-        self.assertEqual(errors({"blueprint": bp}), [])
-        assert_powered(self, bp, "platform")  # the railguns; gun turrets need no power
+        for params in ({"railguns": 6, "guns": 9, "thrusters": 1},
+                       {"railguns": 6, "guns": 9, "thrusters": 1, "layout": "front"},
+                       {"railguns": 20, "guns": 24, "thrusters": 1, "layout": "front"},
+                       {"railguns": 2, "guns": 12, "thrusters": 1, "layout": "front"}):
+            bp = self.build(**params)
+            self.assertEqual(errors({"blueprint": bp}), [], params)
+            assert_powered(self, bp, "platform")  # the railguns; gun turrets need no power
 
 
 class Check(unittest.TestCase):
