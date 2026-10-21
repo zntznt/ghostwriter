@@ -10,7 +10,9 @@ into the hub. The platform then leaves `origin` for `destination` (by default
 the solar system edge toward the shattered planet, a 4,000,000 km connection)
 on its own thrusters, at game speed SPEED, until its hub dies or `seconds` of
 game time pass. Until a design makes its own, a script can keep thrusters
-full (fuel), power its poles (power) and stock its turrets (ammo).
+full (fuel), power its poles (power) and stock its turrets (ammo). The test
+force has no research unless the flight sets some (research), so weapon
+damage and shooting speed are the game's base values.
 
 Asteroids spawn by the route's own rules, and flights differ run to run,
 even each first flight in a fresh server (NOTES.md): judge a design over
@@ -41,6 +43,9 @@ class Flight:
     fuel: bool = False  # keep thrusters full by script
     power: bool = False  # an unlimited energy source on the platform's poles, by script
     ammo: dict[str, str] = field(default_factory=dict)  # turret name -> ammo kept stocked by script
+    # Technology series -> levels researched, e.g. {"railgun-damage": 4} for railgun-damage 1 to 4.
+    # Set on the test force for the flight and undone after it; the test force has none otherwise.
+    research: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -78,7 +83,7 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
     setup = server.call("flight_setup", json.dumps({
         "blueprint": encode(data), "from": flight.origin, "to": flight.destination,
         "supplies": flight.supplies or None, "fuel": flight.fuel, "power": flight.power,
-        "ammo": flight.ammo or None, "speed": SPEED}))
+        "ammo": flight.ammo or None, "research": flight.research or None, "speed": SPEED}))
     if "error" in setup:
         flown.error = f"flight: {setup['error']}"
         report.errors.append(flown.error)
