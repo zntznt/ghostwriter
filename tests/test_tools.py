@@ -637,6 +637,12 @@ class Platform(unittest.TestCase):
             self.assertEqual(errors({"blueprint": bp}), [], params)
             assert_powered(self, bp, "platform")  # the railguns; gun turrets need no power
 
+    def test_flight_takes_supplies_for_the_hub(self):
+        # Spares the hub rebuilds from and repair packs it repairs with.
+        [flight] = platform.flight_tests(supplies={"repair-pack": 100})
+        self.assertEqual(flight.supplies, {"repair-pack": 100})
+        self.assertEqual(platform.flight_tests()[0].supplies, {})
+
 
 class Check(unittest.TestCase):
     def test_real_2_1_exports_have_no_errors(self):
