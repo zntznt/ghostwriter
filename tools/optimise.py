@@ -151,9 +151,16 @@ class FlightEvaluator(GameEvaluator):
                 return Trial(params, False, error="; ".join(errors) or f"built {flown.built} of {flown.entities}")
             flights.append(flown)
         km = [f.km for f in flights]
-        return Trial(params, True, {"km_mean": sum(km) / len(km), "km_min": min(km), "km_max": max(km),
-                                    "seconds_mean": sum(f.seconds for f in flights) / len(flights),
-                                    "survived": sum(f.survived for f in flights) / len(flights)},
+        rates = {"km_mean": sum(km) / len(km), "km_min": min(km), "km_max": max(km),
+                 "seconds_mean": sum(f.seconds for f in flights) / len(flights),
+                 "survived": sum(f.survived for f in flights) / len(flights)}
+        # The supply budget (Flown.budget), over all the flights and, if only some lived, over those.
+        lived = [f for f in flights if f.survived]
+        for group, suffix in ((flights, ""), (lived if 0 < len(lived) < len(flights) else [], " lived")):
+            budgets = [f.budget() for f in group]
+            for k in sorted({k for b in budgets for k in b}):
+                rates[k + suffix] = sum(b.get(k, 0.0) for b in budgets) / len(budgets)
+        return Trial(params, True, rates,
                      windows=len(flights), stalled=dict(Counter(f.ended or "survived" for f in flights)),
                      counts=dict(sum((Counter(by_size(f.deaths)) for f in flights), Counter())))
 

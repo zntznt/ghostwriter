@@ -454,6 +454,26 @@ end
 -- location toward another. Records the furthest it got along the connection,
 -- every death and what caused it, and the hub's cargo, until the hub dies.
 
+-- Joules in the stand-in power source, which makes none: what it loses is what the platform used.
+local BUDGET = 1e15
+
+-- Ammo in the turrets and fluid in the thrusters: supplied, but not used yet.
+local function held_by(thrusters, turrets)
+  local held = {}
+  for _, t in pairs(thrusters) do
+    if t.valid then
+      for name, amount in pairs(t.get_fluid_contents()) do held[name] = (held[name] or 0) + amount end
+    end
+  end
+  for _, t in pairs(turrets) do
+    local inv = t.valid and t.get_inventory(defines.inventory.turret_ammo)
+    if inv then
+      for _, c in pairs(inv.get_contents()) do held[c.name] = (held[c.name] or 0) + c.count end
+    end
+  end
+  return held
+end
+
 local function flight_tick()
   local fl = storage.flight
   if not fl then return end
@@ -471,11 +491,14 @@ local function flight_tick()
     fl.thrusters = p.surface.find_entities_filtered{type = "thruster"}
     fl.turrets = p.surface.find_entities_filtered{type = "ammo-turret"}
   end
+  -- What the script gives is counted (fl.supplied), as a budget for making it on board.
+  local supplied = fl.supplied
   if fl.fuel then
     for _, t in pairs(fl.thrusters) do
       if t.valid then
-        t.insert_fluid{name = "thruster-fuel", amount = 1000}
-        t.insert_fluid{name = "thruster-oxidizer", amount = 1000}
+        for _, fluid in pairs{"thruster-fuel", "thruster-oxidizer"} do
+          supplied[fluid] = (supplied[fluid] or 0) + t.insert_fluid{name = fluid, amount = 1000}
+        end
       end
     end
   end
@@ -485,16 +508,32 @@ local function flight_tick()
       if ammo then
         local inv = t.get_inventory(defines.inventory.turret_ammo)
         local have = inv and inv.get_item_count(ammo) or 0
-        if inv and have < 10 then t.insert{name = ammo, count = 10 - have} end
+        if inv and have < 10 then supplied[ammo] = (supplied[ammo] or 0) + t.insert{name = ammo, count = 10 - have} end
       end
     end
   end
   if game.tick % 60 == 0 then
-    -- Kept each second: the cargo goes with the hub.
+    -- Kept each second: the cargo and the source go with the hub.
     fl.cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()
     fl.hub_health = p.hub.health
+    if fl.source and fl.source.valid then fl.power_j = BUDGET - fl.source.energy end
+    fl.held = held_by(fl.thrusters, fl.turrets)
   end
 end
+
+-- What the hub builds from its stock in flight: what died, rebuilt (construction-robotics).
+local function count_rebuilt(name, n)
+  local fl = storage.flight
+  if fl then fl.rebuilt[name] = (fl.rebuilt[name] or 0) + n end
+end
+
+script.on_event(defines.events.on_space_platform_built_entity, function(event)
+  if event.entity.valid then count_rebuilt(event.entity.name, 1) end
+end)
+
+script.on_event(defines.events.on_space_platform_built_tile, function(event)
+  count_rebuilt(event.tile.name, #event.tiles)
+end)
 
 script.on_event(defines.events.on_tick, function(event)
   flow_tick(event)
@@ -1031,12 +1070,19 @@ remote.add_interface("ghostwriter", {
       end
       if poles[1] then helpers_ = source_for(s, nil, poles, {0.5, back + 120.5}) end
       for _, e in pairs(helpers_) do e.destructible = false end
+      -- It makes nothing and starts full, so what it loses is what the platform used.
+      if helpers_[2] then
+        helpers_[2].power_production = 0
+        helpers_[2].electric_buffer_size = BUDGET
+        helpers_[2].energy = BUDGET
+      end
     end
     storage.flight = {platform = p, surface = s.index, connection = connection, length = proto.length,
                       reversed = reversed, from_start = start, furthest = start, speed_max = 0, deaths = {}, fuel = args.fuel, ammo = args.ammo,
                       thrusters = s.find_entities_filtered{type = "thruster"},
                       turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
-                      cargo = {}, hub_health = p.hub.health, start = game.tick, research = research}
+                      cargo = {}, hub_health = p.hub.health, start = game.tick, research = research,
+                      supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0}
     game.speed = args.speed or 1
     reply{entities = wanted, built = built, weight = p.weight, connection = connection, length = proto.length,
           distance = p.distance}
@@ -1052,7 +1098,8 @@ remote.add_interface("ghostwriter", {
     reply{ticks = game.tick - fl.start, alive = alive and true or false, state = alive and states[p.state] or "gone",
           furthest = fl.furthest, km = (fl.furthest - fl.from_start) * fl.length, speed = alive and p.speed or 0,
           speed_max = fl.speed_max, hub_health = alive and p.hub.health or 0, deaths = fl.deaths,
-          ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo}
+          ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo,
+          supplied = fl.supplied, held = fl.held, rebuilt = fl.rebuilt, power_j = fl.power_j}
   end,
 
   flight_step = function(ticks)

@@ -565,6 +565,44 @@ class Validator(unittest.TestCase):
         self.assertEqual(cut, {"slots": 59 + 4 * 20, "spilled": 80 * 100, "foundation": 138 * 100, "bays": 2})
         self.assertEqual(back, {"slots": 59 + 8 * 20, "spilled": 0, "foundation": 218 * 100, "bays": 0})
 
+    def test_flight_counts_what_it_supplies(self):
+        # A budget for making supplies on board: the flight counts what the script
+        # gives (fuel and oxidizer, ammo, power) and what the hub rebuilds. Kept
+        # full, a thruster runs at max_performance: fluid_usage 2 a tick of each
+        # fluid (dump), 120 a second. Flown from Nauvis toward Vulcanus, where
+        # asteroids are few and small: at the solar system edge they killed this
+        # small platform in some flights before its 20 s were up.
+        data = platform.build(railguns=1, guns=2, thrusters=1).to_dict()
+        ghost = ("/sc local s = storage.flight.platform.surface local y = 0 "
+                 "for _, t in pairs(s.find_tiles_filtered{name = 'space-platform-foundation'}) do "
+                 "y = math.min(y, t.position.y) end "
+                 "s.create_entity{name = 'tile-ghost', inner_name = 'space-platform-foundation', "
+                 "position = {0, y - 1}, force = 'player'}")
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "fuel": True,
+                "power": True, "ammo": platform.AMMO, "research": {"construction-robotics": 1},
+                "supplies": {"gun-turret": 1}}))
+            self.assertNotIn("error", setup)
+            _step(self.server, 600, timeout=60)
+            self.server.command("/sc storage.flight.platform.surface.find_entities_filtered{name = 'gun-turret'}[1]"
+                                ".die()")
+            self.server.command(ghost)
+            _step(self.server, 600, timeout=60)
+            got = self.server.call("flight_read")
+        finally:
+            self.server.call("flight_teardown")
+        self.assertIs(got["alive"], True, got.get("ended"))
+        used = {k: n - got["held"].get(k, 0) for k, n in got["supplied"].items()}
+        for fluid in ("thruster-fuel", "thruster-oxidizer"):
+            self.assertAlmostEqual(used[fluid] / 20, 120, delta=6)
+        # At least the turret and tile made to go; asteroids can take a tile or two as well.
+        self.assertGreaterEqual(got["rebuilt"].get("gun-turret", 0), 1, got["rebuilt"])
+        self.assertGreaterEqual(got["rebuilt"].get("space-platform-foundation", 0), 1, got["rebuilt"])
+        # A turret's load is held, not used, until it fires; the dead turret's went with it.
+        self.assertGreaterEqual(used["uranium-rounds-magazine"], 10)
+        self.assertGreater(got["power_j"], 10e6)  # the railgun charging its 11 MJ buffer, at least
+
     def test_thrusters_need_empty_space_behind(self):
         # A thruster's exhaust needs empty space behind it (about 88 tiles):
         # with foundation there, the game won't build it, and the platform goes nowhere.

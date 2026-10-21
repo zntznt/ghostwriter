@@ -65,9 +65,26 @@ class Flown:
     built: int = 0
     entities: int = 0
     error: str = ""
+    # What the script gave (fuel, oxidizer, ammo), what of it was still held in
+    # the thrusters and turrets at the last read, what the hub rebuilt from its
+    # stock, and the power used (J): a budget for making them on board.
+    supplied: dict[str, float] = field(default_factory=dict)
+    held: dict[str, float] = field(default_factory=dict)
+    rebuilt: dict[str, int] = field(default_factory=dict)
+    power_j: float = 0.0
 
     def chunks(self, kind: str = "promethium") -> int:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
+
+    def budget(self) -> dict[str, float]:
+        """What the flight used a second: each supply (given less held), power, and each thing rebuilt."""
+        if not self.seconds:
+            return {}
+        out = {f"{k}/s": (n - self.held.get(k, 0)) / self.seconds for k, n in self.supplied.items()}
+        if self.power_j:
+            out["power MW"] = self.power_j / self.seconds / 1e6
+        out.update({f"rebuilt {k}/s": n / self.seconds for k, n in self.rebuilt.items()})
+        return out
 
 
 def _step(server: Server, ticks: int, timeout: float):
@@ -105,6 +122,10 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.km, flown.speed_max = got["km"], got["speed_max"]
             flown.deaths = got["deaths"] if isinstance(got["deaths"], dict) else {}
             flown.cargo = {c["name"]: c["count"] for c in got.get("cargo") or [] if isinstance(c, dict)}
+            # An empty Lua table comes back as a JSON list.
+            flown.supplied, flown.held, flown.rebuilt = (got.get(k) if isinstance(got.get(k), dict) else {}
+                                                         for k in ("supplied", "held", "rebuilt"))
+            flown.power_j = got.get("power_j") or 0.0
             flown.log.append({"seconds": round(elapsed, 1), "km": round(got["km"]), "speed": got["speed"],
                               "hub": got["hub_health"]})
             if not got["alive"]:

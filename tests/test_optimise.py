@@ -114,6 +114,34 @@ class Cache(unittest.TestCase):
         self.assertEqual(trial.counts, {"huge asteroid <- railgun-turret": 7,
                                         "space-platform-hub <- big asteroid": 1})
 
+    def test_flown_budget_is_what_was_used_a_second(self):
+        from validator.flight import Flown
+
+        flown = Flown("f", seconds=20.0, supplied={"thruster-fuel": 2600.0, "railgun-ammo": 30.0},
+                      held={"thruster-fuel": 200.0, "railgun-ammo": 10.0},
+                      rebuilt={"space-platform-foundation": 400, "gun-turret": 2}, power_j=2e9)
+        self.assertEqual(flown.budget(), {"thruster-fuel/s": 120.0, "railgun-ammo/s": 1.0, "power MW": 100.0,
+                                          "rebuilt space-platform-foundation/s": 20.0, "rebuilt gun-turret/s": 0.1})
+        self.assertEqual(Flown("f").budget(), {})
+
+    def test_flight_trials_average_the_budget_and_the_survivors_apart(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from validator.flight import Flight, Flown
+
+        flights = iter([Flown("f", seconds=10.0, supplied={"railgun-ammo": 30.0}, power_j=1e9),
+                        Flown("f", seconds=20.0, survived=True, supplied={"railgun-ammo": 20.0}, power_j=1e9)])
+        ev = optimise.FlightEvaluator.__new__(optimise.FlightEvaluator)
+        ev.module = SimpleNamespace(build=lambda: SimpleNamespace(to_dict=dict), flight_tests=lambda: [Flight("f")])
+        ev.runs, ev.server = 2, SimpleNamespace(version="2.1.23")
+        with mock.patch("validator.flight.run_flight", lambda *a: next(flights)):
+            trial = ev._run({"runs": 2})
+        self.assertEqual(trial.rates["railgun-ammo/s"], 2.0)  # (3 + 1) / 2
+        self.assertEqual(trial.rates["power MW"], 75.0)  # (100 + 50) / 2
+        self.assertEqual(trial.rates["railgun-ammo/s lived"], 1.0)
+        self.assertEqual(trial.rates["power MW lived"], 50.0)
+
     def test_fingerprint_changes_with_the_code(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
