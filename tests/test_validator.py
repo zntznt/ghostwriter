@@ -624,6 +624,38 @@ class Validator(unittest.TestCase):
             self.assertGreater(flown.made.get(k, 0), 2000, flown.made)
         self.assertGreater(flown.log[-1]["speed"], 0.4, flown.log)
 
+    def test_a_reserve_tank_shares_the_thrusters_fill(self):
+        # reserve=True: a storage tank on each thruster input joins its line, which has
+        # one fill level, so primed through the thruster the tank fills too, and they
+        # drain together: thrust follows the reserve. What the tanks hold counts as held,
+        # not used. Flown from Nauvis toward Vulcanus, where asteroids are few.
+        data = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True, reserve=True).to_dict()
+        [flight] = platform.flight_tests(fuel=True, reserve=True)
+        fill = ("/sc local s = storage.flight.platform.surface local out = {tank = {}} "
+                "for _, t in pairs(s.find_entities_filtered{name = 'storage-tank'}) do "
+                "for k, v in pairs(t.get_fluid_contents()) do out.tank[k] = v end end "
+                "out.thruster = s.find_entities_filtered{name = 'thruster'}[1].get_fluid_contents() "
+                "rcon.print(helpers.table_to_json(out))")
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "power": True,
+                "ammo": platform.AMMO, "research": flight.research, "primed": flight.primed,
+                "start_speed": flight.start_speed}))
+            self.assertNotIn("error", setup)
+            primed = json.loads(self.server.command(fill))
+            _step(self.server, 1800, timeout=60)
+            later = json.loads(self.server.command(fill))
+            got = self.server.call("flight_read")
+        finally:
+            self.server.call("flight_teardown")
+        self.assertIs(got["alive"], True, got.get("ended"))
+        for k in ("thruster-fuel", "thruster-oxidizer"):
+            self.assertAlmostEqual(primed["tank"][k], 25000, delta=1)  # full
+            self.assertAlmostEqual(primed["thruster"][k], 1000, delta=1)
+            self.assertLess(later["tank"][k], 24000)  # 30 s of thrust came out of it
+            self.assertAlmostEqual(later["tank"][k] / 25000, later["thruster"][k] / 1000, delta=0.01)
+            self.assertGreaterEqual(got["held"][k], later["tank"][k])
+
     def test_thrusters_need_empty_space_behind(self):
         # A thruster's exhaust needs empty space behind it (about 88 tiles):
         # with foundation there, the game won't build it, and the platform goes nowhere.

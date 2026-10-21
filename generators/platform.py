@@ -113,7 +113,7 @@ def _fuel_module(bp: Blueprint, xb: int, r: int, bottom: int):
 
 
 def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, layout="rows", cargo_bays=0,
-          margin=0, fuel=False) -> Blueprint:
+          margin=0, fuel=False, reserve=False) -> Blueprint:
     """layout: "rows" puts the gun turrets in a row behind the railguns; "front"
     spreads them through the railguns' row, front edges flush. A railgun fires
     only in a 72-degree arc ahead of it (turn_range 0.2, NOTES.md), so turrets
@@ -131,7 +131,11 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     metallic, carbonic and oxide chunks on a belt to crushers and chemical
     plants east of the hub; the thruster moves back to make room. The
     thruster's thrust follows how full it is kept, so it flies as fast as the
-    plants supply it."""
+    plants supply it.
+
+    reserve (with fuel) adds a storage tank on each of the thruster's west
+    inputs, filled before leaving: where chunks are scarce, as at the solar
+    system edge, the plants alone can't get it going (NOTES.md)."""
     if railguns < 1 or thrusters < 1:
         raise ValueError("a platform needs at least one railgun and one thruster")
     if layout not in ("rows", "front"):
@@ -142,6 +146,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         raise ValueError("fuel=True makes fuel for one thruster")
     if fuel and layout != "rows":
         raise ValueError("fuel=True needs layout rows")
+    if reserve and not fuel:
+        raise ValueError("reserve=True needs fuel=True: it's the thruster's fuel and oxidizer")
     rw, rh = RAILGUN
     tw, th = THRUSTER
     gw = GUN
@@ -178,13 +184,14 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
     bp.label = (f"Platform: {count(railguns, 'railgun')}, {count(guns, 'gun turret')}{' among them' if front else ''}, "
                 f"{count(thrusters, 'thruster')}" + (f", {count(cargo_bays, 'cargo bay')}" if cargo_bays else "")
-                + (", makes its fuel" if fuel else ""))
+                + (", makes its fuel" if fuel else "") + (" with a reserve" if reserve else ""))
     where = "between the railguns" if front else "behind them"
     bp.description = ("Railguns across the front for big and huge asteroids only, gun turrets " + where +
                       " for the rest, thrusters at the back, the hub in the middle (the blueprint's origin is the "
                       "hub's centre). Supply power, railgun ammo" +
-                      (" and magazines; it makes its thruster fuel and oxidizer from chunks (research "
-                       "space-platform-thruster)." if fuel else ", magazines and thruster fuel and oxidizer."))
+                      (" and magazines; it makes its thruster fuel and oxidizer (research space-platform-thruster)" +
+                       ("; fill its tanks first." if reserve else ".") if fuel
+                       else ", magazines and thruster fuel and oxidizer."))
     if cargo_bays:
         bp.description += (" With construction-robotics researched the hub rebuilds what asteroids destroy from its "
                            "stock: fill the bays with spare turrets, poles and foundation, which goes fastest.")
@@ -192,7 +199,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     for x in range(-half - margin, half + margin):
         for y in range(top, full + 1):
             bp.tiles.append("space-platform-foundation", position=(x, y))
-    for x in range(-tw // 2 - 1, xb + 8) if fuel else ():
+    for x in range(-tw // 2 - (3 if reserve else 1), xb + 8) if fuel else ():
         for y in range(full + 1, bottom + 1):  # behind, only the thruster's and the module's rows
             bp.tiles.append("space-platform-foundation", position=(x, y))
 
@@ -253,21 +260,35 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     for k in range(thrusters):
         x0 = left + k * (tw + spacing)
         bp.entities.append("thruster", position=(x0 + tw / 2, bottom - th + 1 + th / 2))
+    if reserve:
+        # A tank on each of its west inputs, fuel on its top row and oxidizer (the tank
+        # turned east) on its middle one. Joined straight to the thruster, a tank shares
+        # its line's one fill level, so thrust follows the reserve as it drains (NOTES.md).
+        tx, ty = x0 + tw / 2, bottom - th + 1 + th / 2
+        bp.entities.append("storage-tank", position=(tx - 3.5, ty - 3))
+        bp.entities.append("storage-tank", position=(tx - 3.5, ty + 1), direction=Direction.EAST)
     bp.generate_power_connections()
     return bp
 
 
-def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=False, **params):
+def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=False, reserve=False, script_fuel=False,
+                 **params):
     """research: technology series -> levels researched; start: share of the route
     to begin at; supplies: items into the hub, which rebuilds from them (with
     construction-robotics researched) and repairs with repair packs
     (validator.flight.Flight). A platform with fuel=True gets no fuel by script,
     the research its crushing and thruster recipes need, and starts as if it
     arrived from the last leg: thrusters full and moving at CRUISE. Standing
-    still, it meets too few asteroids to make any fuel (NOTES.md)."""
-    from validator.flight import Flight
+    still, it meets too few asteroids to make any fuel (NOTES.md). With reserve,
+    its tanks start full too: in a game they'd fill while it waits in orbit.
+    script_fuel flies a fuel=True layout on fuel by script, as the plain one
+    flies: a control for what the module itself costs."""
+    from validator.flight import PRIME, Flight
 
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
     research = {**(research or {}), **({"space-platform": 1, "space-platform-thruster": 1} if fuel else {})}
-    return [Flight(shape, seconds=seconds, start=start, supplies=supplies or {}, fuel=not fuel, power=True,
-                   ammo=AMMO, research=research, primed=fuel, start_speed=CRUISE if fuel else 0.0)]
+    on_board = fuel and not script_fuel
+    # With reserve, more than the thruster, its line and its tank hold: the game fills them.
+    primed = PRIME + (2 * entities.raw["storage-tank"]["fluid_box"]["volume"] if reserve else 0) if on_board else 0
+    return [Flight(shape, seconds=seconds, start=start, supplies=supplies or {}, fuel=not on_board, power=True,
+                   ammo=AMMO, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0)]
