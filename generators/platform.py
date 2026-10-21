@@ -53,6 +53,13 @@ BELT = "transport-belt"
 FUEL_BANDS = [("oxide", "ice-melting", "carbonic", "thruster-fuel"),
               ("oxide", "ice-melting", "metallic", "thruster-oxidizer")]
 CRUISE = 0.62  # km a tick the fuel=True platform holds on what it makes (NOTES.md): its flights start there
+# power=N: the first fusion reactor's centre, south-west of the hub, so that its generators,
+# cooler and coolant lines stay west of the thruster's tanks and off its exhaust; each
+# further plant stands PLANT_STEP west of the last.
+REACTOR = (-10, HUB + 3)
+PLANT_STEP = 11  # a tile clear of the last plant's west coolant line: pipes side by side join
+CELLS = 50  # fusion cells into the hub for a flight, unless supplies name some: one hub slot
+COOLANT = 10000  # cold fluoroketone into the reactor at the start, more than its loop holds
 
 
 def _inserter_for(demand: float) -> str:
@@ -112,8 +119,43 @@ def _fuel_module(bp: Blueprint, xb: int, r: int, bottom: int):
     bp.entities.append(void, tile_position=(xb, bottom), direction=Direction.NORTH)
 
 
+def _power_plant(bp: Blueprint, rx: int, first: bool):
+    """A fusion reactor (centred at rx), the two generators under it and a cryogenic
+    plant cooling their coolant, with the hot and cold lines kept apart. The first
+    plant also gets fusion cells from the hub and the accumulator: a reactor runs on
+    its own output once going, and an accumulator charged before leaving starts it
+    (NOTES.md). A platform's surface is one electric network, so nothing needs wiring."""
+    ry = REACTOR[1]
+    top = ry - 3  # its first row
+    bp.entities.append("fusion-reactor", position=(rx, ry))
+    # Turned south, each takes plasma from one of the reactor's south outputs.
+    for gx in (rx - 2.5, rx + 2.5):
+        bp.entities.append("fusion-generator", position=(gx, top + 8.5), direction=Direction.SOUTH)
+    bp.entities.append("cryogenic-plant", position=(rx - 0.5, top + 14.5), direction=Direction.SOUTH,
+                       recipe="fluoroketone-cooling")
+    # Hot from the generators' backs into the cooler's inputs; cold from its outputs
+    # round the west side into the reactor's west input.
+    for x in range(rx - 4, rx + 4):
+        bp.entities.append("pipe", tile_position=(x, top + 11))
+    for x in range(rx - 6, rx + 3):
+        bp.entities.append("pipe", tile_position=(x, top + 17))
+    for y in range(top + 5, top + 17):
+        bp.entities.append("pipe", tile_position=(rx - 6, y))
+    for x in range(rx - 6, rx - 3):
+        bp.entities.append("pipe", tile_position=(x, top + 4))
+    if not first:
+        return
+    # Cells: off the hub's south edge onto a belt, and into the reactor's east side.
+    bp.entities.append("inserter", tile_position=(-HUB, HUB), direction=Direction.NORTH, use_filters=True)
+    bp.entities[-1].set_item_filter(0, "fusion-power-cell")
+    for x in range(-HUB, rx + 3, -1):
+        bp.entities.append(BELT, tile_position=(x, HUB + 1), direction=Direction.WEST)
+    bp.entities.append("inserter", tile_position=(rx + 3, HUB + 1), direction=Direction.EAST)
+    bp.entities.append("accumulator", position=(rx + 5, HUB + 3))
+
+
 def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, layout="rows", cargo_bays=0,
-          margin=0, fuel=False, reserve=False) -> Blueprint:
+          margin=0, fuel=False, reserve=False, power=False) -> Blueprint:
     """layout: "rows" puts the gun turrets in a row behind the railguns; "front"
     spreads them through the railguns' row, front edges flush. A railgun fires
     only in a 72-degree arc ahead of it (turn_range 0.2, NOTES.md), so turrets
@@ -135,7 +177,15 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
     reserve (with fuel) adds a storage tank on each of the thruster's west
     inputs, filled before leaving: where chunks are scarce, as at the solar
-    system edge, the plants alone can't get it going (NOTES.md)."""
+    system edge, the plants alone can't get it going (NOTES.md).
+
+    power (a count, True for 1) makes its electricity on board: that many fusion
+    reactors in a row south-west of the hub, each with two generators and a
+    cryogenic plant cooling its coolant, and fusion cells fed from the hub to the
+    first. Before leaving, the reactors are filled with cells and their loops with
+    cold fluoroketone, and the accumulator and the railguns are charged: railguns
+    take power first, as the reactors do, so one reactor can't keep up once they
+    recharge at more than 90 MW (NOTES.md)."""
     if railguns < 1 or thrusters < 1:
         raise ValueError("a platform needs at least one railgun and one thruster")
     if layout not in ("rows", "front"):
@@ -148,6 +198,10 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         raise ValueError("fuel=True needs layout rows")
     if reserve and not fuel:
         raise ValueError("reserve=True needs fuel=True: it's the thruster's fuel and oxidizer")
+    if power and thrusters != 1:
+        raise ValueError("power=True has room beside one thruster")
+    if power < 0:
+        raise ValueError("power is how many fusion reactors, not a negative number")
     rw, rh = RAILGUN
     tw, th = THRUSTER
     gw = GUN
@@ -184,7 +238,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
     bp.label = (f"Platform: {count(railguns, 'railgun')}, {count(guns, 'gun turret')}{' among them' if front else ''}, "
                 f"{count(thrusters, 'thruster')}" + (f", {count(cargo_bays, 'cargo bay')}" if cargo_bays else "")
-                + (", makes its fuel" if fuel else "") + (" with a reserve" if reserve else ""))
+                + (", makes its fuel" if fuel else "") + (" with a reserve" if reserve else "")
+                + (", powers itself" if power else ""))
     where = "between the railguns" if front else "behind them"
     bp.description = ("Railguns across the front for big and huge asteroids only, gun turrets " + where +
                       " for the rest, thrusters at the back, the hub in the middle (the blueprint's origin is the "
@@ -195,6 +250,16 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     if cargo_bays:
         bp.description += (" With construction-robotics researched the hub rebuilds what asteroids destroy from its "
                            "stock: fill the bays with spare turrets, poles and foundation, which goes fastest.")
+    if power:
+        # The game keeps 500 bytes of a description: with power, a shorter one.
+        bp.description = (f"Railguns in front for big and huge asteroids, gun turrets {'among' if front else 'behind'} "
+                          "them, the hub at the origin. Supply railgun ammo and magazines" +
+                          ("; it makes thruster fuel (research space-platform-thruster)" +
+                           (", fill its tanks first" if reserve else "") if fuel else " and thruster fuel") +
+                          ". Fusion power (research cryogenic-plant): before leaving, fill the reactors with cells (more in the hub) and "
+                          "the loops with cold fluoroketone, charge the accumulator and railguns." +
+                          (" With construction-robotics the hub rebuilds from its stock: fill the bays with spares and "
+                           "foundation." if cargo_bays else ""))
     bp.icons = ["railgun-turret", "thruster"]
     for x in range(-half - margin, half + margin):
         for y in range(top, full + 1):
@@ -202,6 +267,14 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     for x in range(-tw // 2 - (3 if reserve else 1), xb + 8) if fuel else ():
         for y in range(full + 1, bottom + 1):  # behind, only the thruster's and the module's rows
             bp.tiles.append("space-platform-foundation", position=(x, y))
+    if power:
+        # Under the plant, wherever the rows above don't reach: from its west coolant
+        # line to the hub's west edge, down to its cold line.
+        laid = {(t.position.x, t.position.y) for t in bp.tiles}
+        for x in range(REACTOR[0] - PLANT_STEP * (power - 1) - 7, -HUB + 1):
+            for y in range(HUB, REACTOR[1] + 15):
+                if (x, y) not in laid:
+                    bp.tiles.append("space-platform-foundation", position=(x, y))
 
     poles = []
     x = -(widths[0] // 2)
@@ -255,6 +328,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         bp.entities.append("cargo-bay", position=(x, -CARGO_BAY // 2 if place < 2 else CARGO_BAY // 2))
     if fuel:
         _fuel_module(bp, xb, HUB, bottom)
+    for k in range(power):
+        _power_plant(bp, REACTOR[0] - PLANT_STEP * k, k == 0)
 
     left = -(widths[1] // 2)
     for k in range(thrusters):
@@ -272,7 +347,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
 
 def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=False, reserve=False, script_fuel=False,
-                 **params):
+                 power=False, **params):
     """research: technology series -> levels researched; start: share of the route
     to begin at; supplies: items into the hub, which rebuilds from them (with
     construction-robotics researched) and repairs with repair packs
@@ -282,13 +357,19 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     still, it meets too few asteroids to make any fuel (NOTES.md). With reserve,
     its tanks start full too: in a game they'd fill while it waits in orbit.
     script_fuel flies a fuel=True layout on fuel by script, as the plain one
-    flies: a control for what the module itself costs."""
+    flies: a control for what the module itself costs. A platform with power=True
+    gets no stand-in power: its accumulator starts charged and its reactor's loop
+    full of cold fluoroketone, as if readied in orbit, with CELLS fusion cells in
+    the hub unless supplies name some."""
     from validator.flight import PRIME, Flight
 
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
-    research = {**(research or {}), **({"space-platform": 1, "space-platform-thruster": 1} if fuel else {})}
+    research = {**(research or {}), **({"space-platform": 1, "space-platform-thruster": 1} if fuel else {}),
+                **({"cryogenic-plant": 1} if power else {})}  # the cooler's recipe
+    supplies = {**({"fusion-power-cell": CELLS} if power else {}), **(supplies or {})}
     on_board = fuel and not script_fuel
     # With reserve, more than the thruster, its line and its tank hold: the game fills them.
     primed = PRIME + (2 * entities.raw["storage-tank"]["fluid_box"]["volume"] if reserve else 0) if on_board else 0
-    return [Flight(shape, seconds=seconds, start=start, supplies=supplies or {}, fuel=not on_board, power=True,
-                   ammo=AMMO, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0)]
+    return [Flight(shape, seconds=seconds, start=start, supplies=supplies, fuel=not on_board, power=not power,
+                   ammo=AMMO, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
+                   charged=power, coolant=COOLANT if power else 0)]

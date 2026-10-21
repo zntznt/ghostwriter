@@ -36,6 +36,7 @@ from validator.validate import Report
 SPEED = 100
 POLL = 10  # game seconds between reads
 PRIME = entities.raw["thruster"]["fuel_fluid_box"]["volume"]  # a primed thruster's worth of each fluid
+FUSION_CELL_J = 40e9  # a fusion power cell's fuel_value (dump)
 
 
 @dataclass
@@ -58,6 +59,12 @@ class Flight:
     # asteroids to make any (NOTES.md).
     primed: float = 0
     start_speed: float = 0.0
+    # A plant that makes its own power, readied as before leaving: every accumulator and
+    # railgun charged and each fusion reactor's fuel slot full of cells (the accumulator
+    # starts them), and cold fluoroketone into each fusion reactor, which spreads into
+    # its coolant line.
+    charged: bool = False
+    coolant: float = 0
 
 
 @dataclass
@@ -82,6 +89,11 @@ class Flown:
     rebuilt: dict[str, int] = field(default_factory=dict)
     power_j: float = 0.0
     made: dict[str, float] = field(default_factory=dict)  # thruster fuel and oxidizer made on board
+    # Power made on board (J): what the fusion generators gave, what the plant itself
+    # used (reactors and coolers), and the seconds any fusion reactor was short of power.
+    generated_j: float = 0.0
+    plant_j: float = 0.0
+    brownout: int = 0
 
     def chunks(self, kind: str = "promethium") -> int:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
@@ -94,6 +106,12 @@ class Flown:
         out = {f"{k}/s": (n - self.held.get(k, 0)) / self.seconds for k, n in self.supplied.items()}
         if self.power_j:
             out["power MW"] = self.power_j / self.seconds / 1e6
+        if self.generated_j:
+            # A fusion cell is 40 GJ, and once running the generators give out all of it (NOTES.md).
+            out["power MW"] = (self.generated_j - self.plant_j) / self.seconds / 1e6
+            out["generated MW"] = self.generated_j / self.seconds / 1e6
+            out["fusion cells/h"] = self.generated_j / FUSION_CELL_J / self.seconds * 3600
+            out["brownout s"] = self.brownout
         out.update({f"rebuilt {k}/s": n / self.seconds for k, n in self.rebuilt.items()})
         out.update({f"made {k}/s": n / self.seconds for k, n in self.made.items()})
         out.update({f"held {k}": self.held.get(k, 0.0) for k in self.made})
@@ -117,7 +135,8 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
         "blueprint": encode(data), "from": flight.origin, "to": flight.destination, "start": flight.start,
         "supplies": flight.supplies or None, "fuel": flight.fuel, "power": flight.power,
         "ammo": flight.ammo or None, "research": flight.research or None, "speed": SPEED,
-        "primed": flight.primed or None, "start_speed": flight.start_speed or None}))
+        "primed": flight.primed or None, "start_speed": flight.start_speed or None,
+        "charged": flight.charged, "coolant": flight.coolant or None}))
     if "error" in setup:
         flown.error = f"flight: {setup['error']}"
         report.errors.append(flown.error)
@@ -140,6 +159,8 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.supplied, flown.held, flown.rebuilt, flown.made = (got.get(k) if isinstance(got.get(k), dict) else {}
                                                                      for k in ("supplied", "held", "rebuilt", "made"))
             flown.power_j = got.get("power_j") or 0.0
+            flown.generated_j, flown.plant_j = got.get("generated_j") or 0.0, got.get("plant_j") or 0.0
+            flown.brownout = got.get("brownout") or 0
             flown.log.append({"seconds": round(elapsed, 1), "km": round(got["km"]), "speed": got["speed"],
                               "hub": got["hub_health"]})
             if not got["alive"]:

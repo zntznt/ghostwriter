@@ -402,8 +402,46 @@ def platform_reserve(server) -> dict:
             "trials": rows}
 
 
+POWER_MODES = {  # mode -> build and flight parameters; the hub's stock is BAY_SPARES (and cells with power)
+    "stand-in power": {"fuel": True, "reserve": True},
+    "1 fusion reactor": {"fuel": True, "reserve": True, "power": 1},
+    "2 fusion reactors": {"fuel": True, "reserve": True, "power": 2},
+}
+PLANT = ("fusion-reactor", "fusion-generator", "cryogenic-plant", "accumulator")
+
+
+def platform_power(server) -> dict:
+    """Does the fuelled platform with its reserve run on its own fusion plants (power=N)
+    as it does on the stand-in source? Each of POWER_MODES flies 8 times from each of
+    BUDGET_STARTS, for up to 600 s with platform-budget's research: what it lives and
+    flies, the power it uses and makes, fusion cells an hour, seconds any reactor was
+    short of power, and what of the plant asteroids destroyed."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for start in BUDGET_STARTS:
+        for mode, extra in POWER_MODES.items():
+            t = evaluate({**FILED_PLATFORM, **extra, "start": start, "seconds": 600,
+                          "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": BAY_SPARES})
+            r = t.rates
+            plant = {k: n for k, n in t.counts.items() if k.split(" <- ")[0] in PLANT}
+            print(f"from {start:.0%}, {mode}: " + (
+                f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
+                f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); uses {r.get('power MW', 0):.1f} MW"
+                + (f", makes {r['generated MW']:.1f} MW gross on {r['fusion cells/h']:.2f} cells/h, reactors short "
+                   f"of power {r['brownout s']:.1f} s a flight; plant lost {plant or 'nothing'}"
+                   if "generated MW" in r else "") if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+            rows.append({"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
+                         "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
+            "supplies": BAY_SPARES, "modes": POWER_MODES, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
            "platform-repair": platform_repair, "platform-foundation": platform_foundation,
-           "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve}
+           "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve,
+           "platform-power": platform_power}

@@ -520,6 +520,22 @@ local function flight_tick()
     fl.cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()
     fl.hub_health = p.hub.health
     if fl.source and fl.source.valid then fl.power_j = BUDGET - fl.source.energy end
+    -- Power made on board: the surface's own network statistics (a fresh surface starts at 0).
+    local power = p.surface.global_electric_network_statistics
+    if power then
+      fl.generated_j = power.output_counts["fusion-generator"] or 0
+      fl.plant_j = (power.input_counts["fusion-reactor"] or 0) + (power.input_counts["cryogenic-plant"] or 0)
+    end
+    -- Short of power: a fusion reactor that takes power first (as railguns do) and still
+    -- gets less than it asks. A railgun reads low_power whenever it refills after a shot,
+    -- even on unlimited power, so it can't tell (NOTES.md). Not in the first second: a
+    -- readied reactor still starting reads low_power for its first few ticks.
+    for _, r in pairs(game.tick - fl.start >= 60 and p.surface.find_entities_filtered{type = "fusion-reactor"} or {}) do
+      if r.status == defines.entity_status.low_power or r.status == defines.entity_status.no_power then
+        fl.brownout = fl.brownout + 1
+        break
+      end
+    end
     fl.held = held_by(fl.thrusters, fl.turrets, p.surface.find_entities_filtered{type = "storage-tank"})
     -- What the platform's own machines made (script inserts don't count).
     local stats = p.force.get_fluid_production_statistics(p.surface)
@@ -1092,7 +1108,25 @@ remote.add_interface("ghostwriter", {
                       thrusters = s.find_entities_filtered{type = "thruster"},
                       turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
                       cargo = {}, hub_health = p.hub.health, start = game.tick, research = research,
-                      supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0, made = {}}
+                      supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0, made = {},
+                      generated_j = 0, plant_j = 0, brownout = 0}
+    -- charged and coolant: a plant readied before leaving, every accumulator and railgun
+    -- full and each reactor's fuel slot filled with cells, and cold fluoroketone into
+    -- each fusion reactor's line. Railguns take power first, as reactors do: empty,
+    -- they would take nearly all an accumulator gives, and the reactors never start
+    -- (nor would the inserters bringing them cells from the hub, NOTES.md).
+    if args.charged then
+      for _, e in pairs(s.find_entities_filtered{type = "accumulator"}) do e.energy = e.electric_buffer_size end
+      for _, e in pairs(s.find_entities_filtered{name = "railgun-turret"}) do e.energy = e.electric_buffer_size end
+      for _, r in pairs(s.find_entities_filtered{type = "fusion-reactor"}) do
+        r.insert{name = "fusion-power-cell", count = prototypes.item["fusion-power-cell"].stack_size}
+      end
+    end
+    if args.coolant then
+      for _, r in pairs(s.find_entities_filtered{type = "fusion-reactor"}) do
+        r.insert_fluid{name = "fluoroketone-cold", amount = args.coolant}
+      end
+    end
     -- primed (an amount) and start_speed: as if it arrived from the last leg, that much
     -- of each fluid in each thruster once (inserted, it spreads into the line) and
     -- moving (km a tick). The prime counts as supplied.
@@ -1120,7 +1154,8 @@ remote.add_interface("ghostwriter", {
           furthest = fl.furthest, km = (fl.furthest - fl.from_start) * fl.length, speed = alive and p.speed or 0,
           speed_max = fl.speed_max, hub_health = alive and p.hub.health or 0, deaths = fl.deaths,
           ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo,
-          supplied = fl.supplied, held = fl.held, rebuilt = fl.rebuilt, power_j = fl.power_j, made = fl.made}
+          supplied = fl.supplied, held = fl.held, rebuilt = fl.rebuilt, power_j = fl.power_j, made = fl.made,
+          generated_j = fl.generated_j, plant_j = fl.plant_j, brownout = fl.brownout}
   end,
 
   flight_step = function(ticks)

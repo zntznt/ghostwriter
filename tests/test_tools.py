@@ -933,6 +933,134 @@ class PlatformFuel(unittest.TestCase):
         self.assertEqual((control.fuel, control.primed, control.start_speed), (True, 0, 0.0))
 
 
+def connections(e: dict, box: str | None, spec: dict | None = None) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+    """(the tile a connection sits on, the tile it points into) for a fluid box of a prototype
+    (by key, or the box itself as spec), turned by the entity's direction."""
+    from draftsman.data import entities as protos
+
+    turn = {0: lambda x, y: (x, y), 4: lambda x, y: (-y, x), 8: lambda x, y: (-x, -y), 12: lambda x, y: (y, -x)}
+    d = e.get("direction", 0)
+    out = []
+    for c in (spec or protos.raw[e["name"]][box])["pipe_connections"]:
+        px, py = turn[d](*c["position"])
+        dx, dy = pipes.VEC[(c["direction"] + d) % 16]
+        at = (math.floor(e["position"]["x"] + px), math.floor(e["position"]["y"] + py))
+        out.append((at, (at[0] + dx, at[1] + dy)))
+    return out
+
+
+class PlatformPower(unittest.TestCase):
+    """power=N: N fusion plants on board, the first fed fusion cells from the hub."""
+
+    def setUp(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.bp = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True, reserve=True,
+                                     power=2).to_dict()["blueprint"]
+        self.ents = self.bp["entities"]
+
+    def named(self, name):
+        return [e for e in self.ents if e["name"] == name]
+
+    def test_check_clean_on_foundation_and_clear_of_the_exhaust(self):
+        self.assertEqual(errors({"blueprint": self.bp}), [])
+        self.assertLessEqual(len(self.bp["description"].encode()), 500)
+        floor = {(t["position"]["x"], t["position"]["y"]) for t in self.bp["tiles"]}
+        self.assertEqual(len(floor), len(self.bp["tiles"]))  # no tile laid twice
+        seen = {}
+        for e in self.ents:
+            for t in tiles_of(e):
+                self.assertNotIn(t, seen, (e, seen.get(t)))
+                seen[t] = e
+                if e["name"] != "asteroid-collector":
+                    self.assertIn(t, floor, e)
+        [t] = self.named("thruster")
+        tx, ty = math.floor(t["position"]["x"]), math.floor(t["position"]["y"])
+        self.assertFalse({(x, y) for x in range(tx - 2, tx + 2) for y in range(ty + 3, ty + 30)} & floor)
+
+    def test_each_reactor_has_two_generators_and_a_cooler(self):
+        self.assertEqual(len(self.named("fusion-reactor")), 2)
+        self.assertEqual(len(self.named("fusion-generator")), 4)
+        self.assertEqual([c["recipe"] for c in self.named("cryogenic-plant")], ["fluoroketone-cooling"] * 2)
+        self.assertEqual(len(self.named("accumulator")), 1)  # charged before leaving, it starts the reactors
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            one = platform.build(railguns=32, guns=32, thrusters=1, power=True).to_dict()["blueprint"]
+        self.assertEqual(sum(e["name"] == "fusion-reactor" for e in one["entities"]), 1)
+
+    def test_each_generator_takes_plasma_from_a_reactor(self):
+        out = [c for r in self.named("fusion-reactor") for c in connections(r, "output_fluid_box")]
+        for g in self.named("fusion-generator"):
+            joined = [(a, b) for a, b in connections(g, "input_fluid_box") for c, d in out if b == c and d == a]
+            self.assertEqual(len(joined), 1, g)
+
+    def test_hot_and_cold_coolant_run_on_separate_lines(self):
+        # Generators send hot fluoroketone to the cooler; it sends it back cold to the reactor.
+        nets = pipes.networks(self.bp)
+        reactors, coolers = self.named("fusion-reactor"), self.named("cryogenic-plant")
+        hot = {nets[t] for g in self.named("fusion-generator") for _, t in connections(g, "output_fluid_box") if t in nets}
+        hot_in = {nets[t] for c in coolers for _, t in connections_of_boxes(c, "input") if t in nets}
+        cold = {nets[t] for c in coolers for _, t in connections_of_boxes(c, "output") if t in nets}
+        cold_in = {nets[t] for r in reactors for _, t in connections(r, "input_fluid_box") if t in nets}
+        self.assertEqual(len(hot), 2)  # a line each way for each plant
+        self.assertEqual(hot, hot_in)
+        self.assertEqual(len(cold), 2)
+        self.assertEqual(cold, cold_in)
+        self.assertFalse(hot & cold)
+
+    def test_cells_go_from_the_hub_to_the_first_reactor(self):
+        reactor = max(self.named("fusion-reactor"), key=lambda r: r["position"]["x"])  # nearest the hub
+        belts = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e.get("direction", 0)
+                 for e in self.named("transport-belt")}
+        ins = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e
+               for e in self.ents if e["name"].endswith("inserter")}
+
+        def ends(at):
+            dx, dy = pipes.VEC[ins[at].get("direction", 0)]  # its direction is where it picks up
+            return (at[0] + dx, at[1] + dy), (at[0] - dx, at[1] - dy)
+
+        [start] = [at for at, i in ins.items() if i.get("use_filters")
+                   and [f["name"] for f in i["filters"]] == ["fusion-power-cell"]]
+        take, tile = ends(start)
+        self.assertTrue(-4 <= take[0] <= 3 and -4 <= take[1] <= 3)  # from the hub
+        while tile in belts:
+            dx, dy = pipes.VEC[belts[tile]]
+            last, tile = tile, (tile[0] + dx, tile[1] + dy)
+        [feed] = [at for at in ins if ends(at)[0] == last]
+        self.assertIn(ends(feed)[1], tiles_of(reactor))
+
+    def test_refuses_what_it_doesnt_do(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with self.assertRaisesRegex(ValueError, "one thruster"):
+                platform.build(railguns=8, guns=8, thrusters=2, power=True)
+            plain = platform.build(railguns=8, guns=8, thrusters=1, power=True).to_dict()["blueprint"]
+        self.assertEqual(errors({"blueprint": plain}), [])  # without fuel=True too
+
+    def test_flight_runs_on_its_own_power(self):
+        [flight] = platform.flight_tests(power=True, fuel=True, reserve=True, research={"railgun-damage": 2})
+        self.assertFalse(flight.power)  # no stand-in source
+        self.assertTrue(flight.charged)
+        self.assertGreater(flight.coolant, 0)
+        self.assertEqual(flight.research["cryogenic-plant"], 1)  # the cooler's recipe
+        self.assertGreater(flight.supplies["fusion-power-cell"], 0)
+        [kept] = platform.flight_tests(power=True, supplies={"fusion-power-cell": 3})
+        self.assertEqual(kept.supplies["fusion-power-cell"], 3)
+        [plain] = platform.flight_tests()
+        self.assertEqual((plain.power, plain.charged, plain.coolant), (True, False, 0))
+
+
+def connections_of_boxes(e: dict, kind: str) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+    """connections() over every fluid box of a crafting machine of one production type."""
+    from draftsman.data import entities as protos
+
+    out = []
+    for box in protos.raw[e["name"]]["fluid_boxes"]:
+        if box["production_type"] == kind:
+            out += connections(e, None, box)
+    return out
+
+
 class Check(unittest.TestCase):
     def test_real_2_1_exports_have_no_errors(self):
         self.assertTrue(GAME_21)
