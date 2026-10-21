@@ -1420,5 +1420,133 @@ class FactorioInstall(unittest.TestCase):
                 self.assertEqual(data_dir(Path(tmp) / exe), Path(tmp) / data)
 
 
+class Trip(unittest.TestCase):
+    """tools.trip: where a promethium trip should turn round, from measured per-1,000-km rates."""
+
+    FOUNDATION, CHUNK = "space-platform-foundation", "promethium-asteroid-chunk"
+
+    def flat(self, chunks=10.0):
+        # The same everywhere: 100 foundation (a stack) and `chunks` chunks per 1,000 km, at 40 km/s.
+        row = {self.FOUNDATION: 100.0, self.CHUNK: chunks, "km/s": 40.0}
+        return {0.0: dict(row), 0.4: dict(row)}
+
+    def test_rates_come_from_the_route_studys_outward_flights(self):
+        from tools import trip
+
+        rates = {"rebuilt space-platform-foundation/1000 km": 20.0, "rebuilt railgun-turret/1000 km": 0.5,
+                 "railgun-ammo/1000 km": 5.0, "uranium-rounds-magazine/1000 km": 30.0,
+                 "thruster-fuel/1000 km": 9.0, "railgun-ammo/1000 km lived": 4.0, "fusion cells/1000 km": 0.01,
+                 "taken promethium-asteroid-chunk/1000 km": 2.0, "cruise km/s": 40.0, "km_mean": 20000.0,
+                 "survived": 0.75}
+        result = {"trials": [{"start": 0.0, "mode": "out", "passed": True, "rates": rates},
+                             {"start": 0.4, "mode": "back", "passed": True, "rates": rates},
+                             {"start": 0.4, "mode": "out", "passed": False, "rates": {}}]}
+        # Fluids aren't cargo. Deaths per 1,000 km: a quarter of the flights died, over 20,000 km each.
+        self.assertEqual(trip.table(result), {0.0: {
+            self.FOUNDATION: 20.0, "railgun-turret": 0.5, "railgun-ammo": 5.0, "uranium-rounds-magazine": 30.0,
+            "fusion-power-cell": 0.01, self.CHUNK: 2.0, "km/s": 40.0, "deaths": 0.0125}})
+        self.assertEqual(set(trip.table(result, mode="back")), {0.4})
+
+    def test_rates_between_measured_places_are_linear(self):
+        from tools import trip
+
+        rates = {0.0: {self.FOUNDATION: 10.0, "km/s": 40.0}, 0.4: {self.FOUNDATION: 50.0, self.CHUNK: 8.0, "km/s": 60.0}}
+        self.assertEqual(trip.at(rates, 0.1), {self.FOUNDATION: 20.0, self.CHUNK: 2.0, "km/s": 45.0})
+        self.assertEqual(trip.at(rates, 0.4)[self.FOUNDATION], 50.0)
+
+    def test_a_trip_loads_what_it_uses_and_fills_the_hub_with_chunks(self):
+        # Out 100,000 km and back: 200 stacks of foundation, so 800 of 1,000 slots are free
+        # for 2,000 chunks (one a slot), and the slots the foundation frees as it goes.
+        from tools import trip
+
+        t = trip.trip(self.flat(), 0.1, slots=1000, length=1e6)
+        self.assertTrue(t["fits"])
+        self.assertEqual((t["km"], t["loaded slots"]), (200000.0, 200))
+        self.assertAlmostEqual(t["used"][self.FOUNDATION], 20000.0)
+        self.assertAlmostEqual(t["hours"], 200000 / 40 / 3600)
+        self.assertAlmostEqual(t["chunks"], 1000.0, delta=1)  # the whole hub, at the end
+        self.assertAlmostEqual(t["lost"], 1000.0, delta=1)  # no room when they came
+        self.assertIsNone(t["ran out"])
+        self.assertEqual(t["comes back"], 1.0)  # no deaths measured
+
+    def test_deaths_per_1000_km_set_the_chance_of_coming_back(self):
+        from tools import trip
+
+        rates = self.flat()
+        for row in rates.values():
+            row["deaths"] = 0.005
+        t = trip.trip(rates, 0.1, slots=1000, length=1e6)
+        self.assertAlmostEqual(t["comes back"], math.exp(-0.005 * 200))
+
+    def test_what_is_made_aboard_isnt_cargo(self):
+        # aboard: supplies the platform makes for itself, so it loads none.
+        from tools import trip
+
+        rates = self.flat(chunks=0.0)
+        for row in rates.values():
+            row["railgun-ammo"] = 100.0  # 10 slots per 1,000 km at 10 a stack
+        loaded = trip.trip(rates, 0.1, slots=10000, length=1e6)
+        made = trip.trip(rates, 0.1, slots=10000, length=1e6, aboard={"railgun-ammo"})
+        self.assertEqual((loaded["loaded slots"], made["loaded slots"]), (2200, 200))
+        self.assertNotIn("railgun-ammo", made["used"])
+
+    def test_a_trip_that_needs_more_than_the_hub_holds_does_not_fit(self):
+        from tools import trip
+
+        t = trip.trip(self.flat(), 0.1, slots=150, length=1e6)
+        self.assertFalse(t["fits"])
+        self.assertEqual((t["loaded slots"], t["largest"]), (200, self.FOUNDATION))
+
+    def test_an_item_used_only_further_out_is_loaded_for_there(self):
+        # A part the hub rebuilt only in some flights (a cryogenic plant at 0.4): nothing
+        # of it between starts where none was used.
+        from tools import trip
+
+        rates = {0.0: {self.FOUNDATION: 100.0, "km/s": 40.0}, 0.2: {self.FOUNDATION: 100.0, "km/s": 40.0},
+                 0.4: {self.FOUNDATION: 100.0, "cryogenic-plant": 1.0, "km/s": 40.0}}
+        t = trip.trip(rates, 0.4, slots=10000, length=1e6)
+        self.assertAlmostEqual(t["used"]["cryogenic-plant"], 2 * 200 * 0.5, delta=1)  # both ways, rising 0 to 1 from 0.2
+
+    def test_a_given_stock_runs_out_where_it_runs_out(self):
+        from tools import trip
+
+        t = trip.trip(self.flat(chunks=0.0), 0.1, slots=1000, stock={self.FOUNDATION: 5000}, length=1e6)
+        item, km, share = t["ran out"]
+        self.assertEqual((item, km), (self.FOUNDATION, 51000.0))  # 50 stacks last 50,000 km
+        self.assertAlmostEqual(share, 0.0505)
+
+    def test_best_turns_round_where_the_most_chunks_come_back_and_fit(self):
+        # Chunks only past 0.2, foundation dearer further out: 0.3 brings more than 0.2,
+        # and 0.4 needs more slots than the hub has.
+        from tools import trip
+
+        rates = {0.0: {self.FOUNDATION: 100.0, self.CHUNK: 0.0, "km/s": 40.0},
+                 0.2: {self.FOUNDATION: 100.0, self.CHUNK: 0.0, "km/s": 40.0},
+                 0.4: {self.FOUNDATION: 300.0, self.CHUNK: 40.0, "km/s": 40.0}}
+        best, rows = trip.best(rates, 1000, [0.1, 0.2, 0.3, 0.4], length=1e6)
+        self.assertEqual([r["turn"] for r in rows], [0.1, 0.2, 0.3, 0.4])
+        self.assertFalse(rows[-1]["fits"])
+        self.assertEqual(best["turn"], 0.3)
+        self.assertGreater(best["chunks"], rows[1]["chunks"])
+
+    def test_the_command_reads_a_route_result_and_names_the_best_trip(self):
+        import contextlib
+        import io
+
+        from tools import trip
+
+        rates = {"rebuilt space-platform-foundation/1000 km": 100.0, "taken promethium-asteroid-chunk/1000 km": 5.0,
+                 "cruise km/s": 40.0, "km_mean": 20000.0, "survived": 1.0}
+        result = {"trials": [{"start": s, "mode": "out", "passed": True, "rates": rates} for s in (0.0, 0.1)]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "route.json"
+            path.write_text(json.dumps(result))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(trip.main([str(path), "--bays", "8"]), 0)
+        self.assertIn("8 cargo bays (219 slots)", out.getvalue())
+        self.assertIn("best: turn", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
