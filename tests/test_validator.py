@@ -565,6 +565,26 @@ class Validator(unittest.TestCase):
         self.assertEqual(cut, {"slots": 59 + 4 * 20, "spilled": 80 * 100, "foundation": 138 * 100, "bays": 2})
         self.assertEqual(back, {"slots": 59 + 8 * 20, "spilled": 0, "foundation": 218 * 100, "bays": 0})
 
+    def test_platform_runs_on_its_own_fusion_power(self):
+        # power=True with no stand-in source: readied as in orbit, the charged accumulator
+        # starts the reactor, which then runs on its own generators' output, keeps its slot
+        # topped up from the hub, and powers the railguns. Nauvis toward Vulcanus: few,
+        # small asteroids. The generators' output is all burnt cell energy once running.
+        data = platform.build(railguns=4, guns=6, thrusters=1, power=True).to_dict()
+        [flight] = platform.flight_tests(power=True, supplies={"fusion-power-cell": 10})
+        flight = dataclasses.replace(flight, origin="nauvis", destination="vulcanus", seconds=60)
+        report = Report(self.server.version)
+        flown = run_flight(self.server, data, flight, report)
+        self.assertEqual((flown.built, flown.entities), (flown.entities, len(data["blueprint"]["entities"])),
+                         report.lines())
+        self.assertTrue(flown.survived, flown.ended)
+        self.assertGreater(flown.generated_j, 0)
+        self.assertGreater(flown.generated_j, flown.plant_j)  # it makes more than it uses itself
+        self.assertEqual(flown.brownout, 0)  # readied, the reactor is never short of power
+        self.assertLess(flown.cargo.get("fusion-power-cell", 0), 10)  # the inserters took cells from the hub
+        budget = flown.budget()
+        self.assertAlmostEqual(budget["fusion cells/h"], flown.generated_j / 40e9 / 60 * 3600)
+
     def test_flight_counts_what_it_supplies(self):
         # A budget for making supplies on board: the flight counts what the script
         # gives (fuel and oxidizer, ammo, power) and what the hub rebuilds. Kept
