@@ -9,7 +9,9 @@ blueprint's tiles, or, if it has none, from under each entity. Supplies go
 into the hub. The platform then leaves `origin` for `destination` (by default
 the solar system edge toward the shattered planet, a 4,000,000 km connection)
 on its own thrusters, at game speed SPEED, until its hub dies or `seconds` of
-game time pass. Until a design makes its own, a script can keep thrusters
+game time pass. It can start partway (`start`, a share of the route), where
+the route is busier: huge promethium asteroids are rare before a fifth of the
+way (NOTES.md). Until a design makes its own, a script can keep thrusters
 full (fuel), power its poles (power) and stock its turrets (ammo). The test
 force has no research unless the flight sets some (research), so weapon
 damage and shooting speed are the game's base values.
@@ -39,6 +41,7 @@ class Flight:
     origin: str = "solar-system-edge"
     destination: str = "shattered-planet"
     seconds: float = 600  # game time to fly at most
+    start: float = 0.0  # where on the route it starts, as a share of its length from origin
     supplies: dict[str, int] = field(default_factory=dict)  # into the hub at the start
     fuel: bool = False  # keep thrusters full by script
     power: bool = False  # an unlimited energy source on the platform's poles, by script
@@ -51,7 +54,7 @@ class Flight:
 @dataclass
 class Flown:
     name: str
-    km: float = 0.0  # furthest along the connection
+    km: float = 0.0  # furthest along the connection, from where it started
     seconds: float = 0.0  # game time flown
     survived: bool = False  # the hub was alive when time ran out
     ended: str = ""  # what ended it, if the hub died
@@ -81,7 +84,7 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
     """Fly it; append an error to report if it couldn't be built or flown."""
     flown = Flown(flight.name)
     setup = server.call("flight_setup", json.dumps({
-        "blueprint": encode(data), "from": flight.origin, "to": flight.destination,
+        "blueprint": encode(data), "from": flight.origin, "to": flight.destination, "start": flight.start,
         "supplies": flight.supplies or None, "fuel": flight.fuel, "power": flight.power,
         "ammo": flight.ammo or None, "research": flight.research or None, "speed": SPEED}))
     if "error" in setup:
