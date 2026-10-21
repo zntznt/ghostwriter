@@ -466,6 +466,11 @@ local function flight_tick()
     fl.furthest = math.max(fl.furthest, fl.reversed and 1 - p.distance or p.distance)
   end
   fl.speed_max = math.max(fl.speed_max, p.speed or 0)
+  if game.tick % 60 == 0 then
+    -- The hub rebuilds what dies as new entities, which need stocking too.
+    fl.thrusters = p.surface.find_entities_filtered{type = "thruster"}
+    fl.turrets = p.surface.find_entities_filtered{type = "ammo-turret"}
+  end
   if fl.fuel then
     for _, t in pairs(fl.thrusters) do
       if t.valid then
@@ -511,7 +516,8 @@ end)
 -- Research for a flight: {series = levels done}, e.g. {["railgun-damage"] = 4}.
 -- A series is the technologies named "<series>-<n>"; each gets as many of its
 -- levels as fall within the count, so the game applies its own effects. On an
--- infinite technology, LuaTechnology.level is the next level to research.
+-- infinite technology, LuaTechnology.level is the next level to research. A
+-- technology with no number, e.g. {["construction-robotics"] = 1}, has 1 level.
 -- Returns what to restore afterwards, or nil and an error.
 local function set_research(force, research)
   local was = {}
@@ -531,8 +537,14 @@ local function set_research(force, research)
         end
       end
     end
+    local single = not found and force.technologies[series]
+    if single then
+      found, most = true, 1
+      was[#was + 1] = {name = series, researched = single.researched, level = single.level}
+      if done >= 1 then single.researched = true end
+    end
     if not found then return nil, "no technology series " .. series, was end
-    if done > most then return nil, series .. " has " .. most .. " levels", was end
+    if done > most then return nil, series .. " has " .. most .. (most == 1 and " level" or " levels"), was end
   end
   return was
 end

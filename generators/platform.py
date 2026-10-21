@@ -116,10 +116,13 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     return bp
 
 
-def flight_tests(seconds=300, research=None, start=0.0, **params):
+def flight_tests(seconds=300, research=None, start=0.0, supplies=None, **params):
     """research: technology series -> levels researched; start: share of the route
-    to begin at (validator.flight.Flight)."""
+    to begin at; supplies: items into the hub, which rebuilds from them (with
+    construction-robotics researched) and repairs with repair packs
+    (validator.flight.Flight)."""
     from validator.flight import Flight
 
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
-    return [Flight(shape, seconds=seconds, start=start, fuel=True, power=True, ammo=AMMO, research=research or {})]
+    return [Flight(shape, seconds=seconds, start=start, supplies=supplies or {}, fuel=True, power=True, ammo=AMMO,
+                   research=research or {})]

@@ -456,15 +456,81 @@ class Validator(unittest.TestCase):
                 "for _, e in pairs(fl.helpers) do out.helpers[#out.helpers + 1] = {y = e.position.y, "
                 "destructible = e.destructible, tile = s.get_tile(e.position).name} end "
                 "out.energy = s.find_entities_filtered{name = 'railgun-turret', limit = 1}[1].energy "
+                "out.global = s.has_global_electric_network "
                 "rcon.print(helpers.table_to_json(out))"))
         finally:
             self.server.call("flight_teardown")
+        # A platform's surface has a global electric network of its own: the source
+        # powers every entity on it, whatever happens to the poles.
+        self.assertIs(got["global"], True)
         self.assertEqual(len(got["helpers"]), 2)  # its pole and the source
         for h in got["helpers"]:
             self.assertFalse(h["destructible"])
             self.assertEqual(h["tile"], "empty-space")
             self.assertGreater(h["y"], got["back"] + 90)
         self.assertGreater(got["energy"], 0)
+
+    def small_flight(self, research, supplies):
+        data = platform.build(railguns=1, guns=2, thrusters=1).to_dict()
+        setup = self.server.call("flight_setup", json.dumps({
+            "blueprint": encode(data), "from": "solar-system-edge", "to": "shattered-planet", "fuel": True,
+            "ammo": platform.AMMO, "research": research, "supplies": supplies}))
+        self.assertNotIn("error", setup)
+
+    def ghost_on_death(self):
+        return self.server.command("/sc rcon.print(tostring(game.forces.player.create_ghost_on_entity_death))").strip()
+
+    def test_flight_rebuilds_from_the_hub_with_construction_robotics(self):
+        # construction-robotics is the technology whose effect leaves a ghost when
+        # an entity dies; the hub then rebuilds it from its own inventory, in
+        # flight. The rebuilt turret is a new entity, and the flight stocks it too.
+        gun = ("/sc local s = storage.flight.platform.surface local out = {} for _, g in pairs("
+               "s.find_entities_filtered{name = 'gun-turret'}) do out[#out + 1] = {x = g.position.x, "
+               "ammo = g.get_inventory(defines.inventory.turret_ammo).get_item_count('uranium-rounds-magazine')} end "
+               "rcon.print(helpers.table_to_json(out))")
+        try:
+            self.small_flight({"construction-robotics": 1}, {"gun-turret": 1})
+            self.assertEqual(self.ghost_on_death(), "true")
+            _step(self.server, 60, timeout=60)
+            before = json.loads(self.server.command(gun))
+            self.server.command("/sc storage.flight.platform.surface.find_entities_filtered{name = 'gun-turret'}[1].die()")
+            _step(self.server, 600, timeout=60)
+            after = json.loads(self.server.command(gun))
+            hub = self.server.call("flight_read")["cargo"]
+        finally:
+            self.server.call("flight_teardown")
+        self.assertEqual(sorted(g["x"] for g in after), sorted(g["x"] for g in before))
+        self.assertTrue(all(g["ammo"] > 0 for g in after), after)
+        self.assertNotIn("gun-turret", [c["name"] for c in hub])  # the spare went into the rebuild
+        self.assertEqual(self.ghost_on_death(), "false")  # undone with the research
+        try:
+            self.small_flight({}, {"gun-turret": 1})
+            self.assertEqual(self.ghost_on_death(), "false")
+        finally:
+            self.server.call("flight_teardown")
+        self.assertEqual(self.server.call("flight_setup", json.dumps({
+            "blueprint": encode(self.thrusters()), "from": "solar-system-edge", "to": "shattered-planet",
+            "research": {"construction-robotics": 2}}))["error"], "construction-robotics has 1 level")
+
+    def test_hub_repairs_with_repair_packs(self):
+        # With repair packs in the hub, damaged entities on the platform heal at
+        # repair-pack speed 2 times the hub's platform_repair_speed_modifier 0.1:
+        # 0.2 a tick, 12 a second, no research needed.
+        health = ("/sc rcon.print(storage.flight.platform.surface.find_entities_filtered"
+                  "{name = 'railgun-turret'}[1].health)")
+        try:
+            self.small_flight({}, {"repair-pack": 10})
+            self.server.command("/sc storage.flight.platform.surface.find_entities_filtered"
+                                "{name = 'railgun-turret'}[1].health = 3000")
+            _step(self.server, 600, timeout=60)
+            healed = float(self.server.command(health))
+            # Construction robots can't help: a roboport needs pressure 10, and a platform has 0.
+            roboport = self.server.command("/sc rcon.print(tostring(storage.flight.platform.surface.can_place_entity"
+                                           "{name = 'roboport', position = {0, 30}, force = 'player'}))").strip()
+        finally:
+            self.server.call("flight_teardown")
+        self.assertAlmostEqual(healed, 3000 + 10 * 12, delta=12)
+        self.assertEqual(roboport, "false")
 
     def test_thrusters_need_empty_space_behind(self):
         # A thruster's exhaust needs empty space behind it (about 88 tiles):
