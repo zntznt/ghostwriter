@@ -1,6 +1,6 @@
 """A promethium trip from measured rates: where the platform should turn round.
 
-    python -m tools.trip [RESULT] [--bays N ...]   # RESULT: .optimise-cache/platform-route.result.json
+    python -m tools.trip [RESULT] [--bays N ...] [--mode M]   # RESULT: .optimise-cache/platform-route.result.json
 
 The platform flies from the solar system edge out to `turn` (a share of the route)
 and back, using foundation, ammo, fusion cells and spares at the rates the
@@ -56,6 +56,11 @@ def table(result: dict, mode: str = "out") -> dict[float, dict[str, float]]:
         row[DEATHS] = (1 - t["rates"]["survived"]) / t["rates"]["km_mean"] * 1000
         out[t["start"]] = row
     return out
+
+
+def slots(row: dict[str, float]) -> dict[str, float]:
+    """Hub slots a table row's use fills per 1,000 km, item by item (each over its stack size)."""
+    return {k: v / items.raw[k]["stack_size"] for k, v in row.items() if k not in (CHUNK, SPEED, DEATHS)}
 
 
 def at(rates: dict[float, dict[str, float]], share: float) -> dict[str, float]:
@@ -124,8 +129,9 @@ def main(argv=None):
     ap.add_argument("result", nargs="?", default=str(RESULT))
     ap.add_argument("--bays", type=int, nargs="+", default=[8], help="cargo bays (20 hub slots each)")
     ap.add_argument("--aboard", default="", help="items made on board, not loaded: a,b")
+    ap.add_argument("--mode", default="out", help="the study's rows to plan from (platform-mix: a design)")
     args = ap.parse_args(argv)
-    rates = table(json.loads(Path(args.result).read_text()))
+    rates = table(json.loads(Path(args.result).read_text()), args.mode)
     aboard = {a for a in args.aboard.split(",") if a}
     # Fine near the edge, where short trips are all that fit; coarser out to the furthest start measured.
     turns = [t / 1000 for t in range(1, 51)] + [t / 100 for t in range(6, round(max(rates) * 100) + 1)]

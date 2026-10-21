@@ -748,8 +748,43 @@ class Platform(unittest.TestCase):
     def test_flight_takes_a_magazine_for_the_gun_turrets(self):
         # Uranium can't be made in space: a flight can stock piercing rounds instead.
         [flight] = platform.flight_tests(magazine="piercing-rounds-magazine")
-        self.assertEqual(flight.ammo, {"railgun-turret": "railgun-ammo", "gun-turret": "piercing-rounds-magazine"})
+        self.assertEqual(flight.ammo, {"railgun-turret": "railgun-ammo", "gun-turret": "piercing-rounds-magazine",
+                                       "rocket-turret": "rocket"})
         self.assertEqual(platform.flight_tests()[0].ammo, platform.AMMO)
+
+    def test_rocket_turrets_take_the_big_asteroids_and_railguns_the_huge(self):
+        # A rocket takes 10% off a big asteroid's health and kills it in 3 with the flight
+        # research, where a railgun shot is a tenth of a hub slot and a rocket a hundredth;
+        # huge asteroids shrug rockets off (99%), so railguns keep them (NOTES.md). The
+        # rocket turrets stand in a row behind the gun turrets, ahead of the gap above the
+        # hub, clear of the chunk belt: out of every railgun's line, on foundation.
+        params = {"railguns": 32, "guns": 32, "thrusters": 1, "cargo_bays": 8, "fuel": True, "reserve": True,
+                  "power": 2, "promethium": True}
+        bp = self.build(**params, rockets=8)
+        rockets = [e for e in bp["entities"] if e["name"] == "rocket-turret"]
+        guns = [e for e in bp["entities"] if e["name"] == "gun-turret"]
+        rails = [e for e in bp["entities"] if e["name"] == "railgun-turret"]
+        self.assertEqual(len(rockets), 8)
+        self.assertEqual(len(guns), 32)
+        for e in rockets:
+            self.assertEqual([t["index"] for t in e["priority-list"]], [1, 2, 3, 4])
+            self.assertTrue(all(t["name"].startswith("big-") for t in e["priority-list"]), e)
+            self.assertIs(e["ignore-unprioritised"], True)
+            self.assertGreater(e["position"]["y"], max(g["position"]["y"] for g in guns))
+            self.assertLessEqual(e["position"]["y"] + 1.5, -platform.HUB - 2)  # the gap above the hub stays clear
+        for r in rails:
+            self.assertTrue(all(t["name"].startswith("huge-") for t in r["priority-list"]), r)
+        floor = {(t["position"]["x"], t["position"]["y"]) for t in bp["tiles"]}
+        taken = Counter(t for e in bp["entities"] for t in footprint(e))
+        self.assertEqual([t for t, n in taken.items() if n > 1], [])
+        for e in rockets:
+            self.assertTrue(set(footprint(e)) <= floor, e)
+        belt = {e["position"]["x"] for e in bp["entities"] if e["name"] == "transport-belt"
+                and e.get("direction", 0) == 8}  # the chunk belt, flowing south
+        for e in rockets:
+            self.assertFalse({x + 0.5 for x, _ in footprint(e)} & belt, e)
+        self.assertEqual(errors({"blueprint": bp}), [])
+        self.assertEqual(self.build(**params, rockets=0), self.build(**params))
 
     def test_filed_platform_is_what_build_makes(self):
         # New options leave the default as it was: the filed design still builds the same.
@@ -1545,6 +1580,32 @@ class Trip(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 self.assertEqual(trip.main([str(path), "--bays", "8"]), 0)
         self.assertIn("8 cargo bays (219 slots)", out.getvalue())
+        self.assertIn("best: turn", out.getvalue())
+
+    def test_slots_per_1000_km_are_each_item_over_its_stack(self):
+        # What the platform fills the hub with per 1,000 km: foundation at 100 a stack, railgun
+        # ammo at 10 (dump). Chunks are what it brings in, not what it uses.
+        from tools import trip
+
+        row = {self.FOUNDATION: 250.0, "railgun-ammo": 15.0, self.CHUNK: 9.0, "km/s": 40.0, "deaths": 0.01}
+        self.assertEqual(trip.slots(row), {self.FOUNDATION: 2.5, "railgun-ammo": 1.5})
+
+    def test_the_command_plans_from_any_studys_mode(self):
+        # A study comparing designs (platform-mix) names its rows by design: --mode picks one.
+        import contextlib
+        import io
+
+        from tools import trip
+
+        rates = {"rebuilt space-platform-foundation/1000 km": 100.0, "taken promethium-asteroid-chunk/1000 km": 5.0,
+                 "cruise km/s": 40.0, "km_mean": 20000.0, "survived": 1.0}
+        result = {"trials": [{"start": s, "mode": "narrow", "passed": True, "rates": rates} for s in (0.0, 0.1)]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mix.json"
+            path.write_text(json.dumps(result))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(trip.main([str(path), "--mode", "narrow"]), 0)
         self.assertIn("best: turn", out.getvalue())
 
 

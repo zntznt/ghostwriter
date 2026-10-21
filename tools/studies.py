@@ -110,6 +110,10 @@ def platform_research(server) -> dict:
 
 HIGH_RESEARCH = {"railgun-shooting-speed": 6, "railgun-damage": 2, "physical-projectile-damage": 10,
                  "weapon-shooting-speed": 6}  # platform-research's best row
+# The same for rockets and lasers: their damage series to 10, as physical projectile damage
+# is, and laser shooting speed to its last level. Rockets' shooting speed comes with weapon
+# shooting speed 6 (+340%).
+MIX_RESEARCH = {**HIGH_RESEARCH, "stronger-explosives": 10, "laser-weapons-damage": 10, "laser-shooting-speed": 7}
 PROMETHIUM_STARTS = [0.0, 0.2, 0.3, 0.4]  # huge promethium asteroids are rare before 0.2 (NOTES.md)
 
 
@@ -589,10 +593,59 @@ def platform_route(server) -> dict:
             "supplies": TRIP_STOCK, "trials": rows}
 
 
+# What the platform fills the hub with per 1,000 km comes from how it fights (tools.trip):
+# rocket turrets for the big asteroids (railguns for the huge), and narrower shapes, against
+# the whole platform, from where the route begins and from where a trip would reach. Lasers
+# hurt only small asteroids and cost more power than they save (NOTES.md): not flown.
+MIX_STARTS = [0.0, 0.2]
+MIX_MODES = {"baseline": {}, "16 rocket turrets": {"rockets": 16},
+             "narrow, 24 railguns and 24 gun turrets": {"railguns": 24, "guns": 24},
+             "narrow, 16 railguns and 16 gun turrets": {"railguns": 16, "guns": 16},
+             "narrow, 12 railguns and 12 gun turrets": {"railguns": 12, "guns": 12},
+             "narrow, 8 railguns and 8 gun turrets": {"railguns": 8, "guns": 8}}
+MIX_STOCK = {**TRIP_STOCK, "rocket-turret": 10, "space-platform-foundation": TRIP_STOCK["space-platform-foundation"] - 100}
+
+
+def platform_mix(server) -> dict:
+    """Which turret mix and shape fill the fewest hub slots per 1,000 km? TRIP_PLATFORM with
+    each of MIX_MODES flies 8 times from each of MIX_STARTS for up to 600 s with MIX_STOCK and
+    MIX_RESEARCH (with construction-robotics): what it lives and flies, its cruise and power,
+    and per 1,000 km what it used, rebuilt and brought in, scored in hub slots (tools.trip).
+    Rows are named by mode, so `python -m tools.trip RESULT --mode M` plans a trip from one."""
+    from tools import trip
+    from tools.optimise import FlightEvaluator
+
+    from generators.platform import PROMETHIUM
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for mode, extra in MIX_MODES.items():
+        for start in MIX_STARTS:
+            t = evaluate({**TRIP_PLATFORM, **extra, "start": start, "seconds": 600, "supplies": MIX_STOCK,
+                          "research": {**MIX_RESEARCH, "construction-robotics": 1}, "take": [PROMETHIUM]})
+            r = t.rates
+            row = {"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
+                   "ended": t.stalled, "error": t.error}
+            if t.passed:
+                used = trip.slots(trip.table({"trials": [row]}, mode)[start])
+                top = ", ".join(f"{k} {v:.2f}" for k, v in sorted(used.items(), key=lambda kv: -kv[1])[:5])
+                print(f"{mode}, from {start:.0%}: {r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, "
+                      f"{r['km_mean']:,.0f} km mean, cruise {r.get('cruise km/s', 0):.1f} km/s, "
+                      f"{r.get('generated MW', 0):.1f} MW; hub slots per 1,000 km {sum(used.values()):.2f} ({top}); "
+                      f"promethium {r.get(f'taken {PROMETHIUM}/1000 km', 0):.2f}", file=sys.stderr, flush=True)
+            else:
+                print(f"{mode}, from {start:.0%}: FAIL {t.error}", file=sys.stderr, flush=True)
+            rows.append(row)
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": TRIP_PLATFORM, "modes": MIX_MODES, "research": {**MIX_RESEARCH, "construction-robotics": 1},
+            "supplies": MIX_STOCK, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
            "platform-repair": platform_repair, "platform-foundation": platform_foundation,
            "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve,
            "platform-power": platform_power, "platform-plant": platform_plant, "platform-ammo": platform_ammo,
-           "platform-sides": platform_sides, "platform-route": platform_route}
+           "platform-sides": platform_sides, "platform-route": platform_route,
+           "platform-mix": platform_mix}
