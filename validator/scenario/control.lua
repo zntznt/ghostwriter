@@ -474,6 +474,16 @@ local function flight_tick()
       end
     end
   end
+  if fl.ammo and game.tick % 60 == 0 then
+    for _, t in pairs(fl.turrets) do
+      local ammo = t.valid and fl.ammo[t.name]
+      if ammo then
+        local inv = t.get_inventory(defines.inventory.turret_ammo)
+        local have = inv and inv.get_item_count(ammo) or 0
+        if inv and have < 10 then t.insert{name = ammo, count = 10 - have} end
+      end
+    end
+  end
   if game.tick % 60 == 0 then
     -- Kept each second: the cargo goes with the hub.
     fl.cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()
@@ -928,10 +938,23 @@ remote.add_interface("ghostwriter", {
     p.space_location = args.from
     p.schedule = {current = 1, records = {{station = args.to}}}
     p.paused = false
+    local helpers_ = {}
+    if args.power then
+      -- An unlimited source on every separate pole network, like flow tests.
+      local networks, poles = {}, {}
+      for _, e in pairs(s.find_entities_filtered{type = "electric-pole"}) do
+        if not networks[e.electric_network_id] then
+          networks[e.electric_network_id] = true
+          poles[#poles + 1] = e
+        end
+      end
+      if poles[1] then helpers_ = source_for(s, {{-64, -64}, {64, 64}}, poles) end
+    end
     storage.flight = {platform = p, surface = s.index, connection = connection, length = proto.length,
-                      furthest = 0, speed_max = 0, deaths = {}, fuel = args.fuel,
-                      thrusters = s.find_entities_filtered{type = "thruster"}, cargo = {}, hub_health = p.hub.health,
-                      start = game.tick}
+                      furthest = 0, speed_max = 0, deaths = {}, fuel = args.fuel, ammo = args.ammo,
+                      thrusters = s.find_entities_filtered{type = "thruster"},
+                      turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
+                      cargo = {}, hub_health = p.hub.health, start = game.tick}
     game.speed = args.speed or 1
     reply{entities = wanted, built = built, weight = p.weight, connection = connection, length = proto.length}
   end,

@@ -15,7 +15,7 @@ Searches take any `evaluate(params) -> Trial`, so they're tested without the gam
 - bisect: along one ordered parameter, the last value that passes and the
   first that fails, for a yes/no that changes once.
 - descend: coordinate descent over ordered values, to the best score among
-  trials that pass.
+  trials that pass (with a margin for noisy scores, such as flights).
 """
 
 import argparse
@@ -99,6 +99,48 @@ class GameEvaluator:
                      "; ".join(report.errors) if not report.ok else "")
 
 
+class FlightEvaluator(GameEvaluator):
+    """Trials of a platform generator: each flies `runs` flights (validator.flight)
+    and scores them: km_mean, km_min, km_max, seconds_mean, survived (the share
+    that outlived the flight's time)."""
+
+    def __init__(self, server, generator: str, runs: int = 4, cache_dir: Path = CACHE):
+        super().__init__(server, generator, cache_dir)
+        self.runs = runs
+        self.path = cache_dir / f"{generator}-flights.json"
+        stored = json.loads(self.path.read_text()) if self.path.exists() else {}
+        self.cache = stored.get(self.code, {})
+
+    def __call__(self, params: dict) -> Trial:
+        return super().__call__({**params, "runs": self.runs})
+
+    def _run(self, params: dict) -> Trial:
+        from validator.flight import run_flight
+        from validator.validate import Report
+
+        params = {k: v for k, v in params.items() if k != "runs"}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                data = self.module.build(**params).to_dict()
+                (flight,) = self.module.flight_tests(**params)
+            except ValueError as e:
+                return Trial(params, False, error=str(e))
+        flights, errors = [], []
+        for _ in range(self.runs):
+            report = Report(self.server.version)
+            flown = run_flight(self.server, data, flight, report)
+            errors += report.errors
+            if flown.error or flown.built < flown.entities:
+                return Trial(params, False, error="; ".join(errors) or f"built {flown.built} of {flown.entities}")
+            flights.append(flown)
+        km = [f.km for f in flights]
+        return Trial(params, True, {"km_mean": sum(km) / len(km), "km_min": min(km), "km_max": max(km),
+                                    "seconds_mean": sum(f.seconds for f in flights) / len(flights),
+                                    "survived": sum(f.survived for f in flights) / len(flights)},
+                     windows=len(flights), stalled={f.ended or "survived": 1 for f in flights})
+
+
 def grid(evaluate, space: dict[str, list], base: dict | None = None) -> list[Trial]:
     """A trial for every combination of the values in space (with base's other parameters)."""
     names = list(space)
@@ -127,10 +169,12 @@ def bisect(evaluate, name: str, values: list, base: dict | None = None, ok=lambd
             [trials[i] for i in sorted(trials)])
 
 
-def descend(evaluate, space: dict[str, list], start: dict, score, ok=lambda t: t.passed, rounds: int = 10):
+def descend(evaluate, space: dict[str, list], start: dict, score, ok=lambda t: t.passed, rounds: int = 10,
+            margin: float = 0.0):
     """Coordinate descent: from start, try each parameter's neighbouring values in
     turn and move to any that passes with a higher score, until none does.
-    score(trial) is maximised. Returns (best trial, all trials)."""
+    score(trial) is maximised; with margin, a move needs a score above the best's
+    by that share of it (for noisy scores). Returns (best trial, all trials)."""
     trials = []
 
     def run(params):
@@ -148,7 +192,7 @@ def descend(evaluate, space: dict[str, list], start: dict, score, ok=lambda t: t
             for j in (i - 1, i + 1):
                 if 0 <= j < len(values):
                     trial = run({**best.params, name: values[j]})
-                    if ok(trial) and score(trial) > score(best):
+                    if ok(trial) and score(trial) > score(best) + margin * abs(score(best)):
                         best, moved = trial, True
                         break
         if not moved:

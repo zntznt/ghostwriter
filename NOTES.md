@@ -75,6 +75,7 @@ Consequences for this repo:
 - `bp check` stays quiet on registry keys. It warns on other unknown control_behavior keys (a typo, or a setting not harvested yet) and on unknown keys elsewhere. Across the 119 real 2.1.22 exports, that leaves 5 warnings, all genuine Draftsman gaps: 3 vehicle crashes, `thruster` with no class, and the asteroid collector's `result-inventory`. Unknown **names** are errors unless the game (the `data/` dump, else Draftsman's data) knows them.
 - The registry only covers settings that show up when booleans and network selections are flipped. A setting that needs a chosen signal or a number to appear (the turrets' own `priority_list`, for instance) isn't in it yet.
 - Draftsman may write older keys that 2.1 migrates (as with the chest) or drops. `bp gen --validate` catches the drops; migrations verified so far: logistic chest mode.
+- Turret priority targets: the game exports `"priority-list": [{"index": 1, "name": ...}]` (from 1) and `"ignore-unprioritised": true`. Draftsman 4.0.1 numbers them from 0, and the game then drops the whole turret on import (`import_stack` returns -1). Its `ignore_unprioritized` key is dropped silently. Set `TargetID(index=i + 1, ...)` and the game's key through `extra_keys`. (A railgun turret with targets set by script, exported by 2.1.22; each variant validated.)
 
 ## Draftsman behaviour worth knowing
 
