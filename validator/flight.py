@@ -100,10 +100,16 @@ class Flown:
 
     def budget(self) -> dict[str, float]:
         """What the flight used a second: each supply (given less held), power, and each thing rebuilt;
-        and of what it made on board, what was still held at the end (in the thrusters and any reserve)."""
+        and of what it made on board, what was still held at the end (in the thrusters and any reserve).
+        Supplies and rebuilds also per 1,000 km flown: a slower platform lives longer partly because
+        it's slower, and what it uses per distance compares designs at different speeds."""
         if not self.seconds:
             return {}
-        out = {f"{k}/s": (n - self.held.get(k, 0)) / self.seconds for k, n in self.supplied.items()}
+        used = {k: n - self.held.get(k, 0) for k, n in self.supplied.items()}
+        out = {f"{k}/s": n / self.seconds for k, n in used.items()}
+        if self.km:
+            out.update({f"{k}/1000 km": n / self.km * 1000 for k, n in used.items()})
+            out.update({f"rebuilt {k}/1000 km": n / self.km * 1000 for k, n in self.rebuilt.items()})
         if self.power_j:
             out["power MW"] = self.power_j / self.seconds / 1e6
         if self.generated_j:
