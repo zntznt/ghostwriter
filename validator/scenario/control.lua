@@ -518,6 +518,13 @@ local function flight_tick()
     fl.hub_health = p.hub.health
     if fl.source and fl.source.valid then fl.power_j = BUDGET - fl.source.energy end
     fl.held = held_by(fl.thrusters, fl.turrets)
+    -- What the platform's own machines made (script inserts don't count).
+    local stats = p.force.get_fluid_production_statistics(p.surface)
+    fl.made = {}
+    for _, f in pairs{"thruster-fuel", "thruster-oxidizer"} do
+      local n = stats.get_input_count(f)
+      if n > 0 then fl.made[f] = n end
+    end
   end
 end
 
@@ -1082,7 +1089,18 @@ remote.add_interface("ghostwriter", {
                       thrusters = s.find_entities_filtered{type = "thruster"},
                       turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
                       cargo = {}, hub_health = p.hub.health, start = game.tick, research = research,
-                      supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0}
+                      supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0, made = {}}
+    -- primed (an amount) and start_speed: as if it arrived from the last leg, that much
+    -- of each fluid in each thruster once (inserted, it spreads into the line) and
+    -- moving (km a tick). The prime counts as supplied.
+    if args.primed then
+      for _, t in pairs(storage.flight.thrusters) do
+        for _, f in pairs{"thruster-fuel", "thruster-oxidizer"} do
+          storage.flight.supplied[f] = (storage.flight.supplied[f] or 0) + t.insert_fluid{name = f, amount = args.primed}
+        end
+      end
+    end
+    if args.start_speed then p.speed = args.start_speed end
     game.speed = args.speed or 1
     reply{entities = wanted, built = built, weight = p.weight, connection = connection, length = proto.length,
           distance = p.distance}
@@ -1099,7 +1117,7 @@ remote.add_interface("ghostwriter", {
           furthest = fl.furthest, km = (fl.furthest - fl.from_start) * fl.length, speed = alive and p.speed or 0,
           speed_max = fl.speed_max, hub_health = alive and p.hub.health or 0, deaths = fl.deaths,
           ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo,
-          supplied = fl.supplied, held = fl.held, rebuilt = fl.rebuilt, power_j = fl.power_j}
+          supplied = fl.supplied, held = fl.held, rebuilt = fl.rebuilt, power_j = fl.power_j, made = fl.made}
   end,
 
   flight_step = function(ticks)

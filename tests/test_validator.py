@@ -603,6 +603,27 @@ class Validator(unittest.TestCase):
         self.assertGreaterEqual(used["uranium-rounds-magazine"], 10)
         self.assertGreater(got["power_j"], 10e6)  # the railgun charging its 11 MJ buffer, at least
 
+    def test_platform_makes_its_own_fuel_in_flight(self):
+        # fuel=True: after the start (thrusters full, the platform moving, as if it
+        # arrived from the last leg) no fuel by script. Its collectors, crushers and
+        # chemical plants keep it going on their own: a plant makes 37.5 fuel or
+        # oxidizer a second (75 every 2 s), and thrust settles where the thruster
+        # uses what they make, about 0.62 km a tick (NOTES.md).
+        from tools.studies import HIGH_RESEARCH
+
+        data = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True).to_dict()
+        # From 0.4 of the route, where chunks are plenty: from the solar system edge it
+        # sometimes never starts (NOTES.md).
+        [flight] = platform.flight_tests(fuel=True, seconds=150, start=0.4, research=HIGH_RESEARCH)
+        flown = run_flight(self.server, data, flight, Report(self.server.version))
+        self.assertEqual((flown.error, flown.built), ("", flown.entities))
+        self.assertTrue(flown.survived, flown.ended)
+        fluids = ("thruster-fuel", "thruster-oxidizer")
+        self.assertEqual({k: flown.supplied.get(k) for k in fluids}, {k: 1000 for k in fluids})  # the start alone
+        for k in fluids:
+            self.assertGreater(flown.made.get(k, 0), 2000, flown.made)
+        self.assertGreater(flown.log[-1]["speed"], 0.4, flown.log)
+
     def test_thrusters_need_empty_space_behind(self):
         # A thruster's exhaust needs empty space behind it (about 88 tiles):
         # with foundation there, the game won't build it, and the platform goes nowhere.
