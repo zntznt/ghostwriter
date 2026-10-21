@@ -33,9 +33,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / ".optimise-cache"
 # What a trial's result depends on besides its parameters: generators and the
-# tools they use, and the flow test harness on both sides.
-SOURCES = ("generators/*.py", "tools/rates.py", "tools/layout.py", "tools/pipes.py", "tools/inserter_rates.json",
-           "validator/flow.py", "validator/scenario/control.lua")
+# tools they use, how a trial is run and scored (this file), and the flow and
+# flight test harnesses on both sides.
+SOURCES = ("generators/*.py", "tools/optimise.py", "tools/rates.py", "tools/layout.py", "tools/pipes.py",
+           "tools/inserter_rates.json", "validator/flow.py", "validator/flight.py", "validator/scenario/control.lua")
 
 
 @dataclass
