@@ -5,6 +5,7 @@ table as it goes. Its books and values are fixed in code before it runs.
 """
 
 import sys
+from collections import Counter
 
 from tools.optimise import GameEvaluator, grid
 
@@ -132,5 +133,41 @@ def platform_promethium(server) -> dict:
     return {"design": PLATFORM_BEST, "research": HIGH_RESEARCH, "trials": rows}
 
 
+BELT_START = 0.4  # where huge promethium asteroids are common (NOTES.md)
+BELT_SPACE = {"railguns": [2, 4, 6, 8, 10, 12, 16, 20], "guns": [0, 3, 6, 9, 12, 16, 20, 24], "thrusters": [1, 2, 3]}
+
+
+def platform_belt(server) -> dict:
+    """Which railgun, gun turret and thruster counts live longest where promethium
+    is? Coordinate descent from the platform-shape best, each design flown 4 times
+    from BELT_START with HIGH_RESEARCH for up to 300 s, scored by mean seconds
+    lived, moving only on a 5% gain (flights differ run to run). Each trial also
+    counts what killed what, asteroids by size."""
+    from tools.optimise import FlightEvaluator, descend
+
+    evaluate = FlightEvaluator(server, "platform", runs=4)
+    fixed = {"research": HIGH_RESEARCH, "start": BELT_START}
+
+    def logged(params):
+        t = evaluate({**params, **fixed})
+        t.params = {k: v for k, v in t.params.items() if k not in fixed}  # descend moves on the shape alone
+        if t.passed:
+            # Ours are the deaths an asteroid caused; asteroids' own deaths start with their size.
+            lost = Counter({k.split(" <- ")[0]: n for k, n in t.counts.items() if k.endswith(" asteroid")})
+            hub = {k.split(" <- ")[1]: n for k, n in t.counts.items() if k.startswith("space-platform-hub <- ")}
+            print(f"{t.params}: {t.rates['seconds_mean']:.0f}s mean, survived {t.rates['survived']:.0%}; "
+                  f"lost {dict(lost)}; hub killed by {hub or 'nothing'}", file=sys.stderr, flush=True)
+        else:
+            print(f"{t.params}: FAIL {t.error}", file=sys.stderr, flush=True)
+        return t
+
+    best, trials = descend(logged, BELT_SPACE, PLATFORM_BEST, score=lambda t: t.rates["seconds_mean"], margin=0.05)
+    print(f"best: {best.params if best else None}; trials run: {evaluate.ran}", file=sys.stderr)
+    return {"start": BELT_START, "research": HIGH_RESEARCH, "best": best.params if best else None,
+            "best_rates": best.rates if best else None,
+            "trials": [{"params": t.params, "passed": t.passed, "rates": t.rates, "counts": t.counts,
+                        "ended": t.stalled, "error": t.error} for t in trials]}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
-           "platform-promethium": platform_promethium}
+           "platform-promethium": platform_promethium, "platform-belt": platform_belt}
