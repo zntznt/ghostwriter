@@ -3,7 +3,7 @@
 Checks blueprints, books and planners in a real headless Factorio server.
 
 ```
-python -m validator.fetch 2.1.22              # once: Linux headless server -> .factorio-headless/
+python -m validator.fetch 2.1.23              # once: Linux headless server -> .factorio-headless/
 python -m tools.bp validate SRC...            # strings, files or library folders
 python -m tools.bp gen NAME k=v --validate    # generate, check, validate, run circuit and flow tests, print
 python -m validator.harvest                   # refresh tools/game_settings.json (after a game update)

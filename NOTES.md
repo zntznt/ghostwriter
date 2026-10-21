@@ -1,6 +1,6 @@
 # Format notes
 
-**Target: Factorio 2.1** (the user's game). Facts the tools and skill rely
+**Target: Factorio 2.1.23** (the user's game: mac-arm64, Steam). Facts the tools and skill rely
 on, with how each was established. "Game" means a headless server (free
 download from factorio.com; `latest` is 2.1, `stable` is 2.0) driven over
 RCON: import with `LuaItemStack.import_stack`, re-export with `export_stack`,
@@ -67,6 +67,7 @@ build with `build_blueprint` + `revive`, then read the live entities.
 | A thruster's thrust follows how full its fuel and oxidizer boxes are: least at 10% (fluid use 0.1, effectivity 1), most at 80% (fluid use 2, effectivity 0.51). Kept full, as flight tests do, it runs flat out. | Dump (`thruster` min_performance, max_performance), 2.1.22. |
 | Railgun turrets fire only in a forward arc: `turn_range` 0.2 of a full turn (72 degrees), minimum range 3.5, range 40, 4,000 health; gun turrets turn all the way round, range 18, 400 health. A big asteroid takes 2,000 off each physical hit, then 10%, so bullets can't hurt it; small ones have 100 health and no physical resistance, medium 400 and 10%. | Dump, 2.1.22 (`ammo-turret` attack parameters, asteroid resistances). |
 | A flight's stand-in power must stand off the platform. `find_non_colliding_position` on a platform finds foundation (empty space collides), so the source took a free foundation tile among the turrets: asteroids destroyed it, cutting the turrets' power (in every flight 0.4 out), and on a wide platform there was no free tile, so setup failed. Indestructible there, it would shield what stands behind it. Placed by script on empty space 120 tiles behind the foundation, wired by script (the wire's length doesn't matter), indestructible, it powers the turrets. Even indestructible it dies in the platform's last second, with an asteroid as the cause, or goes with the platform. | `test_flight_power_source_stands_behind_and_cannot_be_destroyed`, probes, 2.1.22. Whether an entity that far off changes where asteroids spawn is untested. |
+| 2.1.23 changes nothing the test suite checks: it passes as on 2.1.22, the settings registry harvests the same 43 settings on 22 prototype types, and the inserter rates re-measure within 1% (run-to-run noise). The facts above were established on 2.1.22. | Full suite, `validator.harvest` and `validator.measure` on 2.1.23 (mac-arm64, the Steam build). |
 | Draftsman 4.0.1's data matches the 2.1.22 dump for furnace speeds and footprints, belt speeds, pole supply areas and wire reach, inserter speeds, and the smelting recipes. Generators can compute layouts and rates from it. | Compared against `data/data-raw-dump.json` (2.1.22). |
 | `--dump-data` writes to `<write-data>/script-output/data-raw-dump.json`, and the game logs `Write data path: ...` at startup | `tools/dump_data.py` run against the 2.0.77 and 2.1.22 headless binaries. In a portable install, write-data is the install dir, not `~/.factorio`. |
 
@@ -95,7 +96,3 @@ Consequences for this repo:
 - Wrong footprint for `railgun-turret`: Draftsman derives 3×4 from the collision box, but the 2.1.22 prototype sets `tile_height = 5`. Placed with `tile_position`, it lands half a tile off, and the game moves it. Every other grid-placed entity matches the dump. Vehicles, rolling stock and curved/diagonal rails differ too, but they aren't placed on the tile grid.
 - It resolves wire endpoints by list position, so `entity_number` must run 1..n (game exports always do). `check` enforces this.
 - It doesn't check wires to missing entities (it crashes), connectors on the wrong entity kind, out-of-range connector IDs, or wire reach. `tools/check.py` covers those.
-
-## Open
-
-- Your exact 2.1.x build. `python -m tools.dump_data` on your machine records it in `data/factorio-version.txt`.

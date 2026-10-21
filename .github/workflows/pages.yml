@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FACTORIO_VERSION: "2.1.22"  # the version the library targets (NOTES.md)
+  FACTORIO_VERSION: "2.1.23"  # the version the library targets (NOTES.md)
   GHOSTWRITER_REQUIRE_FACTORIO: "1"  # validator tests fail rather than skip
 
 jobs:
