@@ -289,6 +289,9 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
             raise ValueError(f"fuel=True needs more railguns: the belt would run down x={xb}, inside the hub's rows")
         bottom = HUB + 10  # the module's two bands, its lines and the thruster (_fuel_module)
         full = min(full, bottom)
+        if xb + 8 > half:  # the east chemical plants end at xb + 7; the full-width rows at half - 1
+            raise ValueError(f"cargo_bays={cargo_bays}: the fuel module would stand off the foundation's east edge "
+                             f"(the belt runs down x={xb}, the foundation ends at x={half - 1})")
 
     bp = Blueprint()
     def count(n, thing):

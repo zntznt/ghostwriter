@@ -1,6 +1,7 @@
 """Run: python -m unittest discover tests"""
 
 import copy
+import inspect
 import json
 import math
 import tempfile
@@ -666,6 +667,23 @@ class Platform(unittest.TestCase):
         self.assertEqual(sorted((e["position"]["x"], e["position"]["y"]) for e in nearest if e["name"] == "cargo-bay"),
                          [(-6, -2), (6, -2), (6, 2)])
 
+    def test_filed_platforms_are_what_the_generator_builds(self):
+        # library/platforms/ holds the generator's output for these parameters: the 32-railgun
+        # platform of platform-foundation, and the promethium platform of platform-bays.
+        from tools.studies import FILED_PLATFORM, PROMETHIUM_PLATFORM
+
+        filed = {}
+        for path in (Path(__file__).parent.parent / "library" / "platforms").glob("*.json"):
+            bp = json.loads(path.read_text())["blueprint"]
+            filed[bp["label"]] = bp
+        for params in (FILED_PLATFORM, PROMETHIUM_PLATFORM):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                bp = platform.build(**{k: v for k, v in params.items()
+                                       if k in inspect.signature(platform.build).parameters}).to_dict()["blueprint"]
+            self.assertIn(bp["label"], list(filed), params)
+            self.assertEqual(filed[bp["label"]], bp, params)
+
     def test_description_says_how_a_platform_with_bays_rebuilds(self):
         # The hub rebuilds only with construction-robotics researched, from what it
         # holds; bays are for that stock (NOTES.md). Without bays, nothing to say.
@@ -1025,6 +1043,30 @@ class PlatformPromethium(unittest.TestCase):
         seen = {}
         floor = {(t["position"]["x"], t["position"]["y"]) for t in self.bp["tiles"]}
         for e in self.ents:
+            for t in tiles_of(e):
+                self.assertNotIn(t, seen, (e, seen.get(t)))
+                seen[t] = e
+                if e["name"] != "asteroid-collector":
+                    self.assertIn(t, floor, e)
+
+    def test_bays_fit_the_narrow_design_up_to_its_width(self):
+        # On 16/16 (74 tiles wide) the bays push the collectors' slot east of them, and
+        # the fuel module east of the belt with it: 24 bays still fit on the foundation,
+        # 28 would stand its chemical plants off the east edge, so the build refuses.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            full = dict(railguns=16, guns=16, thrusters=1, fuel=True, reserve=True, power=2, promethium=True)
+            bp = platform.build(**full, cargo_bays=24).to_dict()["blueprint"]
+            plain = platform.build(**full, cargo_bays=8).to_dict()["blueprint"]
+            with self.assertRaisesRegex(ValueError, "off the foundation"):
+                platform.build(**full, cargo_bays=28)
+        floor = {(t["position"]["x"], t["position"]["y"]) for t in bp["tiles"]}
+        xs = [x for x, _ in floor]
+        self.assertEqual((min(xs), max(xs)), (min(t["position"]["x"] for t in plain["tiles"]),
+                                              max(t["position"]["x"] for t in plain["tiles"])))
+        self.assertEqual(sum(e["name"] == "cargo-bay" for e in bp["entities"]), 24)
+        seen = {}
+        for e in bp["entities"]:
             for t in tiles_of(e):
                 self.assertNotIn(t, seen, (e, seen.get(t)))
                 seen[t] = e

@@ -137,6 +137,16 @@ class Cache(unittest.TestCase):
         self.assertEqual(budget["railgun-ammo/s"], 1.0)  # per second as before
         self.assertNotIn("railgun-ammo/1000 km", Flown("f", seconds=20.0, supplied={"railgun-ammo": 30.0}).budget())
 
+    def test_flown_budget_counts_cargo_bays_lost_by_distance_from_the_hub(self):
+        # A dead bay cuts off the bays joined through it (NOTES.md): bays further out
+        # may be hit more, so the flight counts them by |x|, tiles from the hub's centre.
+        from validator.flight import Flown
+
+        flown = Flown("f", seconds=20.0, km=4000.0, bays_lost={"6": 2, "26": 8})
+        budget = flown.budget()
+        self.assertEqual(budget["cargo bays lost at |x| 6/1000 km"], 0.5)
+        self.assertEqual(budget["cargo bays lost at |x| 26/1000 km"], 2.0)
+
     def test_flown_budget_keeps_what_a_fuel_maker_held_at_the_end(self):
         # On fuel made on board, what was left in the thrusters and any reserve tank at
         # the end: whether a reserve ran out.

@@ -479,6 +479,24 @@ class Validator(unittest.TestCase):
             "ammo": platform.AMMO, "research": research, "supplies": supplies}))
         self.assertNotIn("error", setup)
 
+    def test_flight_counts_cargo_bays_lost_by_distance_from_the_hub(self):
+        # Bays further out may be hit more, and a dead bay cuts off the ones beyond it
+        # (NOTES.md), so the flight counts each lost bay by |x|, tiles from the hub's
+        # centre. Killed by script: nothing waits on an asteroid or a sampling tick.
+        data = platform.build(railguns=4, guns=6, thrusters=1, cargo_bays=8).to_dict()
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "fuel": True,
+                "ammo": platform.AMMO}))
+            self.assertNotIn("error", setup)
+            _step(self.server, 60, timeout=60)
+            self.server.command("/sc for _, b in pairs(storage.flight.platform.surface.find_entities_filtered"
+                                "{name = 'cargo-bay'}) do if b.position.x == 10 or b.position.x == -6 then b.die() end end")
+            got = self.server.call("flight_read")
+        finally:
+            self.server.call("flight_teardown")
+        self.assertEqual(got["bays_lost"], {"6": 2, "10": 2})
+
     def ghost_on_death(self):
         return self.server.command("/sc rcon.print(tostring(game.forces.player.create_ghost_on_entity_death))").strip()
 
