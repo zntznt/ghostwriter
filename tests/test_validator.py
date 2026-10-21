@@ -393,7 +393,8 @@ class Validator(unittest.TestCase):
         self.assertEqual((flown.built, flown.entities), (2, 2), report.lines())
         self.assertGreater(flown.km, 500)
         self.assertGreater(flown.speed_max, 1)
-        self.assertFalse(flown.survived)
+        # It survived once in CI (0 of 40 local flights lived past 42 s): show the flight if it does again.
+        self.assertFalse(flown.survived, {"log": flown.log, "deaths": flown.deaths, "ended": flown.ended})
         self.assertRegex(flown.ended, r"hub destroyed by huge-\w+-asteroid")
         self.assertTrue(any(k.startswith("space-platform-hub <- ") for k in flown.deaths), flown.deaths)
 
