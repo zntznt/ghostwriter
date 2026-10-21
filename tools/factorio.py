@@ -32,6 +32,14 @@ def locate(explicit: str | None = None) -> Path | None:
     return None
 
 
+def data_dir(exe: Path) -> Path:
+    """The game's data/: factorio/data beside bin/x64/, or Contents/data in a macOS .app."""
+    for d in (exe.parents[2] / "data", exe.parents[1] / "data"):
+        if d.is_dir():
+            return d
+    sys.exit(f"no data/ directory found for {exe}")
+
+
 def find_factorio(explicit: str | None = None) -> Path:
     exe = locate(explicit)
     if exe is None:
