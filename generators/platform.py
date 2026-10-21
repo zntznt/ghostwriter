@@ -172,7 +172,7 @@ def _power_plant(bp: Blueprint, rx: int, first: bool):
 
 
 def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, layout="rows", cargo_bays=0,
-          margin=0, fuel=False, reserve=False, power=False) -> Blueprint:
+          margin=0, fuel=False, reserve=False, power=False, side_guns=0) -> Blueprint:
     """layout: "rows" puts the gun turrets in a row behind the railguns; "front"
     spreads them through the railguns' row, front edges flush. A railgun fires
     only in a 72-degree arc ahead of it (turn_range 0.2, NOTES.md), so turrets
@@ -202,13 +202,17 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     first. Before leaving, the reactors are filled with cells and their loops with
     cold fluoroketone, and the accumulator and the railguns are charged: railguns
     take power first, as the reactors do, so one reactor can't keep up once they
-    recharge at more than 90 MW (NOTES.md)."""
+    recharge at more than 90 MW (NOTES.md).
+
+    side_guns stands that many gun turrets in a column at each outer edge, from
+    the row below the gun turrets down: asteroids eat foundation from the side
+    ends inward, past the gun row's reach (NOTES.md)."""
     if railguns < 1 or thrusters < 1:
         raise ValueError("a platform needs at least one railgun and one thruster")
     if layout not in ("rows", "front"):
         raise ValueError(f"layout is rows or front, not {layout!r}")
-    if cargo_bays < 0 or margin < 0:
-        raise ValueError("cargo_bays and margin can't be negative")
+    if cargo_bays < 0 or margin < 0 or side_guns < 0:
+        raise ValueError("cargo_bays, margin and side_guns can't be negative")
     if fuel and thrusters != 1:
         raise ValueError("fuel=True makes fuel for one thruster")
     if fuel and layout != "rows":
@@ -361,12 +365,20 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         tx, ty = x0 + tw / 2, bottom - th + 1 + th / 2
         bp.entities.append("storage-tank", position=(tx - 3.5, ty - 3))
         bp.entities.append("storage-tank", position=(tx - 3.5, ty + 1), direction=Direction.EAST)
+    for k in range(side_guns):
+        y = gun_top + (k + 1) * (gw + spacing)  # behind the railguns' row: out of their arc
+        if y + gw - 1 > full:
+            raise ValueError(f"side_guns={side_guns}: each side end holds {k}")
+        for gx in (-half - margin, half + margin - gw):
+            if bp.find_entities_filtered(area=[gx + 0.1, y + 0.1, gx + gw - 0.1, y + gw - 0.1]):
+                raise ValueError(f"side_guns={side_guns}: something already stands at ({gx}, {y})")
+            bp.entities.append("gun-turret", tile_position=(gx, y))
     bp.generate_power_connections()
     return bp
 
 
 def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=False, reserve=False, script_fuel=False,
-                 power=False, **params):
+                 power=False, magazine=AMMO["gun-turret"], **params):
     """research: technology series -> levels researched; start: share of the route
     to begin at; supplies: items into the hub, which rebuilds from them (with
     construction-robotics researched) and repairs with repair packs
@@ -379,7 +391,8 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     flies: a control for what the module itself costs. A platform with power=True
     gets no stand-in power: its accumulator starts charged and its reactor's loop
     full of cold fluoroketone, as if readied in orbit, with CELLS fusion cells in
-    the hub unless supplies name some."""
+    the hub unless supplies name some. magazine: what the script stocks the gun
+    turrets with; uranium rounds can't be made in space, piercing rounds can."""
     from validator.flight import PRIME, Flight
 
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
@@ -390,5 +403,5 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     # With reserve, more than the thruster, its line and its tank hold: the game fills them.
     primed = PRIME + (2 * entities.raw["storage-tank"]["fluid_box"]["volume"] if reserve else 0) if on_board else 0
     return [Flight(shape, seconds=seconds, start=start, supplies=supplies, fuel=not on_board, power=not power,
-                   ammo=AMMO, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
+                   ammo={**AMMO, "gun-turret": magazine}, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
                    charged=power, coolant=COOLANT if power else 0)]

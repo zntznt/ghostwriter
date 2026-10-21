@@ -124,6 +124,19 @@ class Cache(unittest.TestCase):
                                           "rebuilt space-platform-foundation/s": 20.0, "rebuilt gun-turret/s": 0.1})
         self.assertEqual(Flown("f").budget(), {})
 
+    def test_flown_budget_counts_what_was_used_per_1000_km(self):
+        # A slower platform lives longer partly because it's slower: what it uses per
+        # 1,000 km flown compares designs at different speeds.
+        from validator.flight import Flown
+
+        flown = Flown("f", seconds=20.0, km=4000.0, supplied={"railgun-ammo": 30.0}, held={"railgun-ammo": 10.0},
+                      rebuilt={"space-platform-foundation": 400})
+        budget = flown.budget()
+        self.assertEqual(budget["railgun-ammo/1000 km"], 5.0)
+        self.assertEqual(budget["rebuilt space-platform-foundation/1000 km"], 100.0)
+        self.assertEqual(budget["railgun-ammo/s"], 1.0)  # per second as before
+        self.assertNotIn("railgun-ammo/1000 km", Flown("f", seconds=20.0, supplied={"railgun-ammo": 30.0}).budget())
+
     def test_flown_budget_keeps_what_a_fuel_maker_held_at_the_end(self):
         # On fuel made on board, what was left in the thrusters and any reserve tank at
         # the end: whether a reserve ran out.
