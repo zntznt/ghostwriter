@@ -591,6 +591,63 @@ class Validator(unittest.TestCase):
         budget = flown.budget()
         self.assertAlmostEqual(budget["fusion cells/h"], flown.generated_j / 40e9 / 60 * 3600)
 
+    def plant_flight(self, data, supplies, coolant=platform.COOLANT):
+        setup = self.server.call("flight_setup", json.dumps({
+            "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "fuel": True, "power": False,
+            "ammo": platform.AMMO, "research": {"construction-robotics": 1, "cryogenic-plant": 1},
+            "supplies": supplies, "charged": True, "coolant": coolant}))
+        self.assertNotIn("error", setup)
+
+    def test_a_rebuilt_reactor_gets_cells_and_restarts(self):
+        # The hub rebuilds a reactor that dies with its fuel slot empty, and neither fills
+        # it nor has the ghost ask for cells (NOTES.md): the far reactor's cells reach it
+        # on the belt, under the near one. It restarts on the other reactor's power.
+        data = platform.build(railguns=4, guns=6, thrusters=1, power=2).to_dict()
+        far = ("storage.flight.platform.surface.find_entities_filtered{name = 'fusion-reactor', position = "
+               f"{{{platform.REACTOR[0] - platform.PLANT_STEP}, {platform.REACTOR[1]}}}, radius = 1}}[1]")
+        read = ("/sc local r = " + far + " local status = {} for k, v in pairs(defines.entity_status) do "
+                "status[v] = k end rcon.print(helpers.table_to_json(r and {status = status[r.status], cells = "
+                "r.get_inventory(defines.inventory.fuel).get_item_count('fusion-power-cell')} or {gone = true}))")
+        try:
+            self.plant_flight(data, {"fusion-reactor": 1, "fusion-power-cell": 20})
+            _step(self.server, 300, timeout=60)
+            self.server.command("/sc " + far + ".die()")
+            _step(self.server, 900, timeout=60)
+            got = json.loads(self.server.command(read).strip())
+            hub = self.server.call("flight_read")["cargo"]
+        finally:
+            self.server.call("flight_teardown")
+        self.assertIn(got.get("status"), ("working", "full_output"), got)
+        self.assertGreater(got["cells"], 0)
+        self.assertNotIn("fusion-reactor", [c["name"] for c in hub])  # the spare went into the rebuild
+
+    def test_a_fusion_plant_runs_on_little_coolant(self):
+        # The cooler turns hot fluoroketone back cold with nothing lost, and a loop in use
+        # holds only a few dozen in flight: one plant carries a 75 MW load on 50 cold, and
+        # on 20 makes one generator's worth. A loop starts near 3,400 and a reactor that
+        # dies takes about 1,000 with it (NOTES.md): rebuilds need no refill for a while.
+        data = platform.build(railguns=4, guns=6, thrusters=1, power=1).to_dict()
+        load = 75e6 / 60  # J a tick
+        made = []
+        for coolant in (50, 20):
+            try:
+                self.plant_flight(data, {"fusion-power-cell": 10}, coolant=coolant)
+                self.server.command(
+                    "/sc local s = storage.flight.platform.surface local e = s.create_entity{name = "
+                    "'electric-energy-interface', position = s.find_non_colliding_position('electric-energy-interface', "
+                    f"{{0, -12}}, 40, 1), force = 'player'}} e.power_production = 0 e.electric_buffer_size = {load} "
+                    f"e.power_usage = {load} e.destructible = false")
+                stats = ("/sc rcon.print(storage.flight.platform.surface.global_electric_network_statistics"
+                         ".output_counts['fusion-generator'] or 0)")
+                _step(self.server, 600, timeout=60)
+                before = float(self.server.command(stats).strip())
+                _step(self.server, 600, timeout=60)
+                made.append((float(self.server.command(stats).strip()) - before) / 10 / 1e6)
+            finally:
+                self.server.call("flight_teardown")
+        self.assertGreater(made[0], 85)  # the load, the reactor's 10 MW and the cooler's
+        self.assertLess(made[1], 60)
+
     def test_flight_counts_what_it_supplies(self):
         # A budget for making supplies on board: the flight counts what the script
         # gives (fuel and oxidizer, ammo, power) and what the hub rebuilds. Kept

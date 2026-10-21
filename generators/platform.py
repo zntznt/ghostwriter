@@ -48,6 +48,7 @@ AMMO = {"railgun-turret": "railgun-ammo", "gun-turret": "uranium-rounds-magazine
 FUEL_SLOT = 9
 CHUNKS = ["metallic-asteroid-chunk", "carbonic-asteroid-chunk", "oxide-asteroid-chunk"]
 BELT = "transport-belt"
+UNDER = "express-underground-belt"  # power=N: the cell belt under a reactor and its inserter, 8 tiles
 # What each crusher hands to which plant: the module's two columns, west then east,
 # top band then bottom (the ice plants feed the plants under them).
 FUEL_BANDS = [("oxide", "ice-melting", "carbonic", "thruster-fuel"),
@@ -119,12 +120,35 @@ def _fuel_module(bp: Blueprint, xb: int, r: int, bottom: int):
     bp.entities.append(void, tile_position=(xb, bottom), direction=Direction.NORTH)
 
 
+def _cell_path(bp: Blueprint, plants: int):
+    """Fusion cells off the hub's south edge onto a belt west along row HUB + 1, and
+    into each reactor's east side. The hub rebuilds a reactor with an empty fuel slot
+    and fills none itself (NOTES.md), so every reactor has its inserter; past one,
+    the belt runs under it and its inserter (an express underground spans 8 tiles)."""
+    y = HUB + 1
+    bp.entities.append("inserter", tile_position=(-HUB, HUB), direction=Direction.NORTH, use_filters=True)
+    bp.entities[-1].set_item_filter(0, "fusion-power-cell")
+    x = -HUB
+    for k in range(plants):
+        rx = REACTOR[0] - PLANT_STEP * k
+        pick = rx + 4  # where this reactor's inserter takes cells from
+        for bx in range(x, pick, -1):
+            bp.entities.append(BELT, tile_position=(bx, y), direction=Direction.WEST)
+        if k < plants - 1:
+            bp.entities.append(UNDER, tile_position=(pick, y), direction=Direction.WEST, io_type="input")
+            bp.entities.append(UNDER, tile_position=(rx - 4, y), direction=Direction.WEST, io_type="output")
+            x = rx - 5
+        else:
+            bp.entities.append(BELT, tile_position=(pick, y), direction=Direction.WEST)
+        bp.entities.append("inserter", tile_position=(rx + 3, y), direction=Direction.EAST)
+
+
 def _power_plant(bp: Blueprint, rx: int, first: bool):
     """A fusion reactor (centred at rx), the two generators under it and a cryogenic
     plant cooling their coolant, with the hot and cold lines kept apart. The first
-    plant also gets fusion cells from the hub and the accumulator: a reactor runs on
-    its own output once going, and an accumulator charged before leaving starts it
-    (NOTES.md). A platform's surface is one electric network, so nothing needs wiring."""
+    plant also gets the accumulator: a reactor runs on its own output once going,
+    and an accumulator charged before leaving starts it (NOTES.md). A platform's
+    surface is one electric network, so nothing needs wiring."""
     ry = REACTOR[1]
     top = ry - 3  # its first row
     bp.entities.append("fusion-reactor", position=(rx, ry))
@@ -143,15 +167,8 @@ def _power_plant(bp: Blueprint, rx: int, first: bool):
         bp.entities.append("pipe", tile_position=(rx - 6, y))
     for x in range(rx - 6, rx - 3):
         bp.entities.append("pipe", tile_position=(x, top + 4))
-    if not first:
-        return
-    # Cells: off the hub's south edge onto a belt, and into the reactor's east side.
-    bp.entities.append("inserter", tile_position=(-HUB, HUB), direction=Direction.NORTH, use_filters=True)
-    bp.entities[-1].set_item_filter(0, "fusion-power-cell")
-    for x in range(-HUB, rx + 3, -1):
-        bp.entities.append(BELT, tile_position=(x, HUB + 1), direction=Direction.WEST)
-    bp.entities.append("inserter", tile_position=(rx + 3, HUB + 1), direction=Direction.EAST)
-    bp.entities.append("accumulator", position=(rx + 5, HUB + 3))
+    if first:
+        bp.entities.append("accumulator", position=(rx + 5, HUB + 3))
 
 
 def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, layout="rows", cargo_bays=0,
@@ -330,6 +347,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         _fuel_module(bp, xb, HUB, bottom)
     for k in range(power):
         _power_plant(bp, REACTOR[0] - PLANT_STEP * k, k == 0)
+    if power:
+        _cell_path(bp, power)
 
     left = -(widths[1] // 2)
     for k in range(thrusters):

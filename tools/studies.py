@@ -439,9 +439,50 @@ def platform_power(server) -> dict:
             "supplies": BAY_SPARES, "modes": POWER_MODES, "trials": rows}
 
 
+# What the hub rebuilds a fusion plant from: 9 of its 219 slots with 8 bays (a reactor
+# stacks to 1, a generator to 5), which the stock is full without, so 1,000 foundation
+# make room. The cell belt passes under a reactor on an express underground belt.
+PLANT_SPARES = {"fusion-reactor": 2, "fusion-generator": 4, "cryogenic-plant": 2, "accumulator": 1, "pipe": 50,
+                "inserter": 10, "transport-belt": 20, "express-underground-belt": 4}
+PLANT_MODES = {  # mode -> the hub's stock, for the fuelled platform with its reserve and power=2
+    "no plant spares": BAY_SPARES,
+    "plant spares": {**BAY_SPARES, **PLANT_SPARES, "space-platform-foundation": 19800},
+}
+
+
+def platform_plant(server) -> dict:
+    """Does the hub keep the fusion plants going where promethium is when it holds their
+    parts? The fuelled platform with its reserve and power=2 flies 8 times from BELT_START
+    for up to 600 s with each of PLANT_MODES' stock and platform-budget's research: what
+    it lives and flies, seconds a reactor was short of power, fusion cells an hour, and
+    what of the plant asteroids destroyed and the hub rebuilt."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for mode, supplies in PLANT_MODES.items():
+        t = evaluate({**FILED_PLATFORM, "fuel": True, "reserve": True, "power": 2, "start": BELT_START,
+                      "seconds": 600, "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": supplies})
+        r = t.rates
+        lost = {k: n for k, n in t.counts.items() if k.split(" <- ")[0] in PLANT}
+        rebuilt = {k[len("rebuilt "):-2]: round(v * r["seconds_mean"], 2) for k, v in r.items()
+                   if k.startswith("rebuilt ") and k[len("rebuilt "):-2] in PLANT}
+        print(f"{mode}: " + (
+            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
+            f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); makes {r['generated MW']:.1f} MW gross on "
+            f"{r['fusion cells/h']:.2f} cells/h, reactors short of power {r['brownout s']:.1f} s a flight; plant lost "
+            f"{lost or 'nothing'} (8 flights), rebuilt {rebuilt or 'nothing'} a flight"
+            if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+        rows.append({"mode": mode, "passed": t.passed, "rates": r, "counts": t.counts, "ended": t.stalled,
+                     "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": {**FILED_PLATFORM, "fuel": True, "reserve": True, "power": 2}, "start": BELT_START,
+            "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "modes": PLANT_MODES, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
            "platform-repair": platform_repair, "platform-foundation": platform_foundation,
            "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve,
-           "platform-power": platform_power}
+           "platform-power": platform_power, "platform-plant": platform_plant}
