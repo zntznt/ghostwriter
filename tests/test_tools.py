@@ -1582,6 +1582,32 @@ class Trip(unittest.TestCase):
         self.assertIn("8 cargo bays (219 slots)", out.getvalue())
         self.assertIn("best: turn", out.getvalue())
 
+    def test_slots_per_1000_km_are_each_item_over_its_stack(self):
+        # What the platform fills the hub with per 1,000 km: foundation at 100 a stack, railgun
+        # ammo at 10 (dump). Chunks are what it brings in, not what it uses.
+        from tools import trip
+
+        row = {self.FOUNDATION: 250.0, "railgun-ammo": 15.0, self.CHUNK: 9.0, "km/s": 40.0, "deaths": 0.01}
+        self.assertEqual(trip.slots(row), {self.FOUNDATION: 2.5, "railgun-ammo": 1.5})
+
+    def test_the_command_plans_from_any_studys_mode(self):
+        # A study comparing designs (platform-mix) names its rows by design: --mode picks one.
+        import contextlib
+        import io
+
+        from tools import trip
+
+        rates = {"rebuilt space-platform-foundation/1000 km": 100.0, "taken promethium-asteroid-chunk/1000 km": 5.0,
+                 "cruise km/s": 40.0, "km_mean": 20000.0, "survived": 1.0}
+        result = {"trials": [{"start": s, "mode": "narrow", "passed": True, "rates": rates} for s in (0.0, 0.1)]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mix.json"
+            path.write_text(json.dumps(result))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(trip.main([str(path), "--mode", "narrow"]), 0)
+        self.assertIn("best: turn", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
