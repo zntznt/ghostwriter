@@ -110,6 +110,10 @@ def platform_research(server) -> dict:
 
 HIGH_RESEARCH = {"railgun-shooting-speed": 6, "railgun-damage": 2, "physical-projectile-damage": 10,
                  "weapon-shooting-speed": 6}  # platform-research's best row
+# The same for rockets and lasers: their damage series to 10, as physical projectile damage
+# is, and laser shooting speed to its last level. Rockets' shooting speed comes with weapon
+# shooting speed 6 (+340%).
+MIX_RESEARCH = {**HIGH_RESEARCH, "stronger-explosives": 10, "laser-weapons-damage": 10, "laser-shooting-speed": 7}
 PROMETHIUM_STARTS = [0.0, 0.2, 0.3, 0.4]  # huge promethium asteroids are rare before 0.2 (NOTES.md)
 
 

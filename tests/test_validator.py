@@ -662,6 +662,50 @@ class Validator(unittest.TestCase):
         self.assertAlmostEqual(hits["piercing-rounds-magazine", "medium-metallic-asteroid"], 56.448, places=2)
         self.assertEqual(hits["uranium-rounds-magazine", "small-metallic-asteroid"], 100)  # all it had
 
+    def test_rockets_and_lasers_with_the_flight_research(self):
+        # Explosion and laser damage against asteroids (dump resistances: explosion 50, 30,
+        # 10 and 99% from small to huge, laser 20, 90, 95 and 99%). With stronger
+        # explosives 10 a rocket (200, dump) hits for 4.8 x 200 = 960 before resistance:
+        # 864 on a big asteroid, so 3 kill one (2,000), and 9.6 on a huge one. With laser
+        # weapons damage 10 a laser shot (two beam ticks of 10) hits for 6.1 x 20 = 122:
+        # 97.6 on a small asteroid, 12.2 on a medium one. Turrets placed by script on the
+        # platform in Nauvis orbit, an asteroid placed in front, its first hit read.
+        from tools.studies import MIX_RESEARCH
+
+        data = platform.build(railguns=1, guns=2, thrusters=1).to_dict()
+        place = ("/sc local s = storage.flight.platform.surface if storage.probe and storage.probe.valid then "
+                 "storage.probe.destroy() end for _, e in pairs(s.find_entities_filtered{name = {'rocket-turret', "
+                 "'laser-turret'}}) do e.destroy() end local t = s.create_entity{name = '%s', position = {0, -30}, "
+                 "force = 'player'} t.insert{name = 'rocket', count = 10} storage.probe = s.create_entity{name = '%s', "
+                 "position = {0, -30 - %d}} rcon.print(storage.probe.health)")
+        health = "/sc rcon.print(storage.probe.valid and storage.probe.health or 0)"
+
+        def first_hit(turret, rock, distance):
+            full = float(self.server.command(place % (turret, rock, distance)))
+            for _ in range(240):
+                _step(self.server, 1, timeout=30)
+                now = float(self.server.command(health))
+                if now < full:
+                    return round(full - now, 3)
+            self.fail(f"{turret} never hit {rock}")
+
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "power": True,
+                "research": MIX_RESEARCH}))
+            self.assertNotIn("error", setup)
+            hits = {(turret, rock): first_hit(turret, rock, distance) for turret, rock, distance in (
+                ("rocket-turret", "big-metallic-asteroid", 20),  # past its minimum range, 15
+                ("rocket-turret", "huge-metallic-asteroid", 20),
+                ("laser-turret", "small-metallic-asteroid", 10),
+                ("laser-turret", "medium-metallic-asteroid", 10))}
+        finally:
+            self.server.call("flight_teardown")
+        self.assertAlmostEqual(hits["rocket-turret", "big-metallic-asteroid"], 864, places=2)
+        self.assertAlmostEqual(hits["rocket-turret", "huge-metallic-asteroid"], 9.6, places=2)
+        self.assertAlmostEqual(hits["laser-turret", "small-metallic-asteroid"], 97.6, places=2)
+        self.assertAlmostEqual(hits["laser-turret", "medium-metallic-asteroid"], 12.2, places=2)
+
     def test_a_fusion_plant_runs_on_little_coolant(self):
         # The cooler turns hot fluoroketone back cold with nothing lost, and a loop in use
         # holds only a few dozen in flight: one plant carries a 75 MW load on 50 cold, and
