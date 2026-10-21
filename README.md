@@ -7,7 +7,7 @@ real game → fix → only passing strings reach the user.
 
 ```
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m validator.fetch 2.1.22      # headless server for validation (Linux)
+.venv/bin/python -m validator.fetch 2.1.23      # headless server for validation (Linux; elsewhere the installed game is found)
 .venv/bin/python -m tools.bp gen gated_requester item=iron-plate count=100 --validate
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 --validate      # rows on a main bus, all connected
 .venv/bin/python -m tools.bp gen production item=electronic-circuit rate=5 --validate   # the same rows as a book

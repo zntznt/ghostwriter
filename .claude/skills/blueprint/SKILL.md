@@ -29,7 +29,7 @@ python -m tools.bp add SRC [--to library/BOOK]        # file into library/
 python -m tools.bp book library/BOOK [--json]         # folder -> book string
 python -m tools.site                                  # rebuild the library browser (site/dist/index.html)
 python -m tools.dump_data [--factorio PATH]           # refresh data/ from the game
-python -m validator.fetch 2.1.22                      # headless server for validation (Linux)
+python -m validator.fetch 2.1.23                      # headless server for validation (Linux)
 python -m validator.harvest                           # refresh tools/game_settings.json from the game
 python -m unittest discover tests
 ```

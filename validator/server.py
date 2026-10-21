@@ -16,7 +16,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from tools.factorio import find_factorio
+from tools.factorio import data_dir, find_factorio
 from validator.rcon import Rcon
 
 SCENARIO = Path(__file__).resolve().parent / "scenario"
@@ -36,12 +36,12 @@ class Server:
         self.dir = Path(tempfile.mkdtemp(prefix="ghostwriter-validator-"))
         shutil.copytree(SCENARIO, self.dir / "scenarios" / "ghostwriter")
         (self.dir / "config.ini").write_text(
-            f"[path]\nread-data=__PATH__executable__/../../data\nwrite-data={self.dir}\n"
+            f"[path]\nread-data={data_dir(self.exe)}\nwrite-data={self.dir}\n"
         )
         # With no players connected a server pauses by default; circuit tests
         # need it to tick. The server wants every key, so start from the
         # example it ships with. Keep it off the LAN/public lists.
-        settings = json.loads((self.exe.parents[2] / "data" / "server-settings.example.json").read_text())
+        settings = json.loads((data_dir(self.exe) / "server-settings.example.json").read_text())
         settings.update(auto_pause=False, visibility={"public": False, "lan": False})
         (self.dir / "server-settings.json").write_text(json.dumps(settings))
         rcon_port = _free_port(socket.SOCK_STREAM)

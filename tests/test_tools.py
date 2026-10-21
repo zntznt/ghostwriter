@@ -16,6 +16,7 @@ from generators.gated_requester import build
 from tools import pipes, rates
 from tools.check import check
 from tools.codec import CodecError, decode, encode, root_key
+from tools.factorio import data_dir
 from tools.library import entries, load_book, save
 from tools.settings import game_settings, known, registry
 from validator.tests_file import library_tests
@@ -844,6 +845,18 @@ class Library(unittest.TestCase):
             self.assertEqual(book["item"], "blueprint-book")  # the game's item name
             self.assertEqual(book["label"], "my-book")
             self.assertEqual([c["index"] for c in book["blueprints"]], [0, 1])
+
+
+class FactorioInstall(unittest.TestCase):
+    def test_data_dir_follows_the_install_layout(self):
+        layouts = {
+            "linux": ("factorio/bin/x64/factorio", "factorio/data"),
+            "mac": ("factorio.app/Contents/MacOS/factorio", "factorio.app/Contents/data"),
+        }
+        for name, (exe, data) in layouts.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / data).mkdir(parents=True)
+                self.assertEqual(data_dir(Path(tmp) / exe), Path(tmp) / data)
 
 
 if __name__ == "__main__":
