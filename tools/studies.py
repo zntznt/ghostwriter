@@ -648,6 +648,7 @@ def platform_mix(server) -> dict:
 NARROW = {**TRIP_PLATFORM, "railguns": 16, "guns": 16}
 BAY_COUNTS = [8, 16, 24]
 BAY_STARTS = [0.0, 0.1, 0.2]
+PROMETHIUM_PLATFORM = {**NARROW, "cargo_bays": 24}  # library/platforms/: the best trip that comes back (NOTES.md)
 # Bays past 8 push the fuel module east toward the side end, where asteroids eat inward; with
 # none of its parts in the hub it went unrebuilt, and fuel and promethium collapsed (NOTES.md).
 # Enough for the worst 600 s measured, in 14 slots, for as much foundation.

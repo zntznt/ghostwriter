@@ -1,6 +1,7 @@
 """Run: python -m unittest discover tests"""
 
 import copy
+import inspect
 import json
 import math
 import tempfile
@@ -665,6 +666,23 @@ class Platform(unittest.TestCase):
         nearest = self.build(cargo_bays=3)["entities"]
         self.assertEqual(sorted((e["position"]["x"], e["position"]["y"]) for e in nearest if e["name"] == "cargo-bay"),
                          [(-6, -2), (6, -2), (6, 2)])
+
+    def test_filed_platforms_are_what_the_generator_builds(self):
+        # library/platforms/ holds the generator's output for these parameters: the 32-railgun
+        # platform of platform-foundation, and the promethium platform of platform-bays.
+        from tools.studies import FILED_PLATFORM, PROMETHIUM_PLATFORM
+
+        filed = {}
+        for path in (Path(__file__).parent.parent / "library" / "platforms").glob("*.json"):
+            bp = json.loads(path.read_text())["blueprint"]
+            filed[bp["label"]] = bp
+        for params in (FILED_PLATFORM, PROMETHIUM_PLATFORM):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                bp = platform.build(**{k: v for k, v in params.items()
+                                       if k in inspect.signature(platform.build).parameters}).to_dict()["blueprint"]
+            self.assertIn(bp["label"], list(filed), params)
+            self.assertEqual(filed[bp["label"]], bp, params)
 
     def test_description_says_how_a_platform_with_bays_rebuilds(self):
         # The hub rebuilds only with construction-robotics researched, from what it
