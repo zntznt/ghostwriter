@@ -248,7 +248,52 @@ def platform_repair(server) -> dict:
             "trials": rows}
 
 
+# Rebuilding ran out of foundation first in platform-repair. Each cargo bay adds 20
+# hub slots: 8 of them hold the same spares, 2 spare bays and 20,800 foundation (the
+# hub has 10 of its own). Asteroids eat foundation from the side ends inward, so a
+# margin of spare columns there goes first.
+BAY_SPARES = {**SPARES, "cargo-bay": 2, "space-platform-foundation": 20800}
+FOUNDATION_MODES = {
+    "rebuild": ({}, SPARES),
+    "cargo bays": ({"cargo_bays": 8}, BAY_SPARES),
+    # The bays' foundation slows the platform (weight), and slower platforms live longer:
+    # the bays alone, and the bays with ballast the hub never builds with, weighing what
+    # the extra foundation does (16,800 x 20,000 = 336 nuclear reactors x 1,000,000).
+    "cargo bays, spares only": ({"cargo_bays": 8}, SPARES),
+    "cargo bays, ballast": ({"cargo_bays": 8}, {**SPARES, "cargo-bay": 2, "nuclear-reactor": 336}),
+    "margin": ({"margin": 16}, SPARES),
+    "both": ({"cargo_bays": 8, "margin": 16}, BAY_SPARES),
+}
+
+
+def platform_foundation(server) -> dict:
+    """Does more foundation help a platform that rebuilds? Each of REPAIR_SHAPES
+    flown 8 times from BELT_START with HIGH_RESEARCH and construction-robotics for
+    up to 600 s, rebuilding from the platform-repair spares, from 8 cargo bays
+    full of foundation, with a margin of 16 spare columns each side, and with both.
+    8 flights, not 4: at 4, the cargo bays' 4 of 4 survivors stood against 2 of the
+    same flights in a probe, both lost."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for shape in REPAIR_SHAPES:
+        for mode, (extra, supplies) in FOUNDATION_MODES.items():
+            t = evaluate({**shape, **extra, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
+                          "start": BELT_START, "seconds": 600, "supplies": supplies})
+            r = t.rates
+            print(f"{shape['railguns']} railguns, {shape['guns']} gun turrets, {mode}: " + (
+                f"{r['seconds_mean']:.0f}s mean, {r['km_mean']:,.0f} km ({r['km_mean'] / r['seconds_mean']:.0f} km/s), "
+                f"survived {r['survived']:.0%}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+            rows.append({**shape, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
+                         "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"start": BELT_START, "research": HIGH_RESEARCH, "modes": {k: {"shape": e, "supplies": s}
+                                                                     for k, (e, s) in FOUNDATION_MODES.items()},
+            "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
-           "platform-repair": platform_repair}
+           "platform-repair": platform_repair, "platform-foundation": platform_foundation}
