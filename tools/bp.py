@@ -12,6 +12,10 @@
                           with chain_tests(), the whole book run as one) before printing
   validate SRC...       import, round-trip and build in a headless server; runs
                         circuit and flow tests from a sibling NAME.tests.toml
+  fly SRC [--runs N]    build a space platform blueprint around a fresh hub and fly
+      [--seconds S]       it from the solar system edge toward the shattered planet;
+      [--fuel]            report each flight: how far, what killed it, chunks in the
+      [--supply k=n,...]  hub (--fuel keeps thrusters full; --supply loads the hub)
 
 SRC is a blueprint string, a path to a file holding one (or JSON), or - for
 stdin; `validate` also takes library folders (validated as books).
@@ -192,6 +196,36 @@ def _measured_text(case, measured) -> str:
     return f"{case.name}: measured {rates}" + (f" in window {measured.passed}" if (measured.passed or 1) > 1 else "")
 
 
+def cmd_fly(args):
+    from validator.flight import Flight, run_flight
+    from validator.validate import Report
+
+    data = decode(read_input(args.src))
+    if "blueprint" not in data:
+        sys.exit("fly takes a single blueprint")
+    supplies = dict(_param(kv) for kv in args.supply.split(",")) if args.supply else {}
+    flight = Flight("flight", origin=args.origin, destination=args.destination, seconds=args.seconds,
+                    supplies=supplies, fuel=args.fuel)
+    flights = []
+    with Server(args.factorio) as server:
+        print(f"flying in Factorio {server.version}", file=sys.stderr)
+        for run in range(args.runs):
+            report = Report(server.version)
+            flown = run_flight(server, data, flight, report)
+            for line in report.lines():
+                print(f"run {run + 1}: {line}", file=sys.stderr)
+            if flown.error:
+                sys.exit(1)
+            end = f"survived {flown.seconds:.0f}s" if flown.survived else f"{flown.ended} after {flown.seconds:.0f}s"
+            losses = ", ".join(f"{k} x{v}" for k, v in sorted(flown.deaths.items())) or "nothing"
+            chunks = ", ".join(f"{v} {k}" for k, v in sorted(flown.cargo.items()) if k.endswith("asteroid-chunk"))
+            print(f"run {run + 1}: {flown.km:,.0f} km, {end}; lost: {losses}; chunks in hub: {chunks or 'none'}",
+                  file=sys.stderr)
+            flights.append(flown)
+    km = [f.km for f in flights]
+    print(f"{len(km)} flights: {min(km):,.0f} to {max(km):,.0f} km, mean {sum(km) / len(km):,.0f}", file=sys.stderr)
+
+
 def _param(text: str):
     key, _, value = text.partition("=")
     for cast in (int, float):
@@ -234,6 +268,17 @@ def main(argv=None):
     p.add_argument("src", nargs="+")
     p.add_argument("--factorio", help="Factorio executable (headless server or game)")
     p.set_defaults(fn=cmd_validate)
+
+    p = sub.add_parser("fly")
+    p.add_argument("src")
+    p.add_argument("--runs", type=int, default=3, help="flights to fly (they differ run to run)")
+    p.add_argument("--seconds", type=float, default=600, help="game seconds per flight at most")
+    p.add_argument("--fuel", action="store_true", help="keep thrusters full by script")
+    p.add_argument("--supply", help="items for the hub, e.g. firearm-magazine=2000,rocket=500")
+    p.add_argument("--origin", default="solar-system-edge")
+    p.add_argument("--destination", default="shattered-planet")
+    p.add_argument("--factorio", help="Factorio executable (headless server or game)")
+    p.set_defaults(fn=cmd_fly)
 
     args = ap.parse_args(argv)
     args.fn(args)

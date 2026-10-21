@@ -449,7 +449,99 @@ local function flow_tick()
     end
   end
 end
-script.on_event(defines.events.on_tick, flow_tick)
+-- Flight tests: a platform blueprint built around a fresh space platform's hub
+-- (the blueprint's origin on the hub's centre), then flown from one space
+-- location toward another. Records the furthest it got along the connection,
+-- every death and what caused it, and the hub's cargo, until the hub dies.
+
+local function flight_tick()
+  local fl = storage.flight
+  if not fl then return end
+  local p = fl.platform
+  if not (p and p.valid and p.hub and p.hub.valid) then
+    fl.ended = fl.ended or {tick = game.tick, reason = "platform gone"}
+    return
+  end
+  if p.space_connection and p.space_connection.name == fl.connection and p.distance then
+    fl.furthest = math.max(fl.furthest, p.distance)
+  end
+  fl.speed_max = math.max(fl.speed_max, p.speed or 0)
+  if fl.fuel then
+    for _, t in pairs(fl.thrusters) do
+      if t.valid then
+        t.insert_fluid{name = "thruster-fuel", amount = 1000}
+        t.insert_fluid{name = "thruster-oxidizer", amount = 1000}
+      end
+    end
+  end
+  if fl.ammo and game.tick % 60 == 0 then
+    for _, t in pairs(fl.turrets) do
+      local ammo = t.valid and fl.ammo[t.name]
+      if ammo then
+        local inv = t.get_inventory(defines.inventory.turret_ammo)
+        local have = inv and inv.get_item_count(ammo) or 0
+        if inv and have < 10 then t.insert{name = ammo, count = 10 - have} end
+      end
+    end
+  end
+  if game.tick % 60 == 0 then
+    -- Kept each second: the cargo goes with the hub.
+    fl.cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()
+    fl.hub_health = p.hub.health
+  end
+end
+
+script.on_event(defines.events.on_tick, function(event)
+  flow_tick(event)
+  flight_tick()
+end)
+
+script.on_event(defines.events.on_entity_died, function(event)
+  local fl = storage.flight
+  if not (fl and event.entity.valid and event.entity.surface.index == fl.surface) then return end
+  local cause = (event.cause and event.cause.valid and event.cause.name)
+    or (event.damage_type and event.damage_type.name) or "unknown"
+  local key = event.entity.name .. " <- " .. cause
+  fl.deaths[key] = (fl.deaths[key] or 0) + 1
+  if event.entity.name == "space-platform-hub" then
+    fl.ended = {tick = event.tick, reason = "hub destroyed by " .. cause}
+  end
+end)
+
+local function flight_teardown()
+  local fl = storage.flight
+  if not fl then return end
+  game.speed = 1
+  game.tick_paused = false
+  if fl.platform and fl.platform.valid then fl.platform.destroy() end
+  storage.flight = nil
+end
+
+local function connection_between(from, to)
+  for name, c in pairs(prototypes.space_connection) do
+    if (c.from.name == from and c.to.name == to) or (c.from.name == to and c.to.name == from) then return name, c end
+  end
+end
+
+-- Foundation under every tile an entity of the blueprint covers.
+local function footprints(entities, dx, dy)
+  local tiles, seen = {}, {}
+  for _, e in pairs(entities) do
+    local box = prototypes.entity[e.name].collision_box
+    local w, h = box.right_bottom.x - box.left_top.x, box.right_bottom.y - box.left_top.y
+    if (e.direction or 0) % 8 == 4 then w, h = h, w end
+    for x = math.floor(e.position.x - w / 2 + 0.01), math.ceil(e.position.x + w / 2 - 0.01) - 1 do
+      for y = math.floor(e.position.y - h / 2 + 0.01), math.ceil(e.position.y + h / 2 - 0.01) - 1 do
+        local k = x .. "," .. y
+        if not seen[k] then
+          seen[k] = true
+          tiles[#tiles + 1] = {name = "space-platform-foundation", position = {x + dx, y + dy}}
+        end
+      end
+    end
+  end
+  return tiles
+end
 
 local function source_for(s, area, poles)
   local spot = s.find_non_colliding_position("medium-electric-pole", {area[2][1] + 2, area[1][2] + 2}, 64, 1)
@@ -493,6 +585,7 @@ remote.add_interface("ghostwriter", {
   circuit_setup = function(text)
     circuit_teardown()
     flow_teardown()
+    flight_teardown()
     local inv = game.create_inventory(1)
     local stack = inv[1]
     local rc = stack.import_stack(text)
@@ -575,6 +668,7 @@ remote.add_interface("ghostwriter", {
   flow_setup = function(json)
     circuit_teardown()
     flow_teardown()
+    flight_teardown()
     local args = helpers.json_to_table(json)
     local inv = game.create_inventory(1)
     local stack = inv[1]
@@ -786,6 +880,106 @@ remote.add_interface("ghostwriter", {
     inv.destroy()
     clear(s, area)
     reply(out)
+  end,
+
+  -- {blueprint, from, to, supplies = {item = count}, fuel, speed}
+  flight_setup = function(json)
+    circuit_teardown()
+    flow_teardown()
+    flight_teardown()
+    local args = helpers.json_to_table(json)
+    -- The flight advances only by flight_step's exact tick counts, so it starts
+    -- from the same state and runs the same ticks each time.
+    game.tick_paused = true
+    local force = game.forces.player
+    local connection, proto = connection_between(args.from, args.to)
+    if not connection then return reply{error = "no space connection between " .. args.from .. " and " .. args.to} end
+    force.unlock_space_platforms()
+    for name in pairs(prototypes.space_location) do force.unlock_space_location(name) end
+    local inv = game.create_inventory(1)
+    local stack = inv[1]
+    local rc = stack.import_stack(args.blueprint)
+    if not (stack.valid_for_read and stack.is_blueprint) then
+      inv.destroy()
+      return reply{error = "not a blueprint (import_stack returned " .. rc .. ")"}
+    end
+    local p = force.create_space_platform{name = "ghostwriter flight " .. game.tick, planet = "nauvis",
+                                          starter_pack = "space-platform-starter-pack"}
+    p.apply_starter_pack()
+    local s = p.surface
+    local entities = stack.get_blueprint_entities() or {}
+    local tiles = stack.get_blueprint_tiles() or {}
+    if #tiles > 0 then
+      local laid = {}
+      for _, t in pairs(tiles) do laid[#laid + 1] = {name = t.name, position = {t.position.x, t.position.y}} end
+      s.set_tiles(laid)
+    else
+      s.set_tiles(footprints(entities, 0, 0))
+    end
+    stack.blueprint_snap_to_grid = {2, 2}
+    stack.blueprint_absolute_snapping = true
+    stack.blueprint_position_relative_to_grid = {0, 0}
+    local wanted, built = #entities, 0
+    for _ = 1, 4 do
+      local ghosts = stack.build_blueprint{surface = s, force = "player", position = {0, 0},
+                                          build_mode = defines.build_mode.forced}
+      local progress = false
+      for _, g in pairs(ghosts) do
+        if g.valid and g.name == "entity-ghost" then
+          local _, entity = g.revive()
+          if entity then progress, built = true, built + 1 end
+        end
+      end
+      if not progress then break end
+    end
+    for _, g in pairs(s.find_entities_filtered{name = {"entity-ghost", "tile-ghost"}}) do g.destroy() end
+    inv.destroy()
+    for name, count in pairs(args.supplies or {}) do p.hub.insert{name = name, count = count} end
+    p.space_location = args.from
+    p.schedule = {current = 1, records = {{station = args.to}}}
+    p.paused = false
+    local helpers_ = {}
+    if args.power then
+      -- An unlimited source on every separate pole network, like flow tests.
+      local networks, poles = {}, {}
+      for _, e in pairs(s.find_entities_filtered{type = "electric-pole"}) do
+        if not networks[e.electric_network_id] then
+          networks[e.electric_network_id] = true
+          poles[#poles + 1] = e
+        end
+      end
+      if poles[1] then helpers_ = source_for(s, {{-64, -64}, {64, 64}}, poles) end
+    end
+    storage.flight = {platform = p, surface = s.index, connection = connection, length = proto.length,
+                      furthest = 0, speed_max = 0, deaths = {}, fuel = args.fuel, ammo = args.ammo,
+                      thrusters = s.find_entities_filtered{type = "thruster"},
+                      turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
+                      cargo = {}, hub_health = p.hub.health, start = game.tick}
+    game.speed = args.speed or 1
+    reply{entities = wanted, built = built, weight = p.weight, connection = connection, length = proto.length}
+  end,
+
+  flight_read = function()
+    local fl = storage.flight
+    if not fl then return reply{error = "no flight_setup"} end
+    local p = fl.platform
+    local alive = p and p.valid and p.hub and p.hub.valid
+    local states = {}
+    for k, v in pairs(defines.space_platform_state) do states[v] = k end
+    reply{ticks = game.tick - fl.start, alive = alive and true or false, state = alive and states[p.state] or "gone",
+          furthest = fl.furthest, km = fl.furthest * fl.length, speed = alive and p.speed or 0,
+          speed_max = fl.speed_max, hub_health = alive and p.hub.health or 0, deaths = fl.deaths,
+          ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo}
+  end,
+
+  flight_step = function(ticks)
+    game.ticks_to_run = tonumber(ticks)
+    reply{ok = true, tick = game.tick}
+  end,
+
+  flight_teardown = function()
+    flight_teardown()
+    reply{ok = true}
   end,
 
   validate = function(text)

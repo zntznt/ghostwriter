@@ -45,6 +45,15 @@ class Searches(unittest.TestCase):
                                score=lambda t: t.rates["score"])
         self.assertEqual((best.params["a"], best.params["b"]), (3, 2))
 
+    def test_descend_needs_the_margin_to_move(self):
+        def evaluate(params):  # each step right scores 3% better: inside a 5% margin
+            return Trial(params, True, {"score": 100 * 1.03 ** params["a"]})
+
+        best, _ = descend(evaluate, {"a": [0, 1, 2, 3]}, {"a": 0}, score=lambda t: t.rates["score"], margin=0.05)
+        self.assertEqual(best.params["a"], 0)
+        best, _ = descend(evaluate, {"a": [0, 1, 2, 3]}, {"a": 0}, score=lambda t: t.rates["score"])
+        self.assertEqual(best.params["a"], 3)
+
     def test_descend_never_moves_to_a_failing_trial(self):
         def evaluate(params):  # better scores further right, but a > 2 fails
             return Trial(params, params["a"] <= 2, {"score": params["a"]})

@@ -45,4 +45,31 @@ def belt_fill(server) -> dict:
     return result
 
 
-STUDIES = {"belt-fill": belt_fill}
+PLATFORM_SPACE = {"railguns": [2, 4, 6, 8, 10, 12], "guns": [0, 3, 6, 9, 12], "thrusters": [1, 2, 3, 4]}
+PLATFORM_START = {"railguns": 4, "guns": 6, "thrusters": 2}
+
+
+def platform_shape(server) -> dict:
+    """How many railguns, gun turrets and thrusters fly a platform furthest toward
+    the shattered planet in 300 s (power, ammo and fuel by script)? Coordinate
+    descent from 4/6/2, each design flown 4 times, moving only on a 5% gain in
+    mean km (flights differ run to run)."""
+    from tools.optimise import FlightEvaluator, descend
+
+    evaluate = FlightEvaluator(server, "platform", runs=4)
+
+    def logged(params):
+        t = evaluate(params)
+        r = t.rates
+        print(f"{params}: " + (f"mean {r['km_mean']:,.0f} km (min {r['km_min']:,.0f}, max {r['km_max']:,.0f}), "
+                               f"{r['seconds_mean']:.0f}s, survived {r['survived']:.0%}" if t.passed else f"FAIL {t.error}"),
+              file=sys.stderr, flush=True)
+        return t
+
+    best, trials = descend(logged, PLATFORM_SPACE, PLATFORM_START, score=lambda t: t.rates["km_mean"], margin=0.05)
+    print(f"best: {best.params if best else None}; trials run: {evaluate.ran}", file=sys.stderr)
+    return {"best": best.params if best else None, "best_rates": best.rates if best else None,
+            "trials": [{"params": t.params, "passed": t.passed, "rates": t.rates, "error": t.error} for t in trials]}
+
+
+STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape}
