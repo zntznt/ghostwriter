@@ -11,7 +11,7 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
-from generators import assembly_row, factory, fluid_block, fluid_row, production, smelting_column
+from generators import assembly_row, factory, fluid_block, fluid_row, platform, production, smelting_column
 from generators.gated_requester import build
 from tools import pipes, rates
 from tools.check import check
@@ -562,6 +562,46 @@ class Factory(unittest.TestCase):
         for params in FACTORIES:
             _, _, bp = factory_built(**params)
             self.assertLessEqual(len(bp["description"].encode()), 500, params)
+
+
+class Platform(unittest.TestCase):
+    def build(self, **params):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return platform.build(**params).to_dict()["blueprint"]
+
+    def test_nothing_stands_in_a_railguns_line(self):
+        # Railgun shots hit everything along their line (north), own turrets included.
+        for params in ({}, {"railguns": 6, "guns": 9, "thrusters": 1}):
+            bp = self.build(**params)
+            rails = [e for e in bp["entities"] if e["name"] == "railgun-turret"]
+            others = [e for e in bp["entities"] if e["name"] != "railgun-turret"]
+            for r in rails:
+                ahead = [e for e in others if abs(e["position"]["x"] - r["position"]["x"]) < 2.5
+                         and e["position"]["y"] < r["position"]["y"]]
+                self.assertEqual(ahead, [], params)
+
+    def test_thrusters_have_empty_space_behind(self):
+        bp = self.build(thrusters=3)
+        tiles = {(t["position"]["x"], t["position"]["y"]) for t in bp["tiles"]}
+        for e in bp["entities"]:
+            if e["name"] == "thruster":
+                x, y = e["position"]["x"], e["position"]["y"]
+                behind = [(tx, ty) for tx, ty in tiles if abs(tx + 0.5 - x) < 2 and ty > y + 2]
+                self.assertEqual(behind, [])
+
+    def test_railguns_target_big_and_huge_in_the_games_format(self):
+        bp = self.build()
+        for e in bp["entities"]:
+            if e["name"] == "railgun-turret":
+                self.assertEqual([t["index"] for t in e["priority-list"]], list(range(1, 9)))
+                self.assertTrue(all(t["name"].startswith(("big-", "huge-")) for t in e["priority-list"]))
+                self.assertIs(e["ignore-unprioritised"], True)
+
+    def test_powered_and_check_clean(self):
+        bp = self.build(railguns=6, guns=9, thrusters=1)
+        self.assertEqual(errors({"blueprint": bp}), [])
+        assert_powered(self, bp, "platform")  # the railguns; gun turrets need no power
 
 
 class Check(unittest.TestCase):
