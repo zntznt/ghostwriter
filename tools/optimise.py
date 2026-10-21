@@ -21,10 +21,12 @@ Searches take any `evaluate(params) -> Trial`, so they're tested without the gam
 import argparse
 import hashlib
 import importlib
+import inspect
 import itertools
 import json
 import sys
 import warnings
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -119,10 +121,12 @@ class FlightEvaluator(GameEvaluator):
         from validator.validate import Report
 
         params = {k: v for k, v in params.items() if k != "runs"}
+        # Flight-only parameters (research) go to flight_tests, not build.
+        shape = {k: v for k, v in params.items() if k in inspect.signature(self.module.build).parameters}
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             try:
-                data = self.module.build(**params).to_dict()
+                data = self.module.build(**shape).to_dict()
                 (flight,) = self.module.flight_tests(**params)
             except ValueError as e:
                 return Trial(params, False, error=str(e))
@@ -138,7 +142,7 @@ class FlightEvaluator(GameEvaluator):
         return Trial(params, True, {"km_mean": sum(km) / len(km), "km_min": min(km), "km_max": max(km),
                                     "seconds_mean": sum(f.seconds for f in flights) / len(flights),
                                     "survived": sum(f.survived for f in flights) / len(flights)},
-                     windows=len(flights), stalled={f.ended or "survived": 1 for f in flights})
+                     windows=len(flights), stalled=dict(Counter(f.ended or "survived" for f in flights)))
 
 
 def grid(evaluate, space: dict[str, list], base: dict | None = None) -> list[Trial]:

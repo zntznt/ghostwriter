@@ -72,4 +72,39 @@ def platform_shape(server) -> dict:
             "trials": [{"params": t.params, "passed": t.passed, "rates": t.rates, "error": t.error} for t in trials]}
 
 
-STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape}
+PLATFORM_BEST = {"railguns": 6, "guns": 9, "thrusters": 1}  # platform-shape's best (NOTES.md)
+# Each axis is one kind of research, at none and at levels a finished game may
+# have. Railgun damage 2 is where one shot kills a huge promethium asteroid:
+# (10000 x 1.8 - 3000) x 0.9 = 13500 >= 10000. Bullets are the gun turrets'.
+RESEARCH_AXES = {
+    "railgun shooting speed": [{}, {"railgun-shooting-speed": 3}, {"railgun-shooting-speed": 6}],
+    "railgun damage": [{}, {"railgun-damage": 2}],
+    "bullets": [{}, {"physical-projectile-damage": 10, "weapon-shooting-speed": 6}],
+}
+
+
+def platform_research(server) -> dict:
+    """How much of a platform's survival is research? The best design from
+    platform-shape (6 railguns, 9 gun turrets, 1 thruster) flown 4 times at
+    every combination of the RESEARCH_AXES levels, 300 s each (power, ammo and
+    fuel by script)."""
+    import itertools
+
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=4)
+    rows = []
+    for combo in itertools.product(*RESEARCH_AXES.values()):
+        research = {k: v for levels in combo for k, v in levels.items()}
+        t = evaluate({**PLATFORM_BEST, "research": research})
+        r = t.rates
+        label = ", ".join(f"{k} {v}" for k, v in research.items()) or "no research"
+        print(f"{label}: " + (f"mean {r['km_mean']:,.0f} km (min {r['km_min']:,.0f}, max {r['km_max']:,.0f}), "
+                              f"{r['seconds_mean']:.0f}s, survived {r['survived']:.0%}; ended {t.stalled}"
+                              if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+        rows.append({"research": research, "passed": t.passed, "rates": r, "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": PLATFORM_BEST, "trials": rows}
+
+
+STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research}
