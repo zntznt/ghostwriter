@@ -99,11 +99,12 @@ under 2%.
 ## Flight tests
 
 `validator/flight.py` flies a space platform blueprint: `run_flight(server, data, Flight(...))`, or
-`python -m tools.bp fly SRC --runs 3 --seconds 600 [--fuel] [--supply item=n,...] [--research series=n,...]`.
+`python -m tools.bp fly SRC --runs 3 --seconds 600 [--fuel] [--supply item=n,...] [--research series=n,...] [--start F]`.
 
 - The blueprint is built around a fresh platform's hub: its origin is the hub's centre (the 8x8 hub is already there). Foundation comes from its tiles, or from under each entity if it has none. It is built through ghosts, so the game's placement rules hold: a thruster needs empty space behind it.
 - Supplies go into the hub. The platform leaves `origin` for `destination` (default: the solar system edge toward the shattered planet) on its own thrusters. `fuel=True` keeps thrusters full by script, to test defence before a design makes its own fuel.
 - The game is paused and advanced by exact tick counts until the hub dies or `seconds` pass. A `Flown` holds the furthest km, top speed, every death as "entity <- cause", the hub's cargo (asteroid chunks included), and a log every 10 game seconds.
+- `start` begins the flight partway along the route, as a share of it (0.4 is 1,600,000 km out), where its asteroids are: huge promethium ones are rare before 0.2. `Flown.km` counts from the start.
 - The test force has no research unless the flight sets some: `research={"railgun-damage": 4}` researches levels 1 to 4 of the technologies named `railgun-damage-<n>`, so the game applies its own effects. It is undone after the flight. An unknown series, or more levels than a finite one has, is an error.
 - Flights differ run to run, even each first flight in a fresh server, so judge a design over several.
 

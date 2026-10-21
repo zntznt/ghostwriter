@@ -18,7 +18,7 @@ from tools.factorio import locate
 from tools.library import entries
 from tools.settings import game_settings, registry
 from validator.circuit import Case, Expect, Inject, run_circuit_tests
-from validator.flight import Flight, run_flight
+from validator.flight import Flight, _step, run_flight
 from validator.flow import Flow, run_flow_tests
 from validator.tests_file import library_tests
 from validator.server import Server
@@ -420,6 +420,22 @@ class Validator(unittest.TestCase):
         self.assertEqual(modifiers(), [0, 0])
         # A refused flight leaves the game running for the tests after it.
         self.assertEqual(self.server.command("/sc rcon.print(tostring(game.tick_paused))").strip(), "false")
+
+    def test_flight_can_start_partway(self):
+        # 40% along the 4,000,000 km route, moving on toward the shattered planet.
+        args = {"blueprint": encode(self.thrusters()), "from": "solar-system-edge", "to": "shattered-planet",
+                "fuel": True, "speed": 100}
+        try:
+            self.assertAlmostEqual(self.server.call("flight_setup", json.dumps({**args, "start": 0.4}))["distance"],
+                                   0.4)
+            for _ in range(5):
+                _step(self.server, 60, timeout=60)
+            got = self.server.call("flight_read")
+            self.assertGreater(got["furthest"], 0.4)
+            self.assertAlmostEqual(got["km"], (got["furthest"] - 0.4) * 4_000_000, delta=1)
+        finally:
+            self.server.call("flight_teardown")
+        self.assertIn("start must be", self.server.call("flight_setup", json.dumps({**args, "start": 1}))["error"])
 
     def test_thrusters_need_empty_space_behind(self):
         # A thruster's exhaust needs empty space behind it (about 88 tiles):

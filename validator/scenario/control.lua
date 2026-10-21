@@ -463,7 +463,7 @@ local function flight_tick()
     return
   end
   if p.space_connection and p.space_connection.name == fl.connection and p.distance then
-    fl.furthest = math.max(fl.furthest, p.distance)
+    fl.furthest = math.max(fl.furthest, fl.reversed and 1 - p.distance or p.distance)
   end
   fl.speed_max = math.max(fl.speed_max, p.speed or 0)
   if fl.fuel then
@@ -920,7 +920,8 @@ remote.add_interface("ghostwriter", {
     reply(out)
   end,
 
-  -- {blueprint, from, to, supplies = {item = count}, fuel, power, ammo, research = {series = levels}, speed}
+  -- {blueprint, from, to, start = 0..1, supplies = {item = count}, fuel, power, ammo, research = {series = levels},
+  --  speed}
   flight_setup = function(json)
     circuit_teardown()
     flow_teardown()
@@ -929,6 +930,9 @@ remote.add_interface("ghostwriter", {
     local force = game.forces.player
     local connection, proto = connection_between(args.from, args.to)
     if not connection then return reply{error = "no space connection between " .. args.from .. " and " .. args.to} end
+    if args.start and not (args.start >= 0 and args.start < 1) then
+      return reply{error = "start must be from 0 to below 1 (a share of the route), not " .. args.start}
+    end
     force.unlock_space_platforms()
     for name in pairs(prototypes.space_location) do force.unlock_space_location(name) end
     local inv = game.create_inventory(1)
@@ -980,7 +984,16 @@ remote.add_interface("ghostwriter", {
     for _, g in pairs(s.find_entities_filtered{name = {"entity-ghost", "tile-ghost"}}) do g.destroy() end
     inv.destroy()
     for name, count in pairs(args.supplies or {}) do p.hub.insert{name = name, count = count} end
-    p.space_location = args.from
+    -- start: how far along the route (0 to 1, from `from`) the flight begins.
+    -- A connection's distance runs from its own `from`, which may be our `to`.
+    local reversed = proto.from.name ~= args.from
+    local start = args.start or 0
+    if start > 0 then
+      p.space_connection = connection
+      p.distance = reversed and 1 - start or start
+    else
+      p.space_location = args.from
+    end
     p.schedule = {current = 1, records = {{station = args.to}}}
     p.paused = false
     local helpers_ = {}
@@ -996,12 +1009,13 @@ remote.add_interface("ghostwriter", {
       if poles[1] then helpers_ = source_for(s, {{-64, -64}, {64, 64}}, poles) end
     end
     storage.flight = {platform = p, surface = s.index, connection = connection, length = proto.length,
-                      furthest = 0, speed_max = 0, deaths = {}, fuel = args.fuel, ammo = args.ammo,
+                      reversed = reversed, from_start = start, furthest = start, speed_max = 0, deaths = {}, fuel = args.fuel, ammo = args.ammo,
                       thrusters = s.find_entities_filtered{type = "thruster"},
                       turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
                       cargo = {}, hub_health = p.hub.health, start = game.tick, research = research}
     game.speed = args.speed or 1
-    reply{entities = wanted, built = built, weight = p.weight, connection = connection, length = proto.length}
+    reply{entities = wanted, built = built, weight = p.weight, connection = connection, length = proto.length,
+          distance = p.distance}
   end,
 
   flight_read = function()
@@ -1012,7 +1026,7 @@ remote.add_interface("ghostwriter", {
     local states = {}
     for k, v in pairs(defines.space_platform_state) do states[v] = k end
     reply{ticks = game.tick - fl.start, alive = alive and true or false, state = alive and states[p.state] or "gone",
-          furthest = fl.furthest, km = fl.furthest * fl.length, speed = alive and p.speed or 0,
+          furthest = fl.furthest, km = (fl.furthest - fl.from_start) * fl.length, speed = alive and p.speed or 0,
           speed_max = fl.speed_max, hub_health = alive and p.hub.health or 0, deaths = fl.deaths,
           ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo}
   end,

@@ -21,7 +21,7 @@ where Draftsman 4.0.1 lags behind 2.1.
 ```
 python -m tools.bp gen NAME [key=value ...] --validate   # generator -> checked, validated string
 python -m tools.bp validate SRC...                      # in-game validation (headless server)
-python -m tools.bp fly SRC --runs 3 [--fuel] [--supply item=n,...] [--research railgun-damage=4,...]  # fly a space platform toward the shattered planet
+python -m tools.bp fly SRC --runs 3 [--fuel] [--supply item=n,...] [--research railgun-damage=4,...] [--start 0.4]  # fly a space platform toward the shattered planet
 python -m tools.bp check SRC                          # static checks, exit 1 on error
 python -m tools.bp decode SRC                         # string -> pretty JSON
 python -m tools.bp encode SRC                         # JSON -> string

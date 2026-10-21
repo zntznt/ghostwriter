@@ -107,4 +107,30 @@ def platform_research(server) -> dict:
     return {"design": PLATFORM_BEST, "trials": rows}
 
 
-STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research}
+HIGH_RESEARCH = {"railgun-shooting-speed": 6, "railgun-damage": 2, "physical-projectile-damage": 10,
+                 "weapon-shooting-speed": 6}  # platform-research's best row
+PROMETHIUM_STARTS = [0.0, 0.2, 0.3, 0.4]  # huge promethium asteroids are rare before 0.2 (NOTES.md)
+
+
+def platform_promethium(server) -> dict:
+    """Does the best platform so far live where promethium is? The platform-shape
+    best with HIGH_RESEARCH, flown 4 times for 300 s from each of PROMETHIUM_STARTS
+    (shares of the route; power, ammo and fuel by script)."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=4)
+    rows = []
+    for start in PROMETHIUM_STARTS:
+        t = evaluate({**PLATFORM_BEST, "research": HIGH_RESEARCH, "start": start})
+        r = t.rates
+        print(f"from {start:.0%} of the route: " + (
+            f"mean {r['km_mean']:,.0f} km flown (min {r['km_min']:,.0f}, max {r['km_max']:,.0f}), "
+            f"{r['seconds_mean']:.0f}s, survived {r['survived']:.0%}; ended {t.stalled}"
+            if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+        rows.append({"start": start, "passed": t.passed, "rates": r, "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": PLATFORM_BEST, "research": HIGH_RESEARCH, "trials": rows}
+
+
+STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
+           "platform-promethium": platform_promethium}
