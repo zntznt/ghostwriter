@@ -975,6 +975,84 @@ class PlatformFuel(unittest.TestCase):
         self.assertEqual((control.fuel, control.primed, control.start_speed), (True, 0, 0.0))
 
 
+class PlatformPromethium(unittest.TestCase):
+    """promethium=True: the fuel module's collectors take promethium chunks too, and they go to the hub."""
+
+    def setUp(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.bp = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True, reserve=True,
+                                     power=2, promethium=True).to_dict()["blueprint"]
+        self.ents = self.bp["entities"]
+
+    def test_check_clean_and_nothing_overlaps(self):
+        self.assertEqual(errors({"blueprint": self.bp}), [])
+        seen = {}
+        floor = {(t["position"]["x"], t["position"]["y"]) for t in self.bp["tiles"]}
+        for e in self.ents:
+            for t in tiles_of(e):
+                self.assertNotIn(t, seen, (e, seen.get(t)))
+                seen[t] = e
+                if e["name"] != "asteroid-collector":
+                    self.assertIn(t, floor, e)
+
+    def test_collectors_take_promethium_too(self):
+        collectors = [e for e in self.ents if e["name"] == "asteroid-collector"]
+        self.assertEqual(len(collectors), 2)
+        for c in collectors:
+            self.assertEqual({f["name"] for f in c["chunk-filter"]}, set(platform.CHUNKS) | {"promethium-asteroid-chunk"})
+
+    def test_promethium_leaves_the_chunk_belt_for_the_hub(self):
+        # A filter inserter takes promethium off the chunk belt onto a belt west along
+        # the row above the hub, and an inserter drops it into the hub's north face
+        # (tiles -4..3). A chunk stacks to 1, so each takes a hub slot (NOTES.md).
+        belts = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e.get("direction", 0)
+                 for e in self.ents if e["name"] == "transport-belt"}
+        ins = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e
+               for e in self.ents if e["name"].endswith("inserter")}
+        [f] = [i for i in ins.values()
+               if i.get("use_filters") and [x["name"] for x in i["filters"]] == ["promethium-asteroid-chunk"]]
+        fx, fy = math.floor(f["position"]["x"]), math.floor(f["position"]["y"])
+        dx, dy = pipes.VEC[f.get("direction", 0)]  # an inserter's direction is where it picks up
+        self.assertIn((fx + dx, fy + dy), belts)  # the chunk belt
+        tile = (fx - dx, fy - dy)
+        path = [tile]
+        while True:
+            vx, vy = pipes.VEC[belts[path[-1]]]
+            nxt = (path[-1][0] + vx, path[-1][1] + vy)
+            if nxt not in belts:
+                break
+            path.append(nxt)
+        ex, ey = path[-1]
+        into = ins[(ex, ey + 1)]
+        self.assertEqual(into.get("direction", 0), 0)  # picks from the belt's end, north of it
+        self.assertTrue(-platform.HUB <= ex < platform.HUB and ey + 2 == -platform.HUB, (ex, ey))  # drops into the hub
+
+    def test_default_is_unchanged_and_needs_the_fuel_module(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            plain = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True, reserve=True, power=2)
+            off = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True, reserve=True, power=2,
+                                 promethium=False)
+            self.assertEqual(plain.to_dict(), off.to_dict())
+            with self.assertRaisesRegex(ValueError, "promethium"):
+                platform.build(railguns=32, guns=32, thrusters=1, promethium=True)
+
+    def test_flight_can_fly_back_and_take_what_it_collects(self):
+        # reverse: the same stretch of route, flown back toward the edge; start is still
+        # the share from the edge. take: the script empties the hub of these each second
+        # and counts them, so a full hub doesn't cap what's measured.
+        [back] = platform.flight_tests(start=0.4, reverse=True)
+        self.assertEqual((back.origin, back.destination), ("shattered-planet", "solar-system-edge"))
+        self.assertAlmostEqual(back.start, 0.6)
+        [took] = platform.flight_tests(take=["promethium-asteroid-chunk"])
+        self.assertEqual(took.take, ["promethium-asteroid-chunk"])
+        [plain] = platform.flight_tests(start=0.4)
+        self.assertEqual((plain.origin, plain.start, plain.take), ("solar-system-edge", 0.4, []))
+        with self.assertRaisesRegex(ValueError, "back"):
+            platform.flight_tests(reverse=True)
+
+
 def connections(e: dict, box: str | None, spec: dict | None = None) -> list[tuple[tuple[int, int], tuple[int, int]]]:
     """(the tile a connection sits on, the tile it points into) for a fluid box of a prototype
     (by key, or the box itself as spec), turned by the entity's direction."""

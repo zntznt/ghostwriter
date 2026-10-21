@@ -549,10 +549,50 @@ def platform_sides(server) -> dict:
             "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": FULL_STOCK, "trials": rows}
 
 
+# The trip model's inputs (tools.trip): the whole platform, keeping promethium, along the
+# route. The script empties the chunks from the hub each second and counts them, so room
+# doesn't cap the count; FULL_STOCK fills the hub, so 500 foundation make room for them to
+# arrive. Flown back over the stretch where promethium is, and without promethium, for what
+# sharing the collectors with it costs the fuel.
+ROUTE_STARTS = [0.0, 0.1, 0.2, 0.3, 0.4]
+TRIP_PLATFORM = {**FULL_PLATFORM, "promethium": True}
+TRIP_STOCK = {**FULL_STOCK, "space-platform-foundation": FULL_STOCK["space-platform-foundation"] - 500}
+ROUTE_RUNS = [(start, "out", {}) for start in ROUTE_STARTS] + [
+    (BELT_START, "back", {"reverse": True}), (BELT_START, "out, no promethium", {"promethium": False})]
+
+
+def platform_route(server) -> dict:
+    """What does the whole platform use, and collect, along the route? TRIP_PLATFORM flies
+    8 times from each of ROUTE_STARTS (and each other run of ROUTE_RUNS) for up to 600 s
+    with TRIP_STOCK and platform-budget's research: what it lives and flies, its cruise,
+    and per 1,000 km what it used and rebuilt and the promethium chunks it brought in."""
+    from tools.optimise import FlightEvaluator
+
+    from generators.platform import PROMETHIUM
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for start, mode, extra in ROUTE_RUNS:
+        keeps = extra.get("promethium", True)
+        t = evaluate({**TRIP_PLATFORM, **extra, "start": start, "seconds": 600, "supplies": TRIP_STOCK,
+                      "research": {**HIGH_RESEARCH, "construction-robotics": 1}, **({"take": [PROMETHIUM]} if keeps else {})})
+        r = t.rates
+        print(f"from {start:.0%}, {mode}: " + (
+            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean, cruise "
+            f"{r.get('cruise km/s', 0):.1f} km/s; per 1,000 km: {per_1000_km(r)}, fusion cells "
+            f"{r.get('fusion cells/1000 km', 0):.3f}, promethium {r.get(f'taken {PROMETHIUM}/1000 km', 0):.2f}; made "
+            f"{r.get('made thruster-fuel/s', 0):.1f} fuel/s" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+        rows.append({"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
+                     "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": TRIP_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
+            "supplies": TRIP_STOCK, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
            "platform-repair": platform_repair, "platform-foundation": platform_foundation,
            "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve,
            "platform-power": platform_power, "platform-plant": platform_plant, "platform-ammo": platform_ammo,
-           "platform-sides": platform_sides}
+           "platform-sides": platform_sides, "platform-route": platform_route}

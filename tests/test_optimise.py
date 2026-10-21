@@ -147,6 +147,21 @@ class Cache(unittest.TestCase):
         self.assertEqual(flown.budget()["held thruster-fuel"], 12000.0)
         self.assertNotIn("held railgun-ammo", flown.budget())
 
+    def test_flown_budget_counts_what_was_taken_and_the_cruise(self):
+        # Promethium chunks the script took from the hub (so a full hub doesn't cap the
+        # count), a second and per 1,000 km; fusion cells per 1,000 km; and the speed over
+        # the flight's second half, once a reserve filled before leaving has drained
+        # toward where use meets what's made (NOTES.md).
+        from validator.flight import Flown
+
+        log = [{"seconds": s, "km": km} for s, km in ((10, 900), (20, 1600), (30, 2200), (40, 2800))]
+        flown = Flown("f", seconds=40.0, km=2800.0, taken={"promethium-asteroid-chunk": 56}, generated_j=4e12, log=log)
+        budget = flown.budget()
+        self.assertEqual(budget["taken promethium-asteroid-chunk/1000 km"], 20.0)
+        self.assertEqual(budget["taken promethium-asteroid-chunk/s"], 1.4)
+        self.assertAlmostEqual(budget["fusion cells/1000 km"], 4e12 / 40e9 / 2800 * 1000)
+        self.assertEqual(budget["cruise km/s"], 60.0)  # (2800 - 1600) / (40 - 20)
+
     def test_flight_trials_average_the_budget_and_the_survivors_apart(self):
         from types import SimpleNamespace
         from unittest import mock

@@ -3,6 +3,7 @@ skipped without one. One server for the whole class, ~30 s."""
 
 import dataclasses
 import json
+import math
 import os
 import unittest
 from pathlib import Path
@@ -746,6 +747,37 @@ class Validator(unittest.TestCase):
         for k in fluids:
             self.assertGreater(flown.made.get(k, 0), 2000, flown.made)
         self.assertGreater(flown.log[-1]["speed"], 0.4, flown.log)
+
+    def test_a_promethium_chunk_on_the_chunk_belt_reaches_the_hub(self):
+        # promethium=True: the filter inserter takes it off the chunk belt, the belt in the
+        # gap above the hub carries it west and an inserter drops it in; with take, the
+        # script empties it from the hub each second and counts it. Placed by script,
+        # from Nauvis toward Vulcanus, where no promethium spawns: no asteroid is needed,
+        # and 15 s is more than the 11 tiles of belt take, whatever the tick.
+        data = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True, promethium=True).to_dict()
+        [f] = [e for e in data["blueprint"]["entities"] if e["name"] == "fast-inserter" and e.get("use_filters")
+               and [x["name"] for x in e["filters"]] == [platform.PROMETHIUM]]
+        x, y = math.floor(f["position"]["x"]) + 1, math.floor(f["position"]["y"]) - 2  # the chunk belt, upstream
+        put = ("/sc local b = storage.flight.platform.surface.find_entities_filtered{name = 'transport-belt', "
+               f"position = {{{x + 0.5}, {y + 0.5}}}}}[1] rcon.print(tostring(b and b.get_transport_line(1)"
+               f".insert_at_back({{name = '{platform.PROMETHIUM}', count = 1}})))")
+        for take in ([platform.PROMETHIUM], []):
+            try:
+                setup = self.server.call("flight_setup", json.dumps({
+                    "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "fuel": True, "power": True,
+                    "ammo": platform.AMMO, "take": take or None}))
+                self.assertNotIn("error", setup)
+                self.assertEqual(self.server.command(put).strip(), "true")
+                _step(self.server, 900, timeout=60)
+                got = self.server.call("flight_read")
+            finally:
+                self.server.call("flight_teardown")
+            cargo = {c["name"]: c["count"] for c in got["cargo"] or [] if isinstance(c, dict)}
+            if take:
+                self.assertEqual(got["taken"], {platform.PROMETHIUM: 1})
+                self.assertNotIn(platform.PROMETHIUM, cargo)
+            else:
+                self.assertEqual(cargo.get(platform.PROMETHIUM), 1, cargo)  # in the hub: one a slot
 
     def test_a_reserve_tank_shares_the_thrusters_fill(self):
         # reserve=True: a storage tank on each thruster input joins its line, which has

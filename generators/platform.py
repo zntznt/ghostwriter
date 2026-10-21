@@ -47,6 +47,7 @@ AMMO = {"railgun-turret": "railgun-ammo", "gun-turret": "uranium-rounds-magazine
 # one apart, with the belt leaving from between them.
 FUEL_SLOT = 9
 CHUNKS = ["metallic-asteroid-chunk", "carbonic-asteroid-chunk", "oxide-asteroid-chunk"]
+PROMETHIUM = "promethium-asteroid-chunk"  # promethium=True: the collectors take it too, and it goes to the hub
 BELT = "transport-belt"
 UNDER = "express-underground-belt"  # power=N: the cell belt under a reactor and its inserter, 8 tiles
 # What each crusher hands to which plant: the module's two columns, west then east,
@@ -120,6 +121,19 @@ def _fuel_module(bp: Blueprint, xb: int, r: int, bottom: int):
     bp.entities.append(void, tile_position=(xb, bottom), direction=Direction.NORTH)
 
 
+def _promethium_path(bp: Blueprint, xb: int):
+    """Promethium chunks off the chunk belt (column xb, flowing south) into the hub: a
+    filter inserter onto a belt west along the gap above the hub, and an inserter down
+    into its north face. A chunk stacks to 1, so each takes a hub slot (NOTES.md). Fast
+    inserters: a collector catches about 2.7 chunks/s where promethium is."""
+    y = -HUB - 2  # the gap between the gun turrets and the hub (front_gap 2)
+    bp.entities.append("fast-inserter", tile_position=(xb - 1, y), direction=Direction.EAST, use_filters=True)
+    bp.entities[-1].set_item_filter(0, PROMETHIUM)
+    for x in range(xb - 2, HUB - 3, -1):
+        bp.entities.append(BELT, tile_position=(x, y), direction=Direction.WEST)
+    bp.entities.append("fast-inserter", tile_position=(HUB - 2, y + 1), direction=Direction.NORTH)
+
+
 def _cell_path(bp: Blueprint, plants: int):
     """Fusion cells off the hub's south edge onto a belt west along row HUB + 1, and
     into each reactor's east side. The hub rebuilds a reactor with an empty fuel slot
@@ -172,7 +186,7 @@ def _power_plant(bp: Blueprint, rx: int, first: bool):
 
 
 def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, layout="rows", cargo_bays=0,
-          margin=0, fuel=False, reserve=False, power=False, side_guns=0) -> Blueprint:
+          margin=0, fuel=False, reserve=False, power=False, side_guns=0, promethium=False) -> Blueprint:
     """layout: "rows" puts the gun turrets in a row behind the railguns; "front"
     spreads them through the railguns' row, front edges flush. A railgun fires
     only in a 72-degree arc ahead of it (turn_range 0.2, NOTES.md), so turrets
@@ -206,7 +220,11 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
     side_guns stands that many gun turrets in a column at each outer edge, from
     the row below the gun turrets down: asteroids eat foundation from the side
-    ends inward, past the gun row's reach (NOTES.md)."""
+    ends inward, past the gun row's reach (NOTES.md).
+
+    promethium (with fuel) has the collectors take promethium chunks too, and a
+    filter inserter sends them off the chunk belt along the gap above the hub and
+    into it: the hub holds them, one a slot."""
     if railguns < 1 or thrusters < 1:
         raise ValueError("a platform needs at least one railgun and one thruster")
     if layout not in ("rows", "front"):
@@ -223,6 +241,10 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         raise ValueError("power=True has room beside one thruster")
     if power < 0:
         raise ValueError("power is how many fusion reactors, not a negative number")
+    if promethium and not fuel:
+        raise ValueError("promethium=True needs fuel=True: its collectors and chunk belt")
+    if promethium and front_gap < 2:
+        raise ValueError("promethium=True needs front_gap 2 or more: its belt runs in the gap above the hub")
     rw, rh = RAILGUN
     tw, th = THRUSTER
     gw = GUN
@@ -260,7 +282,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     bp.label = (f"Platform: {count(railguns, 'railgun')}, {count(guns, 'gun turret')}{' among them' if front else ''}, "
                 f"{count(thrusters, 'thruster')}" + (f", {count(cargo_bays, 'cargo bay')}" if cargo_bays else "")
                 + (", makes its fuel" if fuel else "") + (" with a reserve" if reserve else "")
-                + (", powers itself" if power else ""))
+                + (", powers itself" if power else "") + (", keeps promethium" if promethium else ""))
     where = "between the railguns" if front else "behind them"
     bp.description = ("Railguns across the front for big and huge asteroids only, gun turrets " + where +
                       " for the rest, thrusters at the back, the hub in the middle (the blueprint's origin is the "
@@ -321,7 +343,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
             # Two collectors facing out, the front row over empty space, and an inserter
             # behind each onto the belt that leaves from between them.
             for cx in (x + 2, x + 6):
-                bp.entities.append("asteroid-collector", position=(cx + 0.5, top + 0.5), chunk_filter=CHUNKS)
+                bp.entities.append("asteroid-collector", position=(cx + 0.5, top + 0.5),
+                                   chunk_filter=CHUNKS + ([PROMETHIUM] if promethium else []))
                 bp.entities.append("inserter", tile_position=(cx, top + 2), direction=Direction.NORTH)
             for bx, d in ((x + 2, Direction.EAST), (x + 3, Direction.EAST), (x + 6, Direction.WEST),
                           (x + 5, Direction.WEST)):
@@ -349,6 +372,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         bp.entities.append("cargo-bay", position=(x, -CARGO_BAY // 2 if place < 2 else CARGO_BAY // 2))
     if fuel:
         _fuel_module(bp, xb, HUB, bottom)
+    if promethium:
+        _promethium_path(bp, xb)
     for k in range(power):
         _power_plant(bp, REACTOR[0] - PLANT_STEP * k, k == 0)
     if power:
@@ -378,7 +403,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
 
 def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=False, reserve=False, script_fuel=False,
-                 power=False, magazine=AMMO["gun-turret"], **params):
+                 power=False, magazine=AMMO["gun-turret"], reverse=False, take=None, **params):
     """research: technology series -> levels researched; start: share of the route
     to begin at; supplies: items into the hub, which rebuilds from them (with
     construction-robotics researched) and repairs with repair packs
@@ -392,9 +417,14 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     gets no stand-in power: its accumulator starts charged and its reactor's loop
     full of cold fluoroketone, as if readied in orbit, with CELLS fusion cells in
     the hub unless supplies name some. magazine: what the script stocks the gun
-    turrets with; uranium rounds can't be made in space, piercing rounds can."""
+    turrets with; uranium rounds can't be made in space, piercing rounds can.
+    reverse flies the same stretch back toward the solar system edge (start is
+    still the share from the edge). take: items the script empties from the hub
+    each second and counts, so a full hub doesn't cap what is measured."""
     from validator.flight import PRIME, Flight
 
+    if reverse and not 0 < start < 1:
+        raise ValueError(f"a flight back starts partway along the route, not at {start} of it")
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
     research = {**(research or {}), **({"space-platform": 1, "space-platform-thruster": 1} if fuel else {}),
                 **({"cryogenic-plant": 1} if power else {})}  # the cooler's recipe
@@ -402,6 +432,8 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     on_board = fuel and not script_fuel
     # With reserve, more than the thruster, its line and its tank hold: the game fills them.
     primed = PRIME + (2 * entities.raw["storage-tank"]["fluid_box"]["volume"] if reserve else 0) if on_board else 0
-    return [Flight(shape, seconds=seconds, start=start, supplies=supplies, fuel=not on_board, power=not power,
+    route = {"origin": "shattered-planet", "destination": "solar-system-edge", "start": 1 - start} if reverse else {
+        "start": start}
+    return [Flight(shape, seconds=seconds, **route, supplies=supplies, fuel=not on_board, power=not power,
                    ammo={**AMMO, "gun-turret": magazine}, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
-                   charged=power, coolant=COOLANT if power else 0)]
+                   charged=power, coolant=COOLANT if power else 0, take=list(take or []))]
