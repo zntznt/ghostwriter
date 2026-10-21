@@ -1008,26 +1008,44 @@ class PlatformPower(unittest.TestCase):
         self.assertEqual(cold, cold_in)
         self.assertFalse(hot & cold)
 
-    def test_cells_go_from_the_hub_to_the_first_reactor(self):
-        reactor = max(self.named("fusion-reactor"), key=lambda r: r["position"]["x"])  # nearest the hub
-        belts = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e.get("direction", 0)
-                 for e in self.named("transport-belt")}
-        ins = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e
-               for e in self.ents if e["name"].endswith("inserter")}
+    def test_cells_go_from_the_hub_to_every_reactor(self):
+        # A rebuilt reactor starts with no cells, and the hub fills no fuel slot itself
+        # (NOTES.md): every reactor needs the path, the far ones under the near ones.
+        from draftsman.data import entities
 
-        def ends(at):
-            dx, dy = pipes.VEC[ins[at].get("direction", 0)]  # its direction is where it picks up
-            return (at[0] + dx, at[1] + dy), (at[0] - dx, at[1] - dy)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            three = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True, reserve=True,
+                                   power=3).to_dict()["blueprint"]
+        self.assertEqual(errors({"blueprint": three}), [])
+        for bp in (self.bp, three):
+            ents = bp["entities"]
+            at = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e for e in ents
+                  if e["name"].endswith(("transport-belt", "underground-belt", "inserter"))}
 
-        [start] = [at for at, i in ins.items() if i.get("use_filters")
-                   and [f["name"] for f in i["filters"]] == ["fusion-power-cell"]]
-        take, tile = ends(start)
-        self.assertTrue(-4 <= take[0] <= 3 and -4 <= take[1] <= 3)  # from the hub
-        while tile in belts:
-            dx, dy = pipes.VEC[belts[tile]]
-            last, tile = tile, (tile[0] + dx, tile[1] + dy)
-        [feed] = [at for at in ins if ends(at)[0] == last]
-        self.assertIn(ends(feed)[1], tiles_of(reactor))
+            def ends(i):
+                dx, dy = pipes.VEC[at[i].get("direction", 0)]  # an inserter's direction is where it picks up
+                return (i[0] + dx, i[1] + dy), (i[0] - dx, i[1] - dy)
+
+            [start] = [i for i, e in at.items() if e.get("use_filters")
+                       and [f["name"] for f in e["filters"]] == ["fusion-power-cell"]]
+            take, tile = ends(start)
+            self.assertTrue(-4 <= take[0] <= 3 and -4 <= take[1] <= 3)  # from the hub
+            line = set()
+            while tile in at and not at[tile]["name"].endswith("inserter"):
+                e = at[tile]
+                line.add(tile)
+                dx, dy = pipes.VEC[e.get("direction", 0)]
+                if e["name"].endswith("underground-belt") and e.get("type", "input") == "input":
+                    reach = entities.raw[e["name"]]["max_distance"]
+                    [tile] = [(tile[0] + dx * k, tile[1] + dy * k) for k in range(1, reach + 1)
+                              if at.get((tile[0] + dx * k, tile[1] + dy * k), {}).get("type") == "output"][:1]
+                    line.add(tile)
+                tile = (tile[0] + dx, tile[1] + dy)
+            for reactor in [e for e in ents if e["name"] == "fusion-reactor"]:
+                fed = [i for i in at if at[i]["name"].endswith("inserter") and i != start
+                       and ends(i)[0] in line and ends(i)[1] in tiles_of(reactor)]
+                self.assertEqual(len(fed), 1, reactor["position"])
 
     def test_refuses_what_it_doesnt_do(self):
         with warnings.catch_warnings():
