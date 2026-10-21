@@ -293,7 +293,37 @@ def platform_foundation(server) -> dict:
             "trials": rows}
 
 
+FILED_PLATFORM = {"railguns": 32, "guns": 32, "thrusters": 1, "cargo_bays": 8}  # library/platforms/
+BUDGET_STARTS = [0.0, BELT_START]  # where the route begins, and where promethium is
+
+
+def platform_budget(server) -> dict:
+    """What does the filed platform use a second, to make on board instead? It flies
+    8 times from each of BUDGET_STARTS for up to 600 s with platform-foundation's
+    winning stock and research, and the flight counts what the script supplies
+    (power, thruster fuel and oxidizer, ammo) and what the hub rebuilds."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for start in BUDGET_STARTS:
+        t = evaluate({**FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "start": start,
+                      "seconds": 600, "supplies": BAY_SPARES})
+        r = t.rates
+        use = {k: round(v, 3) for k, v in r.items() if k.endswith("/s") or k.endswith("MW")
+               or k.endswith(" lived")}
+        print(f"from {start:.0%} of the route: " + (
+            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}; a second: {use}" if t.passed
+            else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+        rows.append({"start": start, "passed": t.passed, "rates": r, "counts": t.counts, "ended": t.stalled,
+                     "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
+            "supplies": BAY_SPARES, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
-           "platform-repair": platform_repair, "platform-foundation": platform_foundation}
+           "platform-repair": platform_repair, "platform-foundation": platform_foundation,
+           "platform-budget": platform_budget}
