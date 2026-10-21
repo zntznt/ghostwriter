@@ -516,8 +516,15 @@ local function flight_tick()
     end
   end
   if game.tick % 60 == 0 then
+    -- take: what the script empties from the hub each second and counts, so a full hub
+    -- doesn't cap what is measured.
+    local hub = p.hub.get_inventory(defines.inventory.hub_main)
+    for _, name in pairs(fl.take or {}) do
+      local n = hub.get_item_count(name)
+      if n > 0 then fl.taken[name] = (fl.taken[name] or 0) + hub.remove{name = name, count = n} end
+    end
     -- Kept each second: the cargo and the source go with the hub.
-    fl.cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()
+    fl.cargo = hub.get_contents()
     fl.hub_health = p.hub.health
     if fl.source and fl.source.valid then fl.power_j = BUDGET - fl.source.energy end
     -- Power made on board: the surface's own network statistics (a fresh surface starts at 0).
@@ -999,7 +1006,7 @@ remote.add_interface("ghostwriter", {
   end,
 
   -- {blueprint, from, to, start = 0..1, supplies = {item = count}, fuel, power, ammo, research = {series = levels},
-  --  speed}
+  --  speed, take = {item, ...}}
   flight_setup = function(json)
     circuit_teardown()
     flow_teardown()
@@ -1109,7 +1116,7 @@ remote.add_interface("ghostwriter", {
                       turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
                       cargo = {}, hub_health = p.hub.health, start = game.tick, research = research,
                       supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0, made = {},
-                      generated_j = 0, plant_j = 0, brownout = 0}
+                      generated_j = 0, plant_j = 0, brownout = 0, take = args.take, taken = {}}
     -- charged and coolant: a plant readied before leaving, every accumulator and railgun
     -- full and each reactor's fuel slot filled with cells, and cold fluoroketone into
     -- each fusion reactor's line. Railguns take power first, as reactors do: empty,
@@ -1155,7 +1162,7 @@ remote.add_interface("ghostwriter", {
           speed_max = fl.speed_max, hub_health = alive and p.hub.health or 0, deaths = fl.deaths,
           ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo,
           supplied = fl.supplied, held = fl.held, rebuilt = fl.rebuilt, power_j = fl.power_j, made = fl.made,
-          generated_j = fl.generated_j, plant_j = fl.plant_j, brownout = fl.brownout}
+          generated_j = fl.generated_j, plant_j = fl.plant_j, brownout = fl.brownout, taken = fl.taken}
   end,
 
   flight_step = function(ticks)

@@ -65,6 +65,9 @@ class Flight:
     # its coolant line.
     charged: bool = False
     coolant: float = 0
+    # Items the script empties from the hub each second and counts (Flown.taken): what the
+    # platform collects, measured whether or not the hub has room for it.
+    take: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -94,6 +97,7 @@ class Flown:
     generated_j: float = 0.0
     plant_j: float = 0.0
     brownout: int = 0
+    taken: dict[str, int] = field(default_factory=dict)  # Flight.take: what the script emptied from the hub
 
     def chunks(self, kind: str = "promethium") -> int:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
@@ -102,14 +106,24 @@ class Flown:
         """What the flight used a second: each supply (given less held), power, and each thing rebuilt;
         and of what it made on board, what was still held at the end (in the thrusters and any reserve).
         Supplies and rebuilds also per 1,000 km flown: a slower platform lives longer partly because
-        it's slower, and what it uses per distance compares designs at different speeds."""
+        it's slower, and what it uses per distance compares designs at different speeds.
+        What the script took from the hub (Flight.take), the same ways; and the speed over
+        the flight's second half, once a reserve filled before leaving has drained toward
+        where use meets what's made: what a long trip flies at."""
         if not self.seconds:
             return {}
         used = {k: n - self.held.get(k, 0) for k, n in self.supplied.items()}
         out = {f"{k}/s": n / self.seconds for k, n in used.items()}
+        out.update({f"taken {k}/s": n / self.seconds for k, n in self.taken.items()})
         if self.km:
             out.update({f"{k}/1000 km": n / self.km * 1000 for k, n in used.items()})
             out.update({f"rebuilt {k}/1000 km": n / self.km * 1000 for k, n in self.rebuilt.items()})
+            out.update({f"taken {k}/1000 km": n / self.km * 1000 for k, n in self.taken.items()})
+            if self.generated_j:
+                out["fusion cells/1000 km"] = self.generated_j / FUSION_CELL_J / self.km * 1000
+        late = [r for r in self.log if r["seconds"] >= self.log[-1]["seconds"] / 2] if self.log else []
+        if len(late) > 1 and late[-1]["seconds"] > late[0]["seconds"]:
+            out["cruise km/s"] = (late[-1]["km"] - late[0]["km"]) / (late[-1]["seconds"] - late[0]["seconds"])
         if self.power_j:
             out["power MW"] = self.power_j / self.seconds / 1e6
         if self.generated_j:
@@ -142,7 +156,7 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
         "supplies": flight.supplies or None, "fuel": flight.fuel, "power": flight.power,
         "ammo": flight.ammo or None, "research": flight.research or None, "speed": SPEED,
         "primed": flight.primed or None, "start_speed": flight.start_speed or None,
-        "charged": flight.charged, "coolant": flight.coolant or None}))
+        "charged": flight.charged, "coolant": flight.coolant or None, "take": flight.take or None}))
     if "error" in setup:
         flown.error = f"flight: {setup['error']}"
         report.errors.append(flown.error)
@@ -162,8 +176,8 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.deaths = got["deaths"] if isinstance(got["deaths"], dict) else {}
             flown.cargo = {c["name"]: c["count"] for c in got.get("cargo") or [] if isinstance(c, dict)}
             # An empty Lua table comes back as a JSON list.
-            flown.supplied, flown.held, flown.rebuilt, flown.made = (got.get(k) if isinstance(got.get(k), dict) else {}
-                                                                     for k in ("supplied", "held", "rebuilt", "made"))
+            flown.supplied, flown.held, flown.rebuilt, flown.made, flown.taken = (
+                got.get(k) if isinstance(got.get(k), dict) else {} for k in ("supplied", "held", "rebuilt", "made", "taken"))
             flown.power_j = got.get("power_j") or 0.0
             flown.generated_j, flown.plant_j = got.get("generated_j") or 0.0, got.get("plant_j") or 0.0
             flown.brownout = got.get("brownout") or 0
