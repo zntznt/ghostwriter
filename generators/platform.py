@@ -33,6 +33,7 @@ HUB = 4  # the hub covers tiles -4..3 on both axes
 RAILGUN = (3, 5)  # tiles; Draftsman says 3x4 (NOTES.md)
 THRUSTER = (4, 5)
 GUN = 2
+ROCKET = 3  # rocket-turret, square
 CARGO_BAY = 4  # square; 20 hub slots while joined to the hub, directly or through other bays (NOTES.md)
 POLE = "medium-electric-pole"
 POLE_REACH = 9  # its wire reach, tiles
@@ -41,7 +42,11 @@ BIG_TARGETS = [f"{size}-{kind}-asteroid" for size in ("huge", "big") for kind in
                                                                                     "promethium")]
 # The game numbers priority targets from 1; Draftsman's default 0 makes it drop the turret (NOTES.md).
 TARGETS = [signatures.TargetID(index=i + 1, name=name) for i, name in enumerate(BIG_TARGETS)]
-AMMO = {"railgun-turret": "railgun-ammo", "gun-turret": "uranium-rounds-magazine"}
+# rockets=N: rocket turrets take the big asteroids (3 rockets each, 10% explosion resistance)
+# and the railguns keep to the huge ones, which take 99% off rockets (NOTES.md).
+HUGE_TARGETS = [signatures.TargetID(index=i + 1, name=name) for i, name in enumerate(BIG_TARGETS[:4])]
+ROCKET_TARGETS = [signatures.TargetID(index=i + 1, name=name) for i, name in enumerate(BIG_TARGETS[4:])]
+AMMO = {"railgun-turret": "railgun-ammo", "gun-turret": "uranium-rounds-magazine", "rocket-turret": "rocket"}
 # fuel=True: two asteroid collectors in the railgun row, a tile clear of the railguns
 # beside them (their front corners then sit 45 degrees off a railgun's axis) and
 # one apart, with the belt leaving from between them.
@@ -186,7 +191,7 @@ def _power_plant(bp: Blueprint, rx: int, first: bool):
 
 
 def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, layout="rows", cargo_bays=0,
-          margin=0, fuel=False, reserve=False, power=False, side_guns=0, promethium=False) -> Blueprint:
+          margin=0, fuel=False, reserve=False, power=False, side_guns=0, promethium=False, rockets=0) -> Blueprint:
     """layout: "rows" puts the gun turrets in a row behind the railguns; "front"
     spreads them through the railguns' row, front edges flush. A railgun fires
     only in a 72-degree arc ahead of it (turn_range 0.2, NOTES.md), so turrets
@@ -224,7 +229,12 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
     promethium (with fuel) has the collectors take promethium chunks too, and a
     filter inserter sends them off the chunk belt along the gap above the hub and
-    into it: the hub holds them, one a slot."""
+    into it: the hub holds them, one a slot.
+
+    rockets stands that many rocket turrets in a row behind the gun turrets (layout
+    rows) for the big asteroids, and the railguns keep to the huge ones: 3 rockets
+    kill a big asteroid with the flight research, at a hundredth of a hub slot each
+    against a railgun shot's tenth (NOTES.md)."""
     if railguns < 1 or thrusters < 1:
         raise ValueError("a platform needs at least one railgun and one thruster")
     if layout not in ("rows", "front"):
@@ -245,6 +255,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         raise ValueError("promethium=True needs fuel=True: its collectors and chunk belt")
     if promethium and front_gap < 2:
         raise ValueError("promethium=True needs front_gap 2 or more: its belt runs in the gap above the hub")
+    if rockets < 0 or (rockets and layout != "rows"):
+        raise ValueError("rockets is a count of rocket turrets behind the gun turrets (layout rows)")
     rw, rh = RAILGUN
     tw, th = THRUSTER
     gw = GUN
@@ -253,11 +265,14 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
            + (railguns + (guns if front else 0) - 1) * spacing + ((FUEL_SLOT + spacing) if fuel else 0))
     widths = [row, thrusters * tw + (thrusters - 1) * spacing,
               0 if front else guns * gw + max(guns - 1, 0) * spacing, 2 * HUB + 2 + 2 * CARGO_BAY * -(-cargo_bays // 4)]
-    half = max(*widths[:2], widths[2] + (gw if fuel else 0), widths[3]) // 2 + 1  # the belt may push a gun turret on
-    # North to south: railguns, a row of poles, gun turrets (rows), the gap, the hub.
-    # Railgun shots hit everything along their line, own turrets included, so
-    # nothing stands in front.
-    gun_top = -HUB - front_gap - (0 if front or not guns else gw)
+    rocket_row = rockets * ROCKET + max(rockets - 1, 0) * spacing
+    half = max(*widths[:2], widths[2] + (gw if fuel else 0), rocket_row + (ROCKET if fuel else 0),
+               widths[3]) // 2 + 1  # the belt may push a turret on
+    # North to south: railguns, a row of poles, gun turrets (rows), rocket turrets, the
+    # gap, the hub. Railgun shots hit everything along their line, own turrets included,
+    # so nothing stands in front.
+    rocket_top = -HUB - front_gap - (ROCKET if rockets else 0)
+    gun_top = rocket_top - (0 if front or not guns else gw)
     rail_top = gun_top - 1 - rh
     top = rail_top
     bottom = HUB - 1 + back_gap + th  # last row of the thrusters: the foundation ends here
@@ -282,7 +297,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     bp.label = (f"Platform: {count(railguns, 'railgun')}, {count(guns, 'gun turret')}{' among them' if front else ''}, "
                 f"{count(thrusters, 'thruster')}" + (f", {count(cargo_bays, 'cargo bay')}" if cargo_bays else "")
                 + (", makes its fuel" if fuel else "") + (" with a reserve" if reserve else "")
-                + (", powers itself" if power else "") + (", keeps promethium" if promethium else ""))
+                + (", powers itself" if power else "") + (", keeps promethium" if promethium else "")
+                + (f", {count(rockets, 'rocket turret')}" if rockets else ""))
     where = "between the railguns" if front else "behind them"
     bp.description = ("Railguns across the front for big and huge asteroids only, gun turrets " + where +
                       " for the rest, thrusters at the back, the hub in the middle (the blueprint's origin is the "
@@ -296,7 +312,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     if power:
         # The game keeps 500 bytes of a description: with power, a shorter one.
         bp.description = (f"Railguns in front for big and huge asteroids, gun turrets {'among' if front else 'behind'} "
-                          "them, the hub at the origin. Supply railgun ammo and magazines" +
+                          "them, the hub at the origin. Supply railgun ammo" + (", rockets" if rockets else "") +
+                          " and magazines" +
                           ("; it makes thruster fuel (research space-platform-thruster)" +
                            (", fill its tanks first" if reserve else "") if fuel else " and thruster fuel") +
                           ". Fusion power (research cryogenic-plant): before leaving, fill the reactors with cells (more in the hub) and "
@@ -335,6 +352,14 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
                 shift += xb + 1 - gx
                 gx = xb + 1
             bp.entities.append("gun-turret", tile_position=(gx, gun_top))
+        left, shift = -(rocket_row // 2), 0
+        for k in range(rockets):
+            rx = left + k * (ROCKET + spacing) + shift
+            if fuel and rx <= xb < rx + ROCKET:  # leave the belt's column clear
+                shift += xb + 1 - rx
+                rx = xb + 1
+            bp.entities.append("rocket-turret", tile_position=(rx, rocket_top), priority_list=ROCKET_TARGETS)
+            bp.entities[-1].extra_keys = {"ignore-unprioritised": True}  # the game's key; Draftsman's is dropped
     for i in range(railguns + 1):
         for _ in range(share[i]):
             bp.entities.append("gun-turret", tile_position=(x, rail_top))
@@ -355,7 +380,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
             x += FUEL_SLOT + spacing
         if i < railguns:
             cx = x + rw / 2
-            bp.entities.append("railgun-turret", position=(cx, rail_top + rh / 2), priority_list=TARGETS)
+            bp.entities.append("railgun-turret", position=(cx, rail_top + rh / 2),
+                               priority_list=HUGE_TARGETS if rockets else TARGETS)
             bp.entities[-1].extra_keys = {"ignore-unprioritised": True}  # the game's key; Draftsman's is dropped
             poles.append(int(cx))  # behind it: inside its supply area
             x += rw + spacing
