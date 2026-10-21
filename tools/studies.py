@@ -135,18 +135,22 @@ def platform_promethium(server) -> dict:
 
 BELT_START = 0.4  # where huge promethium asteroids are common (NOTES.md)
 BELT_SPACE = {"railguns": [2, 4, 6, 8, 10, 12, 16, 20], "guns": [0, 3, 6, 9, 12, 16, 20, 24], "thrusters": [1, 2, 3]}
+# platform-belt's best (20, 24, 1) was its largest shape: platform-wide goes on from there. Its
+# flights are 600 s: at 300 s, 28/28 and 32/28 survived and the capped mean couldn't tell them apart.
+WIDE_SPACE = {"railguns": [16, 20, 24, 28, 32, 40, 48], "guns": [20, 24, 28, 32, 40, 48], "thrusters": [1, 2]}
+WIDE_START = {"railguns": 20, "guns": 24, "thrusters": 1}
 
 
-def platform_belt(server) -> dict:
+def platform_belt(server, space=BELT_SPACE, start=PLATFORM_BEST, seconds=300) -> dict:
     """Which railgun, gun turret and thruster counts live longest where promethium
-    is? Coordinate descent from the platform-shape best, each design flown 4 times
-    from BELT_START with HIGH_RESEARCH for up to 300 s, scored by mean seconds
-    lived, moving only on a 5% gain (flights differ run to run). Each trial also
-    counts what killed what, asteroids by size."""
+    is? Coordinate descent over space from start (the platform-shape best), each
+    design flown 4 times from BELT_START with HIGH_RESEARCH for up to seconds,
+    scored by mean seconds lived, moving only on a 5% gain (flights differ run to
+    run). Each trial also counts what killed what, asteroids by size."""
     from tools.optimise import FlightEvaluator, descend
 
     evaluate = FlightEvaluator(server, "platform", runs=4)
-    fixed = {"research": HIGH_RESEARCH, "start": BELT_START}
+    fixed = {"research": HIGH_RESEARCH, "start": BELT_START, "seconds": seconds}
 
     def logged(params):
         t = evaluate({**params, **fixed})
@@ -164,7 +168,7 @@ def platform_belt(server) -> dict:
             print(f"{t.params}: FAIL {t.error}", file=sys.stderr, flush=True)
         return t
 
-    best, trials = descend(logged, BELT_SPACE, PLATFORM_BEST, score=lambda t: t.rates["seconds_mean"], margin=0.05)
+    best, trials = descend(logged, space, start, score=lambda t: t.rates["seconds_mean"], margin=0.05)
     print(f"best: {best.params if best else None}; trials run: {evaluate.ran}", file=sys.stderr)
     return {"start": BELT_START, "research": HIGH_RESEARCH, "best": best.params if best else None,
             "best_rates": best.rates if best else None,
@@ -202,4 +206,5 @@ def platform_front(server) -> dict:
 
 
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
-           "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front}
+           "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
+           "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600)}
