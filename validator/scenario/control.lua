@@ -457,12 +457,15 @@ end
 -- Joules in the stand-in power source, which makes none: what it loses is what the platform used.
 local BUDGET = 1e15
 
--- Ammo in the turrets and fluid in the thrusters: supplied, but not used yet.
-local function held_by(thrusters, turrets)
+-- Ammo in the turrets and fluid in the thrusters and in any tank (a reserve): supplied,
+-- but not used yet.
+local function held_by(thrusters, turrets, tanks)
   local held = {}
-  for _, t in pairs(thrusters) do
-    if t.valid then
-      for name, amount in pairs(t.get_fluid_contents()) do held[name] = (held[name] or 0) + amount end
+  for _, list in pairs{thrusters, tanks} do
+    for _, t in pairs(list) do
+      if t.valid then
+        for name, amount in pairs(t.get_fluid_contents()) do held[name] = (held[name] or 0) + amount end
+      end
     end
   end
   for _, t in pairs(turrets) do
@@ -517,7 +520,7 @@ local function flight_tick()
     fl.cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()
     fl.hub_health = p.hub.health
     if fl.source and fl.source.valid then fl.power_j = BUDGET - fl.source.energy end
-    fl.held = held_by(fl.thrusters, fl.turrets)
+    fl.held = held_by(fl.thrusters, fl.turrets, p.surface.find_entities_filtered{type = "storage-tank"})
     -- What the platform's own machines made (script inserts don't count).
     local stats = p.force.get_fluid_production_statistics(p.surface)
     fl.made = {}

@@ -124,6 +124,16 @@ class Cache(unittest.TestCase):
                                           "rebuilt space-platform-foundation/s": 20.0, "rebuilt gun-turret/s": 0.1})
         self.assertEqual(Flown("f").budget(), {})
 
+    def test_flown_budget_keeps_what_a_fuel_maker_held_at_the_end(self):
+        # On fuel made on board, what was left in the thrusters and any reserve tank at
+        # the end: whether a reserve ran out.
+        from validator.flight import Flown
+
+        flown = Flown("f", seconds=10.0, supplied={"thruster-fuel": 26000.0},
+                      held={"thruster-fuel": 12000.0, "railgun-ammo": 5.0}, made={"thruster-fuel": 300.0})
+        self.assertEqual(flown.budget()["held thruster-fuel"], 12000.0)
+        self.assertNotIn("held railgun-ammo", flown.budget())
+
     def test_flight_trials_average_the_budget_and_the_survivors_apart(self):
         from types import SimpleNamespace
         from unittest import mock

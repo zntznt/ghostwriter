@@ -52,10 +52,11 @@ class Flight:
     # Technology series -> levels researched, e.g. {"railgun-damage": 4} for railgun-damage 1 to 4.
     # Set on the test force for the flight and undone after it; the test force has none otherwise.
     research: dict[str, int] = field(default_factory=dict)
-    # As if it arrived from the last leg: thrusters full once at the start, and moving
-    # (km a tick). A platform that makes its own fuel needs both: standing still it
-    # meets too few asteroids to make any (NOTES.md).
-    primed: bool = False
+    # As if it arrived from the last leg: that much of each fluid into each thruster once
+    # at the start (it spreads into the line and any tank on it), and moving (km a tick).
+    # A platform that makes its own fuel needs both: standing still it meets too few
+    # asteroids to make any (NOTES.md).
+    primed: float = 0
     start_speed: float = 0.0
 
 
@@ -86,7 +87,8 @@ class Flown:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
 
     def budget(self) -> dict[str, float]:
-        """What the flight used a second: each supply (given less held), power, and each thing rebuilt."""
+        """What the flight used a second: each supply (given less held), power, and each thing rebuilt;
+        and of what it made on board, what was still held at the end (in the thrusters and any reserve)."""
         if not self.seconds:
             return {}
         out = {f"{k}/s": (n - self.held.get(k, 0)) / self.seconds for k, n in self.supplied.items()}
@@ -94,6 +96,7 @@ class Flown:
             out["power MW"] = self.power_j / self.seconds / 1e6
         out.update({f"rebuilt {k}/s": n / self.seconds for k, n in self.rebuilt.items()})
         out.update({f"made {k}/s": n / self.seconds for k, n in self.made.items()})
+        out.update({f"held {k}": self.held.get(k, 0.0) for k in self.made})
         return out
 
 
@@ -114,7 +117,7 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
         "blueprint": encode(data), "from": flight.origin, "to": flight.destination, "start": flight.start,
         "supplies": flight.supplies or None, "fuel": flight.fuel, "power": flight.power,
         "ammo": flight.ammo or None, "research": flight.research or None, "speed": SPEED,
-        "primed": PRIME if flight.primed else None, "start_speed": flight.start_speed or None}))
+        "primed": flight.primed or None, "start_speed": flight.start_speed or None}))
     if "error" in setup:
         flown.error = f"flight: {setup['error']}"
         report.errors.append(flown.error)

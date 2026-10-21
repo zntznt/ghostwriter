@@ -889,6 +889,49 @@ class PlatformFuel(unittest.TestCase):
         [plain] = platform.flight_tests()
         self.assertEqual((plain.fuel, plain.primed, plain.start_speed), (True, False, 0.0))
 
+    def test_reserve_tanks_sit_on_the_thrusters_west_inputs(self):
+        # reserve=True: a storage tank on each of the thruster's free west inputs, fuel on
+        # its top row and oxidizer on its middle one, joined straight to it, so the tank
+        # shares the line's one fill level (NOTES.md). On foundation, clear of the empty
+        # strip behind the thruster.
+        self.assertEqual(self.named("storage-tank"), [])  # fuel=True alone is unchanged
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            bp = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True,
+                                reserve=True).to_dict()["blueprint"]
+            with self.assertRaisesRegex(ValueError, "reserve"):
+                platform.build(railguns=32, guns=32, thrusters=1, reserve=True)
+        self.assertEqual(errors({"blueprint": bp}), [])
+        [t] = [e for e in bp["entities"] if e["name"] == "thruster"]
+        tx, ty = t["position"]["x"], t["position"]["y"]
+        tanks = sorted((e for e in bp["entities"] if e["name"] == "storage-tank"), key=lambda e: e["position"]["y"])
+        self.assertEqual([(e["position"]["x"], e["position"]["y"], e.get("direction", 0)) for e in tanks],
+                         [(tx - 3.5, ty - 3, 0), (tx - 3.5, ty + 1, 4)])
+        floor = {(p["position"]["x"], p["position"]["y"]) for p in bp["tiles"]}
+        seen = set()
+        for e in bp["entities"]:
+            for tile in tiles_of(e):
+                self.assertNotIn(tile, seen, e)
+                seen.add(tile)
+        for e in tanks:
+            self.assertLessEqual(set(tiles_of(e)), floor)
+        self.assertFalse({(x, y) for x in range(-2, 2) for y in range(15, 20)} & floor)  # behind the thruster
+
+    def test_flight_fills_the_reserve(self):
+        from draftsman.data import entities as protos
+
+        from validator.flight import PRIME
+
+        tank = protos.raw["storage-tank"]["fluid_box"]["volume"]
+        [flight] = platform.flight_tests(fuel=True, reserve=True)
+        self.assertFalse(flight.fuel)
+        self.assertGreater(flight.primed, PRIME + tank)  # more than the line and its tank hold: the game fills them
+        [alone] = platform.flight_tests(fuel=True)
+        self.assertEqual(alone.primed, PRIME)
+        # A control: the fuelled layout with fuel by script, flown as the plain one is.
+        [control] = platform.flight_tests(fuel=True, script_fuel=True)
+        self.assertEqual((control.fuel, control.primed, control.start_speed), (True, 0, 0.0))
+
 
 class Check(unittest.TestCase):
     def test_real_2_1_exports_have_no_errors(self):
