@@ -641,6 +641,77 @@ def platform_mix(server) -> dict:
             "supplies": MIX_STOCK, "trials": rows}
 
 
+# platform-mix's 16-railgun platform with more cargo bays: up to 24 fit inside its width
+# (NOTES.md). The trip model says the bays' slots go mostly to railgun ammo, which binds
+# first, so the extra ones hold it; the turrets still get theirs by script. Measured from
+# 0.1 too, where platform-mix interpolated between the edge and 0.2.
+NARROW = {**TRIP_PLATFORM, "railguns": 16, "guns": 16}
+BAY_COUNTS = [8, 16, 24]
+BAY_STARTS = [0.0, 0.1, 0.2]
+# Bays past 8 push the fuel module east toward the side end, where asteroids eat inward; with
+# none of its parts in the hub it went unrebuilt, and fuel and promethium collapsed (NOTES.md).
+# Enough for the worst 600 s measured, in 14 slots, for as much foundation.
+BAY_MODULE_SPARES = {"transport-belt": 200, "inserter": 100, "fast-inserter": 50, "asteroid-collector": 20,
+                     "crusher": 20, "chemical-plant": 20, "pipe": 100, "pipe-to-ground": 50, "storage-tank": 4}
+
+
+def bay_stock(bays: int, module_spares: bool = True) -> dict:
+    """MIX_STOCK for 8 bays, each bay past 8 full of railgun ammo (20 slots of 10), and the fuel
+    module's spares in place of foundation, so every count leaves the same slots free."""
+    import math
+
+    from draftsman.data import items
+
+    def slots(stock):
+        return sum(math.ceil(n / items.raw[k]["stack_size"]) for k, n in stock.items())
+
+    extra = 200 * (bays - 8)  # the hub refuses an insert of none
+    stock = {**MIX_STOCK, **({"railgun-ammo": MIX_STOCK.get("railgun-ammo", 0) + extra} if extra > 0 else {})}
+    if module_spares:
+        before = slots(stock)
+        stock.update(BAY_MODULE_SPARES)
+        stock["space-platform-foundation"] -= 100 * (slots(stock) - before)
+    return stock
+
+
+def platform_bays(server) -> dict:
+    """How many cargo bays should the 16-railgun platform carry? NARROW with each of BAY_COUNTS
+    flies 8 times from each of BAY_STARTS for up to 600 s with bay_stock and MIX_RESEARCH (with
+    construction-robotics): what it lives and flies, and per 1,000 km what it used, rebuilt and
+    brought in, the bays it lost by distance from the hub, and its hub slots (tools.trip). Rows
+    are named "N bays", so `python -m tools.trip RESULT --mode "N bays" --bays N` plans its trip."""
+    from tools import trip
+    from tools.optimise import FlightEvaluator
+
+    from generators.platform import PROMETHIUM
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for bays, spares in ((b, s) for b in BAY_COUNTS for s in (True, False)):
+        mode = f"{bays} bays" + ("" if spares else ", no module spares")
+        for start in BAY_STARTS:
+            t = evaluate({**NARROW, "cargo_bays": bays, "start": start, "seconds": 600, "supplies": bay_stock(bays, spares),
+                          "research": {**MIX_RESEARCH, "construction-robotics": 1}, "take": [PROMETHIUM]})
+            r = t.rates
+            row = {"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
+                   "ended": t.stalled, "error": t.error}
+            if t.passed:
+                used = trip.slots(trip.table({"trials": [row]}, mode)[start])
+                top = ", ".join(f"{k} {v:.2f}" for k, v in sorted(used.items(), key=lambda kv: -kv[1])[:5])
+                lost = ", ".join(f"|x| {k.split('|x| ')[1].split('/')[0]}: {v:.2f}" for k, v in sorted(r.items())
+                                 if k.startswith("cargo bays lost at") and k.endswith("/1000 km"))
+                print(f"{mode}, from {start:.0%}: {r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, "
+                      f"{r['km_mean']:,.0f} km mean, cruise {r.get('cruise km/s', 0):.1f} km/s; hub slots per "
+                      f"1,000 km {sum(used.values()):.2f} ({top}); bays lost per 1,000 km {lost or 'none'}; "
+                      f"promethium {r.get(f'taken {PROMETHIUM}/1000 km', 0):.2f}", file=sys.stderr, flush=True)
+            else:
+                print(f"{mode}, from {start:.0%}: FAIL {t.error}", file=sys.stderr, flush=True)
+            rows.append(row)
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": NARROW, "bays": BAY_COUNTS, "research": {**MIX_RESEARCH, "construction-robotics": 1},
+            "supplies": {b: bay_stock(b) for b in BAY_COUNTS}, "module spares": BAY_MODULE_SPARES, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
@@ -648,4 +719,4 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
            "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve,
            "platform-power": platform_power, "platform-plant": platform_plant, "platform-ammo": platform_ammo,
            "platform-sides": platform_sides, "platform-route": platform_route,
-           "platform-mix": platform_mix}
+           "platform-mix": platform_mix, "platform-bays": platform_bays}
