@@ -480,9 +480,49 @@ def platform_plant(server) -> dict:
             "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "modes": PLANT_MODES, "trials": rows}
 
 
+# The whole platform so far: its own fuel (with the reserve) and its own power, and the
+# hub's stock with plant spares. Only ammo is still supplied by script.
+FULL_PLATFORM = {**FILED_PLATFORM, "fuel": True, "reserve": True, "power": 2}
+FULL_STOCK = PLANT_MODES["plant spares"]
+# Uranium rounds can't be made in space (no uranium); piercing and firearm rounds can.
+MAGAZINES = ["uranium-rounds-magazine", "piercing-rounds-magazine", "firearm-magazine"]
+
+
+def per_1000_km(rates: dict) -> str:
+    """The supplies and rebuilds a flight used per 1,000 km flown, as one line."""
+    names = {"rebuilt space-platform-foundation/1000 km": "foundation",
+             "railgun-ammo/1000 km": "railgun ammo"} | {f"{m}/1000 km": "magazines" for m in MAGAZINES}
+    return ", ".join(f"{label} {rates[k]:,.1f}" for k, label in names.items() if k in rates)
+
+
+def platform_ammo(server) -> dict:
+    """What can the gun turrets fire that the platform could make? FULL_PLATFORM with
+    FULL_STOCK flies 8 times from each of BUDGET_STARTS for up to 600 s with
+    platform-budget's research, its gun turrets stocked with each of MAGAZINES: what it
+    lives and flies, and what it uses a second and per 1,000 km flown."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for start in BUDGET_STARTS:
+        for magazine in MAGAZINES:
+            t = evaluate({**FULL_PLATFORM, "start": start, "seconds": 600, "magazine": magazine,
+                          "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": FULL_STOCK})
+            r = t.rates
+            print(f"from {start:.0%}, {magazine}: " + (
+                f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
+                f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); {r.get(magazine + '/s', 0):.2f} magazines/s; "
+                f"per 1,000 km: {per_1000_km(r)}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+            rows.append({"start": start, "magazine": magazine, "passed": t.passed, "rates": r, "counts": t.counts,
+                         "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": FULL_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
+            "supplies": FULL_STOCK, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
            "platform-repair": platform_repair, "platform-foundation": platform_foundation,
            "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve,
-           "platform-power": platform_power, "platform-plant": platform_plant}
+           "platform-power": platform_power, "platform-plant": platform_plant, "platform-ammo": platform_ammo}

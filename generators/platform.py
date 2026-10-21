@@ -366,7 +366,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
 
 def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=False, reserve=False, script_fuel=False,
-                 power=False, **params):
+                 power=False, magazine=AMMO["gun-turret"], **params):
     """research: technology series -> levels researched; start: share of the route
     to begin at; supplies: items into the hub, which rebuilds from them (with
     construction-robotics researched) and repairs with repair packs
@@ -379,7 +379,8 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     flies: a control for what the module itself costs. A platform with power=True
     gets no stand-in power: its accumulator starts charged and its reactor's loop
     full of cold fluoroketone, as if readied in orbit, with CELLS fusion cells in
-    the hub unless supplies name some."""
+    the hub unless supplies name some. magazine: what the script stocks the gun
+    turrets with; uranium rounds can't be made in space, piercing rounds can."""
     from validator.flight import PRIME, Flight
 
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
@@ -390,5 +391,5 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     # With reserve, more than the thruster, its line and its tank hold: the game fills them.
     primed = PRIME + (2 * entities.raw["storage-tank"]["fluid_box"]["volume"] if reserve else 0) if on_board else 0
     return [Flight(shape, seconds=seconds, start=start, supplies=supplies, fuel=not on_board, power=not power,
-                   ammo=AMMO, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
+                   ammo={**AMMO, "gun-turret": magazine}, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
                    charged=power, coolant=COOLANT if power else 0)]

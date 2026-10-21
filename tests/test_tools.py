@@ -709,6 +709,12 @@ class Platform(unittest.TestCase):
         self.assertEqual(flight.supplies, {"repair-pack": 100})
         self.assertEqual(platform.flight_tests()[0].supplies, {})
 
+    def test_flight_takes_a_magazine_for_the_gun_turrets(self):
+        # Uranium can't be made in space: a flight can stock piercing rounds instead.
+        [flight] = platform.flight_tests(magazine="piercing-rounds-magazine")
+        self.assertEqual(flight.ammo, {"railgun-turret": "railgun-ammo", "gun-turret": "piercing-rounds-magazine"})
+        self.assertEqual(platform.flight_tests()[0].ammo, platform.AMMO)
+
     def test_filed_platform_is_what_build_makes(self):
         # New options leave the default as it was: the filed design still builds the same.
         filed = json.loads((LIBRARY / "platforms" / "platform-32-railguns-32-gun-turrets-1-thruster-8-cargo-bays.json")

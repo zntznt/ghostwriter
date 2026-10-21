@@ -621,6 +621,46 @@ class Validator(unittest.TestCase):
         self.assertGreater(got["cells"], 0)
         self.assertNotIn("fusion-reactor", [c["name"] for c in hub])  # the spare went into the rebuild
 
+    def test_gun_turret_bullets_with_the_flight_research(self):
+        # A bullet hits for its base damage x (1 + bullet damage) x (1 + gun-turret attack);
+        # with the flight research both are +180%, so 7.84 x base. Piercing rounds (8,
+        # dump) hit a small asteroid (100 health, no physical resistance) for 62.72, and a
+        # medium one (10% physical) for 56.448; uranium rounds (24) kill a small one with
+        # one bullet. An asteroid placed by script in front of one turret, the platform
+        # standing in Nauvis orbit.
+        from tools.studies import HIGH_RESEARCH
+
+        data = platform.build(railguns=1, guns=2, thrusters=1).to_dict()
+        place = ("/sc local s = storage.flight.platform.surface local t = s.find_entities_filtered"
+                 "{name = 'gun-turret'}[1] local inv = t.get_inventory(defines.inventory.turret_ammo) inv.clear() "
+                 "inv.insert{name = '%s', count = 10} storage.probe = s.create_entity{name = '%s', "
+                 "position = {t.position.x, t.position.y - 10}} rcon.print(storage.probe.health)")
+        health = "/sc rcon.print(storage.probe.valid and storage.probe.health or 0)"
+
+        def first_hit(ammo, rock):
+            full = float(self.server.command(place % (ammo, rock)))
+            for _ in range(60):
+                _step(self.server, 1, timeout=30)
+                now = float(self.server.command(health))
+                if now < full:
+                    return round(full - now, 3)
+            self.fail(f"{ammo} never hit {rock}")
+
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "power": True,
+                "research": HIGH_RESEARCH}))
+            self.assertNotIn("error", setup)
+            hits = {(ammo, rock): first_hit(ammo, rock) for ammo, rock in (
+                ("piercing-rounds-magazine", "small-metallic-asteroid"),
+                ("piercing-rounds-magazine", "medium-metallic-asteroid"),
+                ("uranium-rounds-magazine", "small-metallic-asteroid"))}
+        finally:
+            self.server.call("flight_teardown")
+        self.assertAlmostEqual(hits["piercing-rounds-magazine", "small-metallic-asteroid"], 62.72, places=2)
+        self.assertAlmostEqual(hits["piercing-rounds-magazine", "medium-metallic-asteroid"], 56.448, places=2)
+        self.assertEqual(hits["uranium-rounds-magazine", "small-metallic-asteroid"], 100)  # all it had
+
     def test_a_fusion_plant_runs_on_little_coolant(self):
         # The cooler turns hot fluoroketone back cold with nothing lost, and a loop in use
         # holds only a few dozen in flight: one plant carries a 75 MW load on 50 cold, and
