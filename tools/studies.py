@@ -322,8 +322,36 @@ def platform_budget(server) -> dict:
             "supplies": BAY_SPARES, "trials": rows}
 
 
+def platform_fuel(server) -> dict:
+    """Does the filed platform fly on fuel it makes itself (fuel=True), and what does
+    that cost it? Both designs fly 8 times from each of BUDGET_STARTS for up to 600 s
+    with platform-budget's stock and research: the filed one with fuel by script, the
+    fuelled one with none after its start (thrusters primed, moving at CRUISE)."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for start in BUDGET_STARTS:
+        for fuel in (False, True):
+            t = evaluate({**FILED_PLATFORM, **({"fuel": True} if fuel else {}), "start": start, "seconds": 600,
+                          "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": BAY_SPARES})
+            r = t.rates
+            module = {k: n for k, n in t.counts.items()
+                      if k.split(" <- ")[0] in ("asteroid-collector", "crusher", "chemical-plant", "transport-belt")}
+            print(f"from {start:.0%}, {'fuel made on board' if fuel else 'fuel by script'}: " + (
+                f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean; "
+                f"made {r.get('made thruster-fuel/s', 0):.1f} fuel/s, {r.get('made thruster-oxidizer/s', 0):.1f} "
+                f"oxidizer/s; module lost {module or 'nothing'}" if t.passed else f"FAIL {t.error}"),
+                file=sys.stderr, flush=True)
+            rows.append({"start": start, "fuel": fuel, "passed": t.passed, "rates": r, "counts": t.counts,
+                         "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
+            "supplies": BAY_SPARES, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
            "platform-repair": platform_repair, "platform-foundation": platform_foundation,
-           "platform-budget": platform_budget}
+           "platform-budget": platform_budget, "platform-fuel": platform_fuel}
