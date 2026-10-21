@@ -94,8 +94,12 @@ class Cache(unittest.TestCase):
             got["flight"] = research
             return [Flight("f")]
 
-        flights = iter([Flown("f", km=100.0, seconds=10.0, ended="hub destroyed"),
-                        Flown("f", km=300.0, seconds=30.0, ended="hub destroyed"),
+        flights = iter([Flown("f", km=100.0, seconds=10.0, ended="hub destroyed",
+                              deaths={"huge-oxide-asteroid <- railgun-turret": 2,
+                                      "huge-promethium-asteroid <- railgun-turret": 1,
+                                      "space-platform-hub <- big-oxide-asteroid": 1}),
+                        Flown("f", km=300.0, seconds=30.0, ended="hub destroyed",
+                              deaths={"huge-carbonic-asteroid <- railgun-turret": 4}),
                         Flown("f", km=500.0, seconds=60.0, survived=True)])
         ev = optimise.FlightEvaluator.__new__(optimise.FlightEvaluator)
         ev.module = SimpleNamespace(build=build, flight_tests=flight_tests)
@@ -106,6 +110,9 @@ class Cache(unittest.TestCase):
         self.assertEqual(trial.rates["km_mean"], 300.0)
         self.assertAlmostEqual(trial.rates["survived"], 1 / 3)
         self.assertEqual(trial.stalled, {"hub destroyed": 2, "survived": 1})
+        # Deaths summed over the flights, asteroids by size.
+        self.assertEqual(trial.counts, {"huge asteroid <- railgun-turret": 7,
+                                        "space-platform-hub <- big asteroid": 1})
 
     def test_fingerprint_changes_with_the_code(self):
         with tempfile.TemporaryDirectory() as tmp:

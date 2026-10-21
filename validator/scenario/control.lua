@@ -581,12 +581,13 @@ local function footprints(entities, dx, dy)
   return tiles
 end
 
-local function source_for(s, area, poles)
-  local spot = s.find_non_colliding_position("medium-electric-pole", {area[2][1] + 2, area[1][2] + 2}, 64, 1)
+-- at: where to put the source, else the free spot nearest the area's corner.
+local function source_for(s, area, poles, at)
+  local spot = at or s.find_non_colliding_position("medium-electric-pole", {area[2][1] + 2, area[1][2] + 2}, 64, 1)
   local helper = s.create_entity{name = "medium-electric-pole", position = spot, force = "player"}
   local eei = s.create_entity{
     name = "electric-energy-interface", force = "player",
-    position = s.find_non_colliding_position("electric-energy-interface", spot, 3, 0.5),
+    position = at and {at[1] + 2.5, at[2] + 0.5} or s.find_non_colliding_position("electric-energy-interface", spot, 3, 0.5),
   }
   eei.power_production = 1e9
   eei.electric_buffer_size = 1e9
@@ -1006,7 +1007,18 @@ remote.add_interface("ghostwriter", {
           poles[#poles + 1] = e
         end
       end
-      if poles[1] then helpers_ = source_for(s, {{-64, -64}, {64, 64}}, poles) end
+      -- The source stands in for power the design doesn't make yet. On the
+      -- platform it took a free foundation tile among the turrets (or found
+      -- none on a wide one), where asteroids destroyed it and cut the power,
+      -- or, made indestructible, it would shield them. Instead it stands on
+      -- empty space well behind, past the thrusters' exhaust (90 tiles), wired
+      -- by script, and can't be destroyed.
+      local back = 0
+      for _, t in pairs(s.find_tiles_filtered{name = "space-platform-foundation"}) do
+        back = math.max(back, t.position.y)
+      end
+      if poles[1] then helpers_ = source_for(s, nil, poles, {0.5, back + 120.5}) end
+      for _, e in pairs(helpers_) do e.destructible = false end
     end
     storage.flight = {platform = p, surface = s.index, connection = connection, length = proto.length,
                       reversed = reversed, from_start = start, furthest = start, speed_max = 0, deaths = {}, fuel = args.fuel, ammo = args.ammo,

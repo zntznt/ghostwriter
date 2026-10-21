@@ -11,7 +11,8 @@ from draftsman.blueprintable import Blueprint
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import assembly_row, factory, fluid_block, fluid_row, gated_requester, production, smelting_column
+from generators import (assembly_row, factory, fluid_block, fluid_row, gated_requester, platform, production,
+                        smelting_column)
 from tools.codec import decode, encode
 from tools import rates
 from tools.factorio import locate
@@ -436,6 +437,34 @@ class Validator(unittest.TestCase):
         finally:
             self.server.call("flight_teardown")
         self.assertIn("start must be", self.server.call("flight_setup", json.dumps({**args, "start": 1}))["error"])
+
+    def test_flight_power_source_stands_behind_and_cannot_be_destroyed(self):
+        # On the platform it took a free foundation tile among the turrets, where
+        # asteroids destroyed it (in every flight 40% out), and a wide platform had
+        # none, so setup failed. It stands on empty space behind instead, past the
+        # thrusters' exhaust, and it powers the turrets from there.
+        data = platform.build(railguns=10, guns=12, thrusters=1).to_dict()
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "solar-system-edge", "to": "shattered-planet", "power": True}))
+            self.assertNotIn("error", setup)
+            _step(self.server, 60, timeout=60)
+            got = json.loads(self.server.command(
+                "/sc local fl = storage.flight local s = fl.platform.surface local back = 0 "
+                "for _, t in pairs(s.find_tiles_filtered{name = 'space-platform-foundation'}) do "
+                "back = math.max(back, t.position.y) end local out = {back = back, helpers = {}} "
+                "for _, e in pairs(fl.helpers) do out.helpers[#out.helpers + 1] = {y = e.position.y, "
+                "destructible = e.destructible, tile = s.get_tile(e.position).name} end "
+                "out.energy = s.find_entities_filtered{name = 'railgun-turret', limit = 1}[1].energy "
+                "rcon.print(helpers.table_to_json(out))"))
+        finally:
+            self.server.call("flight_teardown")
+        self.assertEqual(len(got["helpers"]), 2)  # its pole and the source
+        for h in got["helpers"]:
+            self.assertFalse(h["destructible"])
+            self.assertEqual(h["tile"], "empty-space")
+            self.assertGreater(h["y"], got["back"] + 90)
+        self.assertGreater(got["energy"], 0)
 
     def test_thrusters_need_empty_space_behind(self):
         # A thruster's exhaust needs empty space behind it (about 88 tiles):

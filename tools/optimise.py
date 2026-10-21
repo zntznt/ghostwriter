@@ -33,9 +33,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / ".optimise-cache"
 # What a trial's result depends on besides its parameters: generators and the
-# tools they use, and the flow test harness on both sides.
-SOURCES = ("generators/*.py", "tools/rates.py", "tools/layout.py", "tools/pipes.py", "tools/inserter_rates.json",
-           "validator/flow.py", "validator/scenario/control.lua")
+# tools they use, how a trial is run and scored (this file), and the flow and
+# flight test harnesses on both sides.
+SOURCES = ("generators/*.py", "tools/optimise.py", "tools/rates.py", "tools/layout.py", "tools/pipes.py",
+           "tools/inserter_rates.json", "validator/flow.py", "validator/flight.py", "validator/scenario/control.lua")
 
 
 @dataclass
@@ -46,6 +47,17 @@ class Trial:
     windows: int = 0  # how many were measured
     stalled: dict[str, int] = field(default_factory=dict)
     error: str = ""  # the build refused, or the test couldn't run
+    counts: dict[str, int] = field(default_factory=dict)  # flights: deaths over all of them (by_size)
+
+
+def by_size(deaths: dict[str, int]) -> dict[str, int]:
+    """A flight's deaths ("entity <- cause") with asteroids named by size alone:
+    "huge-promethium-asteroid <- railgun-turret" counts as "huge asteroid <- railgun-turret"."""
+    out = Counter()
+    for key, n in deaths.items():
+        out[" <- ".join(f"{part.split('-')[0]} asteroid" if part.endswith("-asteroid") else part
+                        for part in key.split(" <- "))] += n
+    return dict(out)
 
 
 def fingerprint(patterns=SOURCES, root=ROOT) -> str:
@@ -142,7 +154,8 @@ class FlightEvaluator(GameEvaluator):
         return Trial(params, True, {"km_mean": sum(km) / len(km), "km_min": min(km), "km_max": max(km),
                                     "seconds_mean": sum(f.seconds for f in flights) / len(flights),
                                     "survived": sum(f.survived for f in flights) / len(flights)},
-                     windows=len(flights), stalled=dict(Counter(f.ended or "survived" for f in flights)))
+                     windows=len(flights), stalled=dict(Counter(f.ended or "survived" for f in flights)),
+                     counts=dict(sum((Counter(by_size(f.deaths)) for f in flights), Counter())))
 
 
 def grid(evaluate, space: dict[str, list], base: dict | None = None) -> list[Trial]:
