@@ -350,8 +350,60 @@ def platform_fuel(server) -> dict:
             "supplies": BAY_SPARES, "trials": rows}
 
 
+# The fuel module's own parts, for the hub to rebuild (platform-fuel lost belts, collectors and
+# plants with none in stock), in 9 slots 1,000 foundation gave up: the hub's 219 (59 + 8 bays) stay full.
+MODULE_SPARES = {"transport-belt": 50, "inserter": 50, "fast-inserter": 20, "asteroid-collector": 10, "crusher": 10,
+                 "chemical-plant": 10, "pipe": 50, "pipe-to-ground": 20, "storage-tank": 4}
+FUEL_SPARES = {**BAY_SPARES, **MODULE_SPARES, "space-platform-foundation": 19800}
+RESERVE_MODES = {  # mode -> (build and flight parameters, the hub's stock)
+    "fuel by script": ({}, BAY_SPARES),
+    "made on board": ({"fuel": True}, BAY_SPARES),
+    "made on board, reserve": ({"fuel": True, "reserve": True}, BAY_SPARES),
+    "made on board, reserve, module spares": ({"fuel": True, "reserve": True}, FUEL_SPARES),
+}
+# What the fuelled layout costs, on fuel by script: with and without the module's spares, and
+# the plain layout as wide (fuel=True adds FUEL_SLOT + spacing = 10 columns, 5 a side).
+MODULE_CONTROLS = {
+    "fuelled layout, fuel by script": ({"fuel": True, "script_fuel": True}, BAY_SPARES),
+    "fuelled layout, fuel by script, module spares": ({"fuel": True, "script_fuel": True}, FUEL_SPARES),
+    "plain, as wide (margin 5)": ({"margin": 5}, BAY_SPARES),
+}
+
+
+def platform_reserve(server) -> dict:
+    """Does a fuel reserve filled before leaving (reserve=True) get the fuelled platform
+    going from the solar system edge, and do the module's spares keep it alive? Each of
+    RESERVE_MODES flies 8 times from each of BUDGET_STARTS, and each of MODULE_CONTROLS
+    8 times from BELT_START, for up to 600 s with platform-budget's research."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    runs = [(start, mode, how) for start in BUDGET_STARTS for mode, how in RESERVE_MODES.items()]
+    runs += [(BELT_START, mode, how) for mode, how in MODULE_CONTROLS.items()]
+    rows = []
+    for start, mode, (extra, supplies) in runs:
+        t = evaluate({**FILED_PLATFORM, **extra, "start": start, "seconds": 600,
+                      "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": supplies})
+        r = t.rates
+        module = {k: n for k, n in t.counts.items()
+                  if k.split(" <- ")[0] in ("asteroid-collector", "crusher", "chemical-plant", "transport-belt",
+                                            "storage-tank")}
+        print(f"from {start:.0%}, {mode}: " + (
+            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
+            f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); made {r.get('made thruster-fuel/s', 0):.1f} fuel/s and "
+            f"{r.get('made thruster-oxidizer/s', 0):.1f} oxidizer/s, held at the end "
+            f"{r.get('held thruster-fuel', 0):,.0f} and {r.get('held thruster-oxidizer', 0):,.0f}; "
+            f"module lost {module or 'nothing'}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+        rows.append({"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
+                     "ended": t.stalled, "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
+            "modes": {k: {"extra": e, "supplies": s} for k, (e, s) in {**RESERVE_MODES, **MODULE_CONTROLS}.items()},
+            "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
            "platform-repair": platform_repair, "platform-foundation": platform_foundation,
-           "platform-budget": platform_budget, "platform-fuel": platform_fuel}
+           "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve}
