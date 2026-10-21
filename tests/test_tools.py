@@ -709,6 +709,42 @@ class Platform(unittest.TestCase):
         self.assertEqual(flight.supplies, {"repair-pack": 100})
         self.assertEqual(platform.flight_tests()[0].supplies, {})
 
+    def test_side_guns_stand_at_both_side_ends(self):
+        # Asteroids eat foundation from the side ends inward, past the gun row's reach
+        # (NOTES.md): side_guns stands that many gun turrets in a column at each outer
+        # edge, from the gun row down, on foundation, clear of everything else and out
+        # of every railgun's arc. Nothing else changes.
+        params = {"railguns": 32, "guns": 32, "thrusters": 1, "cargo_bays": 8, "fuel": True, "reserve": True,
+                  "power": 2}
+        plain, sides = self.build(**params), self.build(**params, side_guns=4)
+        self.assertEqual(sides["entities"][:len(plain["entities"])], plain["entities"])
+        self.assertEqual(sides["tiles"], plain["tiles"])
+        added = sides["entities"][len(plain["entities"]):]
+        self.assertEqual([e["name"] for e in added], ["gun-turret"] * 8)
+        floor = {(t["position"]["x"], t["position"]["y"]) for t in sides["tiles"]}
+        west, east = min(x for x, _ in floor), max(x for x, _ in floor)
+        taken = {t for e in plain["entities"] for t in footprint(e)}
+        for g in added:
+            tiles = footprint(g)
+            self.assertTrue(set(tiles) <= floor, g)
+            self.assertFalse(set(tiles) & taken, g)
+            self.assertIn(min(x for x, _ in tiles) if g["position"]["x"] < 0 else max(x for x, _ in tiles),
+                          (west, east))
+            taken |= set(tiles)
+        self.assertEqual(sum(g["position"]["x"] < 0 for g in added), 4)
+        rails = [e for e in sides["entities"] if e["name"] == "railgun-turret"]
+        for r in rails:
+            for g in added:
+                for cx in (-1, 1):
+                    for cy in (-1, 1):
+                        dx = g["position"]["x"] + cx - r["position"]["x"]
+                        ahead = r["position"]["y"] - (g["position"]["y"] + cy)
+                        if ahead > 0:
+                            self.assertGreater(math.degrees(math.atan2(abs(dx), ahead)), 36, g)
+        self.assertEqual(errors({"blueprint": sides}), [])
+        with self.assertRaises(ValueError):
+            self.build(**params, side_guns=50)  # more than the side ends hold
+
     def test_flight_takes_a_magazine_for_the_gun_turrets(self):
         # Uranium can't be made in space: a flight can stock piercing rounds instead.
         [flight] = platform.flight_tests(magazine="piercing-rounds-magazine")

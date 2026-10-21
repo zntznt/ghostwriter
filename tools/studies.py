@@ -520,9 +520,39 @@ def platform_ammo(server) -> dict:
             "supplies": FULL_STOCK, "trials": rows}
 
 
+SIDE_MODES = {"no side guns": {}, "5 side guns a side": {"side_guns": 5}}  # 5: as many as the ends hold
+
+
+def platform_sides(server) -> dict:
+    """Do gun turrets at the side ends, where asteroids eat foundation first, save what
+    the hub rebuilds? FULL_PLATFORM with each of SIDE_MODES flies 8 times from BELT_START
+    for up to 600 s with FULL_STOCK and platform-budget's research: what it lives and
+    flies, and what it used and rebuilt per 1,000 km flown."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    rows = []
+    for mode, extra in SIDE_MODES.items():
+        t = evaluate({**FULL_PLATFORM, **extra, "start": BELT_START, "seconds": 600,
+                      "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": FULL_STOCK})
+        r = t.rates
+        rebuilt = {k[len("rebuilt "):-len("/1000 km")]: round(v, 2) for k, v in r.items()
+                   if k.startswith("rebuilt ") and k.endswith("/1000 km")}
+        print(f"{mode}: " + (
+            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
+            f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); per 1,000 km: {per_1000_km(r)}; rebuilt per 1,000 km "
+            f"{rebuilt}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+        rows.append({"mode": mode, "passed": t.passed, "rates": r, "counts": t.counts, "ended": t.stalled,
+                     "error": t.error})
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": FULL_PLATFORM, "start": BELT_START, "modes": SIDE_MODES,
+            "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": FULL_STOCK, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
            "platform-repair": platform_repair, "platform-foundation": platform_foundation,
            "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve,
-           "platform-power": platform_power, "platform-plant": platform_plant, "platform-ammo": platform_ammo}
+           "platform-power": platform_power, "platform-plant": platform_plant, "platform-ammo": platform_ammo,
+           "platform-sides": platform_sides}
