@@ -632,10 +632,56 @@ class Platform(unittest.TestCase):
         for params in ({"railguns": 6, "guns": 9, "thrusters": 1},
                        {"railguns": 6, "guns": 9, "thrusters": 1, "layout": "front"},
                        {"railguns": 20, "guns": 24, "thrusters": 1, "layout": "front"},
-                       {"railguns": 2, "guns": 12, "thrusters": 1, "layout": "front"}):
+                       {"railguns": 2, "guns": 12, "thrusters": 1, "layout": "front"},
+                       {"railguns": 20, "guns": 24, "thrusters": 1, "cargo_bays": 8, "margin": 16}):
             bp = self.build(**params)
             self.assertEqual(errors({"blueprint": bp}), [], params)
             assert_powered(self, bp, "platform")  # the railguns; gun turrets need no power
+
+    def test_cargo_bays_stand_beside_the_hub_joined_to_it(self):
+        # A bay adds hub slots only joined to the hub, directly or through other bays
+        # (NOTES.md): they fill the hub's rows east and west, nearest first, on
+        # foundation, clear of every other entity and of the hub (tiles -4..3).
+        from draftsman.data import entities as protos
+
+        def footprint(e):
+            (x0, y0), (x1, y1) = protos.raw[e["name"]]["collision_box"]
+            x, y = e["position"]["x"], e["position"]["y"]
+            return {(tx, ty) for tx in range(math.floor(x + x0), math.ceil(x + x1))
+                    for ty in range(math.floor(y + y0), math.ceil(y + y1))}
+
+        bp = self.build(railguns=1, guns=2, thrusters=1, cargo_bays=8)
+        bays = [e for e in bp["entities"] if e["name"] == "cargo-bay"]
+        self.assertEqual(sorted((e["position"]["x"], e["position"]["y"]) for e in bays),
+                         sorted((s * x, y) for x in (6, 10) for s in (1, -1) for y in (-2, 2)))
+        tiles = {(t["position"]["x"], t["position"]["y"]) for t in bp["tiles"]}
+        hub = {(x, y) for x in range(-4, 4) for y in range(-4, 4)}
+        others = set().union(*(footprint(e) for e in bp["entities"] if e["name"] != "cargo-bay"))
+        for b in bays:
+            self.assertEqual(len(footprint(b)), 16)
+            self.assertLessEqual(footprint(b), tiles)
+            self.assertFalse(footprint(b) & (hub | others), b)
+        self.assertEqual(errors({"blueprint": bp}), [])
+        nearest = self.build(cargo_bays=3)["entities"]
+        self.assertEqual(sorted((e["position"]["x"], e["position"]["y"]) for e in nearest if e["name"] == "cargo-bay"),
+                         [(-6, -2), (6, -2), (6, 2)])
+
+    def test_margin_is_spare_foundation_at_the_sides(self):
+        # Asteroids eat foundation from the side ends inward, every row alike (NOTES.md):
+        # margin adds columns there. Nothing moves, and nothing changes in front or
+        # behind, where the thrusters need empty space.
+        def extent(bp):
+            xs, ys = [t["position"]["x"] for t in bp["tiles"]], [t["position"]["y"] for t in bp["tiles"]]
+            return min(xs), max(xs), min(ys), max(ys)
+
+        plain = self.build(railguns=4, guns=6, thrusters=1)
+        wide = self.build(railguns=4, guns=6, thrusters=1, margin=5)
+        x0, x1, y0, y1 = extent(plain)
+        self.assertEqual(extent(wide), (x0 - 5, x1 + 5, y0, y1))
+        self.assertEqual(len(wide["tiles"]), len(plain["tiles"]) + 2 * 5 * (y1 - y0 + 1))
+        self.assertEqual(wide["entities"], plain["entities"])
+        with self.assertRaises(ValueError):
+            self.build(margin=-1)
 
     def test_flight_takes_supplies_for_the_hub(self):
         # Spares the hub rebuilds from and repair packs it repairs with.

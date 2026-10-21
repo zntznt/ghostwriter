@@ -533,6 +533,38 @@ class Validator(unittest.TestCase):
         self.assertAlmostEqual(healed, 3000 + 10 * 12, delta=12)
         self.assertEqual(roboport, "false")
 
+    def test_cargo_bays_add_hub_slots_while_joined(self):
+        # A cargo bay adds 20 hub slots while it is joined to the hub, directly or
+        # through other bays. Killing both bays beside the hub on the east cuts off
+        # the two beyond them, and what the lost slots held spills onto the platform.
+        # With construction-robotics and bays in stock, the hub rebuilds them, and
+        # the slots and the spilled foundation come back.
+        data = platform.build(railguns=1, guns=2, thrusters=1, cargo_bays=8).to_dict()
+        read = ("/sc local p = storage.flight.platform local spilled = 0 for _, e in pairs(p.surface."
+                "find_entities_filtered{name = 'item-on-ground'}) do spilled = spilled + e.stack.count end "
+                "rcon.print(helpers.table_to_json{slots = #p.hub.get_inventory(defines.inventory.hub_main), "
+                "spilled = spilled, foundation = p.hub.get_item_count('space-platform-foundation'), "
+                "bays = p.hub.get_item_count('cargo-bay')})")
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "solar-system-edge", "to": "shattered-planet",
+                "research": {"construction-robotics": 1}}))
+            self.assertEqual((setup["built"], setup["entities"]), (setup["entities"], len(data["blueprint"]["entities"])))
+            # Bays first, so they sit in the first slot and not in the ones that go.
+            self.server.command("/sc local hub = storage.flight.platform.hub hub.insert{name = 'cargo-bay', count = 2} "
+                                "hub.insert{name = 'space-platform-foundation', count = 100000}")
+            full = json.loads(self.server.command(read))
+            self.server.command("/sc for _, b in pairs(storage.flight.platform.surface.find_entities_filtered"
+                                "{name = 'cargo-bay'}) do if b.position.x == 6 then b.die() end end")
+            cut = json.loads(self.server.command(read))
+            _step(self.server, 600, timeout=60)
+            back = json.loads(self.server.command(read))
+        finally:
+            self.server.call("flight_teardown")
+        self.assertEqual(full, {"slots": 59 + 8 * 20, "spilled": 0, "foundation": 218 * 100, "bays": 2})
+        self.assertEqual(cut, {"slots": 59 + 4 * 20, "spilled": 80 * 100, "foundation": 138 * 100, "bays": 2})
+        self.assertEqual(back, {"slots": 59 + 8 * 20, "spilled": 0, "foundation": 218 * 100, "bays": 0})
+
     def test_thrusters_need_empty_space_behind(self):
         # A thruster's exhaust needs empty space behind it (about 88 tiles):
         # with foundation there, the game won't build it, and the platform goes nowhere.
