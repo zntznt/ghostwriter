@@ -1007,6 +1007,9 @@ remote.add_interface("ghostwriter", {
         end
       end
       if poles[1] then helpers_ = source_for(s, {{-64, -64}, {64, 64}}, poles) end
+      -- The source stands in for power the design doesn't make yet, off the
+      -- platform where asteroids would otherwise destroy it and cut the power.
+      for _, e in pairs(helpers_) do e.destructible = false end
     end
     storage.flight = {platform = p, surface = s.index, connection = connection, length = proto.length,
                       reversed = reversed, from_start = start, furthest = start, speed_max = 0, deaths = {}, fuel = args.fuel, ammo = args.ammo,

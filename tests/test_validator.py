@@ -11,7 +11,8 @@ from draftsman.blueprintable import Blueprint
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import assembly_row, factory, fluid_block, fluid_row, gated_requester, production, smelting_column
+from generators import (assembly_row, factory, fluid_block, fluid_row, gated_requester, platform, production,
+                        smelting_column)
 from tools.codec import decode, encode
 from tools import rates
 from tools.factorio import locate
@@ -436,6 +437,22 @@ class Validator(unittest.TestCase):
         finally:
             self.server.call("flight_teardown")
         self.assertIn("start must be", self.server.call("flight_setup", json.dumps({**args, "start": 1}))["error"])
+
+    def test_flight_power_source_cannot_be_destroyed(self):
+        # It stands off the platform; asteroids destroyed it in every flight 40% out,
+        # cutting the turrets' power.
+        data = platform.build(railguns=1, guns=0, thrusters=1).to_dict()
+        try:
+            self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "solar-system-edge", "to": "shattered-planet", "power": True}))
+            got = json.loads(self.server.command(
+                "/sc local s = storage.flight.platform.surface local out = {} "
+                "for _, e in pairs(s.find_entities_filtered{name = {'electric-energy-interface', "
+                "'medium-electric-pole'}}) do out[#out + 1] = e.destructible end "
+                "rcon.print(helpers.table_to_json(out))"))
+        finally:
+            self.server.call("flight_teardown")
+        self.assertEqual(sorted(got), [False, False, True])  # the source and its pole; the design's own pole
 
     def test_thrusters_need_empty_space_behind(self):
         # A thruster's exhaust needs empty space behind it (about 88 tiles):

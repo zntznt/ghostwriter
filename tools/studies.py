@@ -153,7 +153,10 @@ def platform_belt(server) -> dict:
         t.params = {k: v for k, v in t.params.items() if k not in fixed}  # descend moves on the shape alone
         if t.passed:
             # Ours are the deaths an asteroid caused; asteroids' own deaths start with their size.
-            lost = Counter({k.split(" <- ")[0]: n for k, n in t.counts.items() if k.endswith(" asteroid")})
+            lost = Counter()
+            for k, n in t.counts.items():
+                if k.endswith(" asteroid"):
+                    lost[k.split(" <- ")[0]] += n
             hub = {k.split(" <- ")[1]: n for k, n in t.counts.items() if k.startswith("space-platform-hub <- ")}
             print(f"{t.params}: {t.rates['seconds_mean']:.0f}s mean, survived {t.rates['survived']:.0%}; "
                   f"lost {dict(lost)}; hub killed by {hub or 'nothing'}", file=sys.stderr, flush=True)
