@@ -508,12 +508,50 @@ script.on_event(defines.events.on_entity_died, function(event)
   end
 end)
 
+-- Research for a flight: {series = levels done}, e.g. {["railgun-damage"] = 4}.
+-- A series is the technologies named "<series>-<n>"; each gets as many of its
+-- levels as fall within the count, so the game applies its own effects. On an
+-- infinite technology, LuaTechnology.level is the next level to research.
+-- Returns what to restore afterwards, or nil and an error.
+local function set_research(force, research)
+  local was = {}
+  for series, done in pairs(research or {}) do
+    local found, most = false, 0
+    for name, tech in pairs(force.technologies) do
+      local n = name:match("^(.+)%-%d+$")
+      if n == series then
+        found = true
+        local first, last = tech.prototype.level, tech.prototype.max_level
+        most = math.max(most, last)
+        was[#was + 1] = {name = name, researched = tech.researched, level = tech.level}
+        if done >= last then
+          tech.researched = true
+        elseif done >= first then
+          tech.level = done + 1
+        end
+      end
+    end
+    if not found then return nil, "no technology series " .. series, was end
+    if done > most then return nil, series .. " has " .. most .. " levels", was end
+  end
+  return was
+end
+
+local function restore_research(force, was)
+  for i = #(was or {}), 1, -1 do
+    local tech = force.technologies[was[i].name]
+    tech.researched = was[i].researched
+    if not was[i].researched then tech.level = was[i].level end
+  end
+end
+
 local function flight_teardown()
   local fl = storage.flight
   if not fl then return end
   game.speed = 1
   game.tick_paused = false
   if fl.platform and fl.platform.valid then fl.platform.destroy() end
+  restore_research(game.forces.player, fl.research)
   storage.flight = nil
 end
 
@@ -882,15 +920,12 @@ remote.add_interface("ghostwriter", {
     reply(out)
   end,
 
-  -- {blueprint, from, to, supplies = {item = count}, fuel, speed}
+  -- {blueprint, from, to, supplies = {item = count}, fuel, power, ammo, research = {series = levels}, speed}
   flight_setup = function(json)
     circuit_teardown()
     flow_teardown()
     flight_teardown()
     local args = helpers.json_to_table(json)
-    -- The flight advances only by flight_step's exact tick counts, so it starts
-    -- from the same state and runs the same ticks each time.
-    game.tick_paused = true
     local force = game.forces.player
     local connection, proto = connection_between(args.from, args.to)
     if not connection then return reply{error = "no space connection between " .. args.from .. " and " .. args.to} end
@@ -903,6 +938,16 @@ remote.add_interface("ghostwriter", {
       inv.destroy()
       return reply{error = "not a blueprint (import_stack returned " .. rc .. ")"}
     end
+    local research, wrong, partly = set_research(force, args.research)
+    if not research then
+      restore_research(force, partly)
+      inv.destroy()
+      return reply{error = wrong}
+    end
+    -- The flight advances only by flight_step's exact tick counts, so it runs
+    -- exactly the ticks asked. Paused only once nothing can refuse the flight:
+    -- only flight_teardown unpauses, and a refusal leaves no flight to tear down.
+    game.tick_paused = true
     local p = force.create_space_platform{name = "ghostwriter flight " .. game.tick, planet = "nauvis",
                                           starter_pack = "space-platform-starter-pack"}
     p.apply_starter_pack()
@@ -954,7 +999,7 @@ remote.add_interface("ghostwriter", {
                       furthest = 0, speed_max = 0, deaths = {}, fuel = args.fuel, ammo = args.ammo,
                       thrusters = s.find_entities_filtered{type = "thruster"},
                       turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
-                      cargo = {}, hub_health = p.hub.health, start = game.tick}
+                      cargo = {}, hub_health = p.hub.health, start = game.tick, research = research}
     game.speed = args.speed or 1
     reply{entities = wanted, built = built, weight = p.weight, connection = connection, length = proto.length}
   end,

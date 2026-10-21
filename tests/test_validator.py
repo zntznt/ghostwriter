@@ -396,6 +396,31 @@ class Validator(unittest.TestCase):
         self.assertRegex(flown.ended, r"hub destroyed by huge-\w+-asteroid")
         self.assertTrue(any(k.startswith("space-platform-hub <- ") for k in flown.deaths), flown.deaths)
 
+    def test_flight_research_is_set_and_undone(self):
+        # Levels researched set the game's own modifiers: railgun damage +0.4 a level,
+        # physical projectile damage 1-6 then 7-8 (+1.0, +0.2, +0.2) for bullets.
+        def modifiers():
+            return json.loads(self.server.command("/sc local f = game.forces.player rcon.print(helpers.table_to_json{"
+                                                  "f.get_ammo_damage_modifier('railgun'),"
+                                                  "f.get_ammo_damage_modifier('bullet')})"))
+
+        def setup(research):
+            return self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(self.thrusters()), "from": "solar-system-edge", "to": "shattered-planet",
+                "research": research}))
+
+        try:
+            self.assertNotIn("error", setup({"railgun-damage": 3, "physical-projectile-damage": 8}))
+            self.assertEqual([round(m, 6) for m in modifiers()], [1.2, 1.4])
+        finally:
+            self.server.call("flight_teardown")
+        self.assertEqual(modifiers(), [0, 0])
+        self.assertEqual(setup({"railgun-damages": 1})["error"], "no technology series railgun-damages")
+        self.assertEqual(setup({"weapon-shooting-speed": 7})["error"], "weapon-shooting-speed has 6 levels")
+        self.assertEqual(modifiers(), [0, 0])
+        # A refused flight leaves the game running for the tests after it.
+        self.assertEqual(self.server.command("/sc rcon.print(tostring(game.tick_paused))").strip(), "false")
+
     def test_thrusters_need_empty_space_behind(self):
         # A thruster's exhaust needs empty space behind it (about 88 tiles):
         # with foundation there, the game won't build it, and the platform goes nowhere.

@@ -85,8 +85,9 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1) -
     return bp
 
 
-def flight_tests(seconds=300, **params):
+def flight_tests(seconds=300, research=None, **params):
+    """research: technology series -> levels researched (validator.flight.Flight)."""
     from validator.flight import Flight
 
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
-    return [Flight(shape, seconds=seconds, fuel=True, power=True, ammo=AMMO)]
+    return [Flight(shape, seconds=seconds, fuel=True, power=True, ammo=AMMO, research=research or {})]

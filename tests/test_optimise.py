@@ -78,6 +78,35 @@ class Cache(unittest.TestCase):
             self.assertEqual(list(stored), ["abc"])
             self.assertIn('{"rate": 1}', stored["abc"])
 
+    def test_flight_trials_give_research_to_the_flight_only(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from validator.flight import Flight, Flown
+
+        got = {}
+
+        def build(railguns=4):
+            got["build"] = railguns
+            return SimpleNamespace(to_dict=dict)
+
+        def flight_tests(research=None, **params):
+            got["flight"] = research
+            return [Flight("f")]
+
+        flights = iter([Flown("f", km=100.0, seconds=10.0, ended="hub destroyed"),
+                        Flown("f", km=300.0, seconds=30.0, ended="hub destroyed"),
+                        Flown("f", km=500.0, seconds=60.0, survived=True)])
+        ev = optimise.FlightEvaluator.__new__(optimise.FlightEvaluator)
+        ev.module = SimpleNamespace(build=build, flight_tests=flight_tests)
+        ev.runs, ev.server = 3, SimpleNamespace(version="2.1.22")
+        with mock.patch("validator.flight.run_flight", lambda *a: next(flights)):
+            trial = ev._run({"railguns": 6, "research": {"railgun-damage": 2}, "runs": 3})
+        self.assertEqual(got, {"build": 6, "flight": {"railgun-damage": 2}})
+        self.assertEqual(trial.rates["km_mean"], 300.0)
+        self.assertAlmostEqual(trial.rates["survived"], 1 / 3)
+        self.assertEqual(trial.stalled, {"hub destroyed": 2, "survived": 1})
+
     def test_fingerprint_changes_with_the_code(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -15,7 +15,8 @@
   fly SRC [--runs N]    build a space platform blueprint around a fresh hub and fly
       [--seconds S]       it from the solar system edge toward the shattered planet;
       [--fuel]            report each flight: how far, what killed it, chunks in the
-      [--supply k=n,...]  hub (--fuel keeps thrusters full; --supply loads the hub)
+      [--supply k=n,...]  hub (--fuel keeps thrusters full; --supply loads the hub;
+      [--research k=n,...]  --research sets levels researched, e.g. railgun-damage=4)
 
 SRC is a blueprint string, a path to a file holding one (or JSON), or - for
 stdin; `validate` also takes library folders (validated as books).
@@ -204,8 +205,9 @@ def cmd_fly(args):
     if "blueprint" not in data:
         sys.exit("fly takes a single blueprint")
     supplies = dict(_param(kv) for kv in args.supply.split(",")) if args.supply else {}
+    research = dict(_param(kv) for kv in args.research.split(",")) if args.research else {}
     flight = Flight("flight", origin=args.origin, destination=args.destination, seconds=args.seconds,
-                    supplies=supplies, fuel=args.fuel)
+                    supplies=supplies, fuel=args.fuel, research=research)
     flights = []
     with Server(args.factorio) as server:
         print(f"flying in Factorio {server.version}", file=sys.stderr)
@@ -275,6 +277,8 @@ def main(argv=None):
     p.add_argument("--seconds", type=float, default=600, help="game seconds per flight at most")
     p.add_argument("--fuel", action="store_true", help="keep thrusters full by script")
     p.add_argument("--supply", help="items for the hub, e.g. firearm-magazine=2000,rocket=500")
+    p.add_argument("--research", help="technology series and levels researched, e.g. "
+                                      "railgun-damage=4,railgun-shooting-speed=3 (default none)")
     p.add_argument("--origin", default="solar-system-edge")
     p.add_argument("--destination", default="shattered-planet")
     p.add_argument("--factorio", help="Factorio executable (headless server or game)")
