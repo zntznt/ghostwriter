@@ -26,6 +26,8 @@ import json
 import time
 from dataclasses import dataclass, field
 
+from draftsman.data import entities
+
 from tools.codec import encode
 from validator.circuit import _ok
 from validator.server import Server, ServerError
@@ -33,6 +35,7 @@ from validator.validate import Report
 
 SPEED = 100
 POLL = 10  # game seconds between reads
+PRIME = entities.raw["thruster"]["fuel_fluid_box"]["volume"]  # a primed thruster's worth of each fluid
 
 
 @dataclass
@@ -49,6 +52,11 @@ class Flight:
     # Technology series -> levels researched, e.g. {"railgun-damage": 4} for railgun-damage 1 to 4.
     # Set on the test force for the flight and undone after it; the test force has none otherwise.
     research: dict[str, int] = field(default_factory=dict)
+    # As if it arrived from the last leg: thrusters full once at the start, and moving
+    # (km a tick). A platform that makes its own fuel needs both: standing still it
+    # meets too few asteroids to make any (NOTES.md).
+    primed: bool = False
+    start_speed: float = 0.0
 
 
 @dataclass
@@ -72,6 +80,7 @@ class Flown:
     held: dict[str, float] = field(default_factory=dict)
     rebuilt: dict[str, int] = field(default_factory=dict)
     power_j: float = 0.0
+    made: dict[str, float] = field(default_factory=dict)  # thruster fuel and oxidizer made on board
 
     def chunks(self, kind: str = "promethium") -> int:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
@@ -84,6 +93,7 @@ class Flown:
         if self.power_j:
             out["power MW"] = self.power_j / self.seconds / 1e6
         out.update({f"rebuilt {k}/s": n / self.seconds for k, n in self.rebuilt.items()})
+        out.update({f"made {k}/s": n / self.seconds for k, n in self.made.items()})
         return out
 
 
@@ -103,7 +113,8 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
     setup = server.call("flight_setup", json.dumps({
         "blueprint": encode(data), "from": flight.origin, "to": flight.destination, "start": flight.start,
         "supplies": flight.supplies or None, "fuel": flight.fuel, "power": flight.power,
-        "ammo": flight.ammo or None, "research": flight.research or None, "speed": SPEED}))
+        "ammo": flight.ammo or None, "research": flight.research or None, "speed": SPEED,
+        "primed": PRIME if flight.primed else None, "start_speed": flight.start_speed or None}))
     if "error" in setup:
         flown.error = f"flight: {setup['error']}"
         report.errors.append(flown.error)
@@ -123,8 +134,8 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.deaths = got["deaths"] if isinstance(got["deaths"], dict) else {}
             flown.cargo = {c["name"]: c["count"] for c in got.get("cargo") or [] if isinstance(c, dict)}
             # An empty Lua table comes back as a JSON list.
-            flown.supplied, flown.held, flown.rebuilt = (got.get(k) if isinstance(got.get(k), dict) else {}
-                                                         for k in ("supplied", "held", "rebuilt"))
+            flown.supplied, flown.held, flown.rebuilt, flown.made = (got.get(k) if isinstance(got.get(k), dict) else {}
+                                                                     for k in ("supplied", "held", "rebuilt", "made"))
             flown.power_j = got.get("power_j") or 0.0
             flown.log.append({"seconds": round(elapsed, 1), "km": round(got["km"]), "speed": got["speed"],
                               "hub": got["hub_health"]})

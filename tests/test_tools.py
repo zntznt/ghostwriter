@@ -709,6 +709,186 @@ class Platform(unittest.TestCase):
         self.assertEqual(flight.supplies, {"repair-pack": 100})
         self.assertEqual(platform.flight_tests()[0].supplies, {})
 
+    def test_filed_platform_is_what_build_makes(self):
+        # New options leave the default as it was: the filed design still builds the same.
+        filed = json.loads((LIBRARY / "platforms" / "platform-32-railguns-32-gun-turrets-1-thruster-8-cargo-bays.json")
+                           .read_text())["blueprint"]
+        bp = self.build(railguns=32, guns=32, thrusters=1, cargo_bays=8)
+        self.assertEqual(bp["entities"], filed["entities"])
+        self.assertEqual(bp["tiles"], filed["tiles"])
+        self.assertEqual(self.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=False), bp)
+
+
+def tiles_of(e: dict) -> set[tuple[int, int]]:
+    from draftsman.data import entities as protos
+
+    (x0, y0), (x1, y1) = protos.raw[e["name"]]["collision_box"]
+    if e.get("direction", 0) in (4, 12):
+        x0, y0, x1, y1 = -y1, x0, -y0, x1
+    x, y = e["position"]["x"], e["position"]["y"]
+    return {(tx, ty) for tx in range(math.floor(x + x0), math.ceil(x + x1))
+            for ty in range(math.floor(y + y0), math.ceil(y + y1))}
+
+
+def fluid_ends(e: dict) -> list[tuple[tuple[int, int], str]]:
+    """(the tile a connection points into, its box) for chemical plants and thrusters built unrotated."""
+    from draftsman.data import entities as protos
+
+    p = protos.raw[e["name"]]
+    if e["name"] == "chemical-plant":
+        boxes = [(b["production_type"], b) for b in p["fluid_boxes"]]
+    elif e["name"] == "thruster":
+        boxes = [("fuel", p["fuel_fluid_box"]), ("oxidizer", p["oxidizer_fluid_box"])]
+    else:
+        return []
+    assert e.get("direction", 0) == 0, e
+    x, y = e["position"]["x"], e["position"]["y"]
+    out = []
+    for kind, box in boxes:
+        for c in box["pipe_connections"]:
+            dx, dy = pipes.VEC[c["direction"]]
+            out.append(((math.floor(x + c["position"][0]) + dx, math.floor(y + c["position"][1]) + dy), kind))
+    return out
+
+
+class PlatformFuel(unittest.TestCase):
+    """fuel=True: the platform makes its own thruster fuel and oxidizer from asteroid chunks."""
+
+    def setUp(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.bp = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True).to_dict()["blueprint"]
+        self.ents = self.bp["entities"]
+
+    def named(self, name, **match):
+        return [e for e in self.ents if e["name"] == name and all(e.get(k) == v for k, v in match.items())]
+
+    def test_check_clean_and_nothing_overlaps(self):
+        self.assertEqual(errors({"blueprint": self.bp}), [])
+        seen = {}
+        floor = {(t["position"]["x"], t["position"]["y"]) for t in self.bp["tiles"]}
+        for e in self.ents:
+            for t in tiles_of(e):
+                self.assertNotIn(t, seen, (e, seen.get(t)))
+                seen[t] = e
+                if e["name"] != "asteroid-collector":
+                    self.assertIn(t, floor, e)
+
+    def test_collectors_sit_in_the_railguns_row_facing_out(self):
+        # Chunks are made in front, where the turrets break asteroids up: collectors
+        # elsewhere catch almost none (NOTES.md). Their front row and the 3 ahead are
+        # empty space, and they stay out of every railgun's 72-degree arc.
+        floor = {(t["position"]["x"], t["position"]["y"]) for t in self.bp["tiles"]}
+        top = min(y for _, y in floor)
+        rails = self.named("railgun-turret")
+        self.assertEqual(len(rails), 32)
+        collectors = self.named("asteroid-collector")
+        self.assertEqual(len(collectors), 2)
+        for c in collectors:
+            self.assertEqual(c.get("direction", 0), 0)
+            self.assertEqual({f["name"] for f in c["chunk-filter"]},
+                             {"metallic-asteroid-chunk", "carbonic-asteroid-chunk", "oxide-asteroid-chunk"})
+            x, y = c["position"]["x"], c["position"]["y"]
+            self.assertEqual(y, top + 0.5)
+            ahead = {(math.floor(x) + dx, top - k) for dx in (-1, 0, 1) for k in range(1, 5)}
+            self.assertFalse(ahead & floor)
+            for r in rails:
+                for cx in (-1.5, 1.5):
+                    dx = x + cx - r["position"]["x"]
+                    front = r["position"]["y"] - (y - 1.5)
+                    if front > 0:
+                        self.assertGreater(math.degrees(math.atan2(abs(dx), front)), 36, (c, r))
+
+    def test_one_belt_runs_from_the_collectors_to_a_void(self):
+        # Chunks only: every crusher takes its own kind off it and puts back what it
+        # returns; what reaches the end goes over the back edge into space.
+        belts = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e.get("direction", 0)
+                 for e in self.named("transport-belt")}
+        floor = {(t["position"]["x"], t["position"]["y"]) for t in self.bp["tiles"]}
+        ins = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e
+               for e in self.ents if e["name"].endswith("inserter")}
+
+        def follow(tile):
+            path = [tile]
+            while True:
+                dx, dy = pipes.VEC[belts[path[-1]]]
+                nxt = (path[-1][0] + dx, path[-1][1] + dy)
+                if nxt not in belts:
+                    return path
+                path.append(nxt)
+
+        ends = set()
+        for c in self.named("asteroid-collector"):
+            x, y = math.floor(c["position"]["x"]), math.floor(c["position"]["y"])
+            self.assertEqual(ins[(x, y + 2)].get("direction", 0), 0)  # takes from the collector north of it
+            ends.add(follow((x, y + 3))[-1])
+        [(ex, ey)] = ends
+        void = ins[(ex, ey + 1)]
+        self.assertEqual((void["name"], void.get("direction", 0)), ("fast-inserter", 0))
+        self.assertNotIn((ex, ey + 2), floor)  # it drops into space
+
+    def test_each_crusher_feeds_its_plant_and_returns_its_chunk(self):
+        expect = {"oxide-asteroid-crushing": "ice-melting", "carbonic-asteroid-crushing": "thruster-fuel",
+                  "metallic-asteroid-crushing": "thruster-oxidizer"}
+        crushers = self.named("crusher")
+        self.assertEqual(sorted(c["recipe"] for c in crushers), sorted(["oxide-asteroid-crushing"] * 2 +
+                                                                        ["carbonic-asteroid-crushing",
+                                                                         "metallic-asteroid-crushing"]))
+        at = {}
+        for e in self.ents:
+            for t in tiles_of(e):
+                at[t] = e
+        for c in crushers:
+            mine = tiles_of(c)
+            near = {at[(x + dx, y)]["entity_number"]: at[(x + dx, y)] for x, y in mine for dx in (-1, 1)
+                    if (x + dx, y) in at and at[(x + dx, y)]["name"].endswith("inserter")}
+            chunk = c["recipe"].replace("-crushing", "-chunk")
+            returns = [i for i in near.values() if i.get("use_filters") and [f["name"] for f in i["filters"]] == [chunk]]
+            self.assertEqual(len(returns), 1, c)
+            # Some inserter beside the crusher drops into the plant that uses its product.
+            plants = []
+            for i in near.values():
+                dx, dy = pipes.VEC[i.get("direction", 0)]
+                x, y = math.floor(i["position"]["x"]), math.floor(i["position"]["y"])
+                if (x - dx, y - dy) in at:
+                    plants.append(at[(x - dx, y - dy)].get("recipe"))
+            self.assertIn(expect[c["recipe"]], plants, c)
+
+    def test_fuel_and_oxidizer_reach_the_thruster_on_their_own_lines(self):
+        nets = pipes.networks(self.bp)
+        touch = {}
+        for e in self.ents:
+            for tile, box in fluid_ends(e):
+                if tile in nets:
+                    kind = box if e["name"] == "thruster" else e["recipe"]
+                    touch.setdefault(nets[tile], set()).add((kind, box if e["name"] != "thruster" else "input"))
+        lines = sorted(touch.values(), key=sorted)
+        self.assertEqual(lines, sorted([{("fuel", "input"), ("thruster-fuel", "output")},
+                                        {("oxidizer", "input"), ("thruster-oxidizer", "output")}], key=sorted))
+        # Each fuel and oxidizer plant gets its water straight from an ice plant above it.
+        plants = {(e["position"]["x"], e["position"]["y"]): e["recipe"] for e in self.named("chemical-plant")}
+        for (x, y), recipe in plants.items():
+            if recipe in ("thruster-fuel", "thruster-oxidizer"):
+                self.assertEqual(plants.get((x, y - 3)), "ice-melting", recipe)
+
+    def test_refuses_what_it_doesnt_do(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with self.assertRaisesRegex(ValueError, "one thruster"):
+                platform.build(railguns=32, guns=32, thrusters=2, fuel=True)
+            with self.assertRaisesRegex(ValueError, "rows"):
+                platform.build(railguns=32, guns=32, thrusters=1, layout="front", fuel=True)
+
+    def test_flight_makes_its_own_fuel(self):
+        [flight] = platform.flight_tests(fuel=True, research={"railgun-damage": 2})
+        self.assertFalse(flight.fuel)  # no fuel by script
+        self.assertEqual(flight.research, {"railgun-damage": 2, "space-platform": 1, "space-platform-thruster": 1})
+        # It starts as if it arrived from the last leg: standing still it meets too few asteroids to start.
+        self.assertTrue(flight.primed)
+        self.assertEqual(flight.start_speed, platform.CRUISE)
+        [plain] = platform.flight_tests()
+        self.assertEqual((plain.fuel, plain.primed, plain.start_speed), (True, False, 0.0))
+
 
 class Check(unittest.TestCase):
     def test_real_2_1_exports_have_no_errors(self):
