@@ -12,6 +12,7 @@ a change to a study's experiment should be the only reason to do.
 import contextlib
 import dataclasses
 import hashlib
+import io
 import json
 import re
 import sys
@@ -102,7 +103,7 @@ def record(name: str, cache: Path) -> dict:
                 if hasattr(module, attr):
                     stack.enter_context(mock.patch.object(module, attr, fake))
         stack.enter_context(mock.patch.object(flight_module, "run_flight", run_flight))
-        stack.enter_context(contextlib.redirect_stderr(open("/dev/null", "w")))
+        stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             try:
