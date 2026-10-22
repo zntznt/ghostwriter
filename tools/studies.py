@@ -7,6 +7,7 @@ table as it goes. Its books and values are fixed in code before it runs.
 import sys
 from collections import Counter
 
+from generators.platform import FEED_RESEARCH
 from tools.optimise import GameEvaluator, grid
 
 SHARES = [0.8, 0.825, 0.85, 0.875, 0.9, 0.925, 0.95, 0.975, 1.0]
@@ -736,25 +737,36 @@ def feed_stock() -> dict:
     return stock
 
 
-def platform_feed(server) -> dict:
-    """Does the hub keep the turrets fed? BAYS_PLATFORM in each of FEED_MODES flies 8
-    times from each of FEED_STARTS for up to 600 s with feed_stock and MIX_RESEARCH (with
-    construction-robotics): what it lives and flies, the turret-seconds with no ammo, and per
-    1,000 km what it used (from the hub, or by script), rebuilt and brought in, and its hub
-    slots (tools.trip). Rows are named by mode, so `python -m tools.trip RESULT --mode M
-    --bays 24` plans its trip."""
+def fast_feed_stock() -> dict:
+    """feed_stock with magazines for 600 s 0.2 out (about 7.5 a second, and what the belts and
+    turrets hold), in place of as much foundation: both stack to 100."""
+    stock = feed_stock()
+    stock["uranium-rounds-magazine"] += 2500
+    stock["space-platform-foundation"] -= 2500
+    return stock
+
+
+def platform_feed(server, modes=FEED_MODES, starts=FEED_STARTS, stock=None) -> dict:
+    """Does the hub keep the turrets fed? BAYS_PLATFORM in each of modes flies 8 times
+    from each of starts for up to 600 s with stock (feed_stock) and MIX_RESEARCH (with
+    construction-robotics, and a mode's own "research"): what it lives and flies, the
+    turret-seconds with no ammo, and per 1,000 km what it used (from the hub, or by script),
+    rebuilt and brought in, and its hub slots (tools.trip). Rows are named by mode, so
+    `python -m tools.trip RESULT --mode M --bays 24` plans its trip."""
     from tools import trip
     from tools.optimise import FlightEvaluator
 
     from generators.platform import PROMETHIUM
 
     evaluate = FlightEvaluator(server, "platform", runs=8)
-    stock = feed_stock()
-    rows = []
-    for mode, extra in FEED_MODES.items():
-        for start in FEED_STARTS:
+    stock = stock or feed_stock()
+    rows, researched = [], {}
+    for mode, extra in modes.items():
+        extra = dict(extra)
+        researched[mode] = {**MIX_RESEARCH, "construction-robotics": 1, **extra.pop("research", {})}
+        for start in starts:
             t = evaluate({**BAYS_PLATFORM, **extra, "start": start, "seconds": 600, "supplies": stock,
-                          "research": {**MIX_RESEARCH, "construction-robotics": 1}, "take": [PROMETHIUM]})
+                          "research": researched[mode], "take": [PROMETHIUM]})
             r = t.rates
             row = {"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
                    "ended": t.stalled, "error": t.error}
@@ -772,8 +784,15 @@ def platform_feed(server) -> dict:
                 print(f"{mode}, from {start:.0%}: FAIL {t.error}", file=sys.stderr, flush=True)
             rows.append(row)
     print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": BAYS_PLATFORM, "modes": FEED_MODES, "research": {**MIX_RESEARCH, "construction-robotics": 1},
-            "supplies": stock, "trials": rows}
+    return {"design": BAYS_PLATFORM, "modes": modes, "research": researched, "supplies": stock, "trials": rows}
+
+
+# platform-feed's hub inserters bound its feed 0.1 out: inserter capacity research
+# (FEED_RESEARCH) speeds them up 2.3 times (NOTES.md). The fed platform with and without
+# it, against script ammo with the same research, out to 0.2 with magazines to match.
+FAST_FEED_MODES = {"script ammo": {"research": FEED_RESEARCH}, "hub feeds": {"ammo_feed": True},
+                   "hub feeds, inserter capacity 7": {"ammo_feed": True, "research": FEED_RESEARCH}}
+FAST_FEED_STARTS = [0.0, 0.1, 0.2]
 
 
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
@@ -783,4 +802,6 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
            "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve,
            "platform-power": platform_power, "platform-plant": platform_plant, "platform-ammo": platform_ammo,
            "platform-sides": platform_sides, "platform-route": platform_route,
-           "platform-mix": platform_mix, "platform-bays": platform_bays, "platform-feed": platform_feed}
+           "platform-mix": platform_mix, "platform-bays": platform_bays, "platform-feed": platform_feed,
+           "platform-feed-fast": lambda server: platform_feed(server, FAST_FEED_MODES, FAST_FEED_STARTS,
+                                                              fast_feed_stock())}

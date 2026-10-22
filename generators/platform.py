@@ -72,6 +72,10 @@ COOLANT = 10000  # cold fluoroketone into the reactor at the start, more than it
 # takes a belt from either side, so it needs the hub's columns beside it: -4 to 1 for both.
 FEEDERS = (-HUB + 1, -HUB + 4)
 UNDER_BELT = "underground-belt"  # ammo_feed: the feed belt under the chunk belt
+# ammo_feed: its hub inserters move one item a swing, 2.5 a second, too few for the gun
+# turrets 0.1 out; inserter capacity research (levels 2 and 7) makes it 3 a swing, 5.7 a
+# second (NOTES.md). A base-game technology: its flights fly with it.
+FEED_RESEARCH = {"inserter-capacity-bonus": 7}
 
 
 def _inserter_for(demand: float) -> str:
@@ -375,17 +379,18 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
                            "stock: fill the bays with spare turrets, poles and foundation, which goes fastest.")
     if power:
         # The game keeps 500 bytes of a description: with power, a shorter one.
-        bp.description = (f"Railguns in front for big and huge asteroids, gun turrets {'among' if front else 'behind'} "
-                          "them, the hub at the origin. " +
-                          ("The hub feeds the turrets railgun ammo and magazines" if ammo_feed else
+        bp.description = (f"Railguns in front for big and huge asteroids, gun turrets {'among them' if front else 'behind'}"
+                          ", the hub at the origin. " +
+                          ("The hub feeds the turrets (research " +
+                           ", ".join(f"{k}-{v}" for k, v in FEED_RESEARCH.items()) + ")" if ammo_feed else
                            "Supply railgun ammo" + (", rockets" if rockets else "") + " and magazines") +
                           ("; it makes thruster fuel (research space-platform-thruster)" +
                            (", fill its tanks first" if reserve else "") if fuel else
                            ("; supply thruster fuel" if ammo_feed else " and thruster fuel")) +
-                          ". Fusion power (research cryogenic-plant): before leaving, fill the reactors with cells" +
+                          ". Fusion power (research cryogenic-plant): before leaving fill the reactors with cells" +
                           ("" if ammo_feed else " (more in the hub)") + " and "
                           "the loops with cold fluoroketone, charge the accumulator and railguns." +
-                          (" With construction-robotics the hub rebuilds from its stock: fill the bays with " +
+                          (" With construction-robotics the hub rebuilds from stock: fill the bays with " +
                            ("ammo, " if ammo_feed else "") + "spares and foundation." if cargo_bays else ""))
     bp.icons = ["railgun-turret", "thruster"]
     for x in range(-half - margin, half + margin):
