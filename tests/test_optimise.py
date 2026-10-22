@@ -137,6 +137,21 @@ class Cache(unittest.TestCase):
         self.assertEqual(budget["railgun-ammo/s"], 1.0)  # per second as before
         self.assertNotIn("railgun-ammo/1000 km", Flown("f", seconds=20.0, supplied={"railgun-ammo": 30.0}).budget())
 
+    def test_flown_budget_counts_ammo_the_hub_fed(self):
+        # ammo_feed: the hub's inserters feed the turrets, and what left the hub, less what
+        # the belts and turrets still hold, is what was used, as with the script's ammo.
+        # A turret with none counts each second it had none.
+        from validator.flight import Flown
+
+        flown = Flown("f", seconds=20.0, km=4000.0, fed={"railgun-ammo": 50.0}, held={"railgun-ammo": 10.0}, dry=7)
+        budget = flown.budget()
+        self.assertEqual(budget["railgun-ammo/s"], 2.0)
+        self.assertEqual(budget["railgun-ammo/1000 km"], 10.0)
+        self.assertEqual(budget["dry turret s"], 7)
+        both = Flown("f", seconds=10.0, supplied={"railgun-ammo": 30.0}, fed={"railgun-ammo": 20.0}).budget()
+        self.assertEqual(both["railgun-ammo/s"], 5.0)
+        self.assertNotIn("dry turret s", Flown("f", seconds=10.0, supplied={"railgun-ammo": 30.0}).budget())
+
     def test_flown_budget_counts_cargo_bays_lost_by_distance_from_the_hub(self):
         # A dead bay cuts off the bays joined through it (NOTES.md): bays further out
         # may be hit more, so the flight counts them by |x|, tiles from the hub's centre.

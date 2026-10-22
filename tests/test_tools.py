@@ -1130,6 +1130,106 @@ class PlatformPromethium(unittest.TestCase):
             platform.flight_tests(reverse=True)
 
 
+class PlatformFeed(unittest.TestCase):
+    """ammo_feed=True: the hub feeds every railgun and gun turret by belt and inserter."""
+
+    def setUp(self):
+        from tools.studies import PROMETHIUM_PLATFORM
+
+        self.params = PROMETHIUM_PLATFORM
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.bp = platform.build(**PROMETHIUM_PLATFORM, ammo_feed=True).to_dict()["blueprint"]
+        self.ents = self.bp["entities"]
+
+    def test_check_clean_and_nothing_overlaps(self):
+        self.assertEqual(errors({"blueprint": self.bp}), [])
+        seen = {}
+        floor = {(t["position"]["x"], t["position"]["y"]) for t in self.bp["tiles"]}
+        for e in self.ents:
+            for t in tiles_of(e):
+                self.assertNotIn(t, seen, (e, seen.get(t)))
+                seen[t] = e
+                if e["name"] != "asteroid-collector":
+                    self.assertIn(t, floor, e)
+
+    def test_every_turret_is_fed_from_the_hub(self):
+        # Follow the belts from where the hub's inserters drop: every railgun and gun turret
+        # has an inserter taking from one of them and dropping into it. A start belt takes a
+        # belt pointing in from each side onto a lane each (NOTES.md): one railgun ammo, one
+        # magazines, so neither backs up the other.
+        hub = {(x, y) for x in range(-platform.HUB, platform.HUB) for y in range(-platform.HUB, platform.HUB)}
+        belts = {(math.floor(e["position"]["x"]), math.floor(e["position"]["y"])): e for e in self.ents
+                 if e["name"] in ("transport-belt", "underground-belt")}
+        ins = [e for e in self.ents if e["name"].endswith("inserter")]
+
+        def ends(i):  # (picks from, drops into): an inserter's direction is where it picks up
+            x, y = math.floor(i["position"]["x"]), math.floor(i["position"]["y"])
+            dx, dy = pipes.VEC[i.get("direction", 0)]
+            return (x + dx, y + dy), (x - dx, y - dy)
+
+        def downstream(tile):
+            seen = []
+            while tile in belts and tile not in seen:
+                seen.append(tile)
+                b = belts[tile]
+                dx, dy = pipes.VEC[b.get("direction", 0)]
+                if b["name"] == "underground-belt" and b.get("type", "input") == "input":  # the default is left out
+                    tile = next(t for k in range(1, 6) if (t := (tile[0] + dx * k, tile[1] + dy * k)) in belts
+                                and belts[t]["name"] == "underground-belt")
+                else:
+                    tile = (tile[0] + dx, tile[1] + dy)
+            return seen
+
+        feeders = [i for i in ins if ends(i)[0] in hub and ends(i)[1] in belts and i.get("use_filters")
+                   and i["filters"][0]["name"] in platform.AMMO.values()]  # not the fusion cells' inserter
+        ammo = Counter(f["filters"][0]["name"] for f in feeders)
+        self.assertEqual(ammo, {platform.AMMO["railgun-turret"]: 2, platform.AMMO["gun-turret"]: 2})
+        fed = set()
+        for f in feeders:
+            fed.update(downstream(ends(f)[1]))
+        for t in self.ents:
+            if t["name"] in ("railgun-turret", "gun-turret"):
+                into = [i for i in ins if ends(i)[1] in tiles_of(t) and ends(i)[0] in fed]
+                self.assertEqual(len(into), 1, t)
+        for f in feeders:  # each start belt: one ammo from the west, the other from the east
+            side = belts[ends(f)[1]]
+            start = downstream(ends(f)[1])[1]
+            self.assertEqual(pipes.VEC[side["direction"]], (start[0] - ends(f)[1][0], 0))
+
+    def test_default_is_unchanged_and_refuses_what_it_cant_feed(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.assertEqual(platform.build(**self.params).to_dict(),
+                             platform.build(**self.params, ammo_feed=False).to_dict())
+            for extra in ({"rockets": 4}, {"side_guns": 2}):
+                with self.assertRaisesRegex(ValueError, "ammo_feed"):
+                    platform.build(**{**self.params, **extra}, ammo_feed=True)
+            with self.assertRaisesRegex(ValueError, "ammo_feed"):
+                platform.build(railguns=4, guns=6, layout="front", ammo_feed=True)
+            small = platform.build(railguns=4, guns=6, thrusters=1, ammo_feed=True).to_dict()["blueprint"]
+        self.assertEqual(errors({"blueprint": small}), [])
+
+    def test_description_says_to_stock_the_hub(self):
+        self.assertIn("feeds the turrets", self.bp["description"])
+        self.assertNotIn("Supply railgun ammo", self.bp["description"])
+        self.assertLessEqual(len(self.bp["description"].encode()), 500)
+        self.assertLessEqual(len(self.bp["label"].encode()), 200)
+
+    def test_flight_feeds_from_the_hub_only(self):
+        # ammo_feed: no script top-up; the turrets are loaded once from the hub, as they
+        # would be in orbit, and what leaves the hub counts as used.
+        [fed] = platform.flight_tests(ammo_feed=True)
+        self.assertEqual(fed.ammo, {})
+        self.assertEqual(fed.loaded, {"railgun-turret": "railgun-ammo", "gun-turret": "uranium-rounds-magazine"})
+        self.assertEqual(sorted(fed.feed), ["railgun-ammo", "uranium-rounds-magazine"])
+        [plain] = platform.flight_tests()
+        self.assertEqual((plain.loaded, plain.feed), ({}, []))
+        self.assertTrue(plain.ammo)
+        with self.assertRaisesRegex(ValueError, "ammo_feed"):
+            platform.flight_tests(ammo_feed=True, magazine="piercing-rounds-magazine")
+
+
 def connections(e: dict, box: str | None, spec: dict | None = None) -> list[tuple[tuple[int, int], tuple[int, int]]]:
     """(the tile a connection sits on, the tile it points into) for a fluid box of a prototype
     (by key, or the box itself as spec), turned by the entity's direction."""

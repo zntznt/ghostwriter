@@ -68,6 +68,11 @@ class Flight:
     # Items the script empties from the hub each second and counts (Flown.taken): what the
     # platform collects, measured whether or not the hub has room for it.
     take: list[str] = field(default_factory=list)
+    # A platform whose hub feeds its turrets: each turret loaded once from the hub at the start
+    # (turret name -> ammo), as the feed would in orbit, and these items counted as used as they
+    # leave the hub (Flown.fed). With no ammo kept stocked by script, the hub is all they get.
+    loaded: dict[str, str] = field(default_factory=dict)
+    feed: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -99,6 +104,8 @@ class Flown:
     brownout: int = 0
     taken: dict[str, int] = field(default_factory=dict)  # Flight.take: what the script emptied from the hub
     bays_lost: dict[str, int] = field(default_factory=dict)  # cargo bays that died, by |x| from the hub's centre
+    fed: dict[str, float] = field(default_factory=dict)  # Flight.feed: what left the hub, the turrets' loading included
+    dry: int = 0  # turret-seconds with no ammo
 
     def chunks(self, kind: str = "promethium") -> int:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
@@ -113,7 +120,8 @@ class Flown:
         where use meets what's made: what a long trip flies at."""
         if not self.seconds:
             return {}
-        used = {k: n - self.held.get(k, 0) for k, n in self.supplied.items()}
+        used = {k: self.supplied.get(k, 0) + self.fed.get(k, 0) - self.held.get(k, 0)
+                for k in {**self.supplied, **self.fed}}
         out = {f"{k}/s": n / self.seconds for k, n in used.items()}
         out.update({f"taken {k}/s": n / self.seconds for k, n in self.taken.items()})
         if self.km:
@@ -137,6 +145,8 @@ class Flown:
         out.update({f"rebuilt {k}/s": n / self.seconds for k, n in self.rebuilt.items()})
         out.update({f"made {k}/s": n / self.seconds for k, n in self.made.items()})
         out.update({f"held {k}": self.held.get(k, 0.0) for k in self.made})
+        if self.fed:
+            out["dry turret s"] = self.dry
         return out
 
 
@@ -158,7 +168,8 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
         "supplies": flight.supplies or None, "fuel": flight.fuel, "power": flight.power,
         "ammo": flight.ammo or None, "research": flight.research or None, "speed": SPEED,
         "primed": flight.primed or None, "start_speed": flight.start_speed or None,
-        "charged": flight.charged, "coolant": flight.coolant or None, "take": flight.take or None}))
+        "charged": flight.charged, "coolant": flight.coolant or None, "take": flight.take or None,
+        "loaded": flight.loaded or None, "feed": flight.feed or None}))
     if "error" in setup:
         flown.error = f"flight: {setup['error']}"
         report.errors.append(flown.error)
@@ -178,9 +189,10 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.deaths = got["deaths"] if isinstance(got["deaths"], dict) else {}
             flown.cargo = {c["name"]: c["count"] for c in got.get("cargo") or [] if isinstance(c, dict)}
             # An empty Lua table comes back as a JSON list.
-            flown.supplied, flown.held, flown.rebuilt, flown.made, flown.taken, flown.bays_lost = (
+            flown.supplied, flown.held, flown.rebuilt, flown.made, flown.taken, flown.bays_lost, flown.fed = (
                 got.get(k) if isinstance(got.get(k), dict) else {}
-                for k in ("supplied", "held", "rebuilt", "made", "taken", "bays_lost"))
+                for k in ("supplied", "held", "rebuilt", "made", "taken", "bays_lost", "fed"))
+            flown.dry = got.get("dry") or 0
             flown.power_j = got.get("power_j") or 0.0
             flown.generated_j, flown.plant_j = got.get("generated_j") or 0.0, got.get("plant_j") or 0.0
             flown.brownout = got.get("brownout") or 0
