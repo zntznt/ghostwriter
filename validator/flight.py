@@ -89,6 +89,9 @@ class Flight:
     # is home. Each place it reaches is a stop (Flown.stops), and what lies between two is a leg.
     home: str = ""
     via: list[str] = field(default_factory=list)
+    # A measurement, not a trip: these items held at their stock (supplies) by script each second,
+    # so nothing runs out and the hub's room doesn't bind; what it uses still counts (fed, rebuilt).
+    hold: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -139,16 +142,26 @@ class Flown:
     def chunks(self, kind: str = "promethium") -> int:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
 
+    def counted(self) -> dict[str, float]:
+        """What the flight has used by its counters: what the hub rebuilt, the feed drew and the
+        script gave. With the hub held at its stock (Flight.hold), what its cargo can't show."""
+        out = {}
+        for counter in (self.rebuilt, self.fed, self.supplied):
+            for k, n in counter.items():
+                out[k] = out.get(k, 0) + n
+        return out
+
     def legs(self) -> list[dict]:
         """What happened between each two stops (Flight.home): km, seconds, what the hub lost (a gain
         is negative) and what died. The last runs on to the end of the flight if it ended between
         stops (to: None). With stops that record them, also what the fuel module made on the leg
-        and the fuel and oxidizer the thruster and its tanks held at its end."""
+        and the fuel and oxidizer the thruster and its tanks held at its end, and what the
+        flight's counters counted on it (counted)."""
         ends = list(self.stops)
         if ends and not self.back:
             ends.append({"at": None, "seconds": self.seconds, "km": self.trip_km, "cargo": self.cargo,
                          "deaths": self.deaths, "made": self.made,
-                         "held": {k: self.held.get(k, 0.0) for k in THRUSTER_FLUIDS}})
+                         "held": {k: self.held.get(k, 0.0) for k in THRUSTER_FLUIDS}, "counted": self.counted()})
         out = []
         for a, b in zip(ends, ends[1:]):
             used = {k: a["cargo"].get(k, 0) - b["cargo"].get(k, 0) for k in {**a["cargo"], **b["cargo"]}}
@@ -158,6 +171,9 @@ class Flown:
             if "made" in a and "made" in b:
                 made = {k: n - a["made"].get(k, 0) for k, n in b["made"].items()}
                 leg.update(made={k: n for k, n in made.items() if n}, held=dict(b["held"]))
+            if "counted" in a and "counted" in b:
+                counted = {k: b["counted"].get(k, 0) - a["counted"].get(k, 0) for k in {**a["counted"], **b["counted"]}}
+                leg["counted"] = {k: n for k, n in counted.items() if n}
             out.append(leg)
         return out
 
@@ -226,7 +242,7 @@ def start_flight(server: Server, data: dict, flight: Flight) -> tuple[dict, dict
         "charged": flight.charged, "coolant": flight.coolant or None, "take": flight.take or None,
         "loaded": flight.loaded or None, "feed": flight.feed or None, "turn": flight.turn or None,
         "fill": flight.fill, "shock": flight.shock or None, "low_fuel": LOW_FUEL * PRIME,
-        "home": flight.home or None, "via": flight.via or None}))
+        "home": flight.home or None, "via": flight.via or None, "hold": flight.hold or None}))
     if "error" in setup or not flight.fill:
         return setup, {}
     idle, got = 0, {}
@@ -278,7 +294,7 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.trip_km = got.get("trip_km") or 0.0
             flown.stops = [{**s, "cargo": {c["name"]: c["count"] for c in s.get("cargo") or [] if isinstance(c, dict)},
                             "deaths": s["deaths"] if isinstance(s.get("deaths"), dict) else {},
-                            **{k: s[k] if isinstance(s[k], dict) else {} for k in ("made", "held") if k in s}}
+                            **{k: s[k] if isinstance(s[k], dict) else {} for k in ("made", "held", "counted") if k in s}}
                            for s in got.get("stops") or []]
             if isinstance(got.get("at_turn"), dict):
                 flown.at_turn = {"km": got["at_turn"]["km"], "cargo": {
