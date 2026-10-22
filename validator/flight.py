@@ -89,6 +89,9 @@ class Flight:
     # is home. Each place it reaches is a stop (Flown.stops), and what lies between two is a leg.
     home: str = ""
     via: list[str] = field(default_factory=list)
+    # A measurement, not a trip: these items held at their stock (supplies) by script each second,
+    # so nothing runs out and the hub's room doesn't bind; what it uses still counts (fed, rebuilt).
+    hold: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -226,7 +229,7 @@ def start_flight(server: Server, data: dict, flight: Flight) -> tuple[dict, dict
         "charged": flight.charged, "coolant": flight.coolant or None, "take": flight.take or None,
         "loaded": flight.loaded or None, "feed": flight.feed or None, "turn": flight.turn or None,
         "fill": flight.fill, "shock": flight.shock or None, "low_fuel": LOW_FUEL * PRIME,
-        "home": flight.home or None, "via": flight.via or None}))
+        "home": flight.home or None, "via": flight.via or None, "hold": flight.hold or None}))
     if "error" in setup or not flight.fill:
         return setup, {}
     idle, got = 0, {}

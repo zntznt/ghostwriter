@@ -624,8 +624,16 @@ local function flight_tick()
       local n = hub.get_item_count(name)
       if n > 0 then fl.taken[name] = (fl.taken[name] or 0) + hub.remove{name = name, count = n} end
     end
-    -- feed: what left the hub of the ammo its inserters feed the turrets (what fill gave back included).
-    for name, n in pairs(fl.feed_start or {}) do fl.fed[name] = n - hub.get_item_count(name) + (fl.filled[name] or 0) end
+    -- hold: these topped back up to their stock each second (a measurement: nothing runs out and
+    -- the hub's room doesn't bind); what the feed draws still counts as fed, through held_in.
+    for name, n in pairs(fl.hold or {}) do
+      local short = n - hub.get_item_count(name)
+      if short > 0 then fl.held_in[name] = (fl.held_in[name] or 0) + hub.insert{name = name, count = short} end
+    end
+    -- feed: what left the hub of the ammo its inserters feed the turrets (what fill and hold gave back included).
+    for name, n in pairs(fl.feed_start or {}) do
+      fl.fed[name] = n - hub.get_item_count(name) + (fl.filled[name] or 0) + (fl.held_in[name] or 0)
+    end
     -- A turret with no ammo, each second.
     for _, t in pairs(fl.turrets) do
       local inv = t.valid and t.get_inventory(defines.inventory.turret_ammo)
@@ -1297,7 +1305,7 @@ remote.add_interface("ghostwriter", {
                       fed = {}, dry = 0, origin = args.from, destination = args.to, start_speed = args.start_speed,
                       turn = args.turn, shock = args.shock, low_fuel = args.low_fuel, low = 0, pos = start, odometer = 0, watch = {},
                       ran_out = {}, filled = {}, made_base = {}, home = args.home, via = args.via or {},
-                      stops = {}, trip_km = 0}
+                      stops = {}, trip_km = 0, held_in = {}}
     -- feed: the hub feeds the turrets by its own inserters, and what leaves it counts as
     -- used (fed), counted from here; loaded: each turret filled once from the hub to what
     -- an inserter fills it to (automated_ammo_count), as its feed would in orbit.
@@ -1305,6 +1313,11 @@ remote.add_interface("ghostwriter", {
     if args.feed then
       storage.flight.feed_start = {}
       for _, name in pairs(args.feed) do storage.flight.feed_start[name] = hub_inv.get_item_count(name) end
+    end
+    -- hold: items held at their stock as supplied (flight_tick).
+    if args.hold then
+      storage.flight.hold = {}
+      for _, name in pairs(args.hold) do storage.flight.hold[name] = (args.supplies or {})[name] or 0 end
     end
     for _, t in pairs(args.loaded and storage.flight.turrets or {}) do
       local ammo = args.loaded[t.name]

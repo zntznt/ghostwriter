@@ -1054,6 +1054,29 @@ class Validator(unittest.TestCase):
             self.assertGreaterEqual(got["fed"]["railgun-ammo"], 40)
             self.assertGreaterEqual(got["fed"]["uranium-rounds-magazine"], 60)
 
+    def test_a_flight_can_hold_the_hubs_stock(self):
+        # hold (a measurement, not a trip): the script tops the held items back up to their
+        # stock each second, so nothing runs out and the hub's room doesn't bind, and what the
+        # feed draws still counts as fed. Nauvis toward Vulcanus: none of it needs asteroids;
+        # read after 60 s, whatever the tick.
+        data = platform.build(railguns=4, guns=6, thrusters=1, ammo_feed=True).to_dict()
+        supplies = {"railgun-ammo": 20, "uranium-rounds-magazine": 100}  # less than the belts take
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "fuel": True, "power": True,
+                "supplies": supplies, "feed": sorted(supplies), "loaded": platform.FED, "hold": sorted(supplies),
+                "speed": 100}))
+            self.assertNotIn("error", setup)
+            _step(self.server, 3600, timeout=120)
+            got = self.server.call("flight_read")
+        finally:
+            self.server.call("flight_teardown")
+        cargo = {c["name"]: c["count"] for c in got["cargo"]}
+        self.assertEqual({k: cargo.get(k, 0) for k in supplies}, supplies)
+        self.assertGreater(got["fed"]["railgun-ammo"], supplies["railgun-ammo"])  # more than it ever held
+        self.assertGreater(got["fed"]["uranium-rounds-magazine"], 60)
+        self.assertFalse(got["ran_out"])  # nothing ran out
+
     def test_feed_research_speeds_the_hubs_inserters(self):
         # ammo_feed's hub inserters bind its feed 0.1 out (NOTES.md): a filtered fast inserter
         # on the hub's north face moves one magazine a swing, 2.5 a second, until inserter
