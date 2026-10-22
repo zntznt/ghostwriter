@@ -336,3 +336,119 @@ def compare_text(check: dict) -> str:
             f"({f['flights']} flights): came back {f['came back']:.0%}, {f['chunks a trip'] or 0:,.0f} chunks a trip "
             f"counting losses ({f['chunks a trip back'] or 0:,.0f} a trip back); first to run out: {first}.")
 
+
+def measure(server, generator: str, design: dict, research: dict, stock: dict, runs: int, starts=STARTS,
+            seconds: float = SECONDS) -> list[dict]:
+    """The design flown `runs` times from each of starts for `seconds`, its hub held at stock and the
+    chunks it keeps taken from it as they come (Flight.hold, Flight.take), through the optimise cache:
+    rows for tools.trip.table, what it used and brought in per 1,000 km."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, generator, runs=runs)
+    rows = []
+    for start in starts:
+        t = evaluate({**design, "start": start, "seconds": seconds, "supplies": stock, "research": research,
+                      "take": [trip.CHUNK], "hold": sorted(stock)})
+        rows.append({"start": start, "mode": "plan", "passed": t.passed, "rates": t.rates, "counts": t.counts,
+                     "error": t.error})
+        print(f"measured at {start:g}: " + (f"lived {t.rates['survived']:.0%}, {t.rates.get('cruise km/s', 0):.1f} km/s"
+                                            if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+    return rows
+
+
+def _trips(server, generator: str, runs: int):
+    """Round trips of a generator's design, `runs` flights per parameters, cached as trials are
+    (tools.optimise.GameEvaluator): each flight as trip_flown has it, with its legs."""
+    import inspect
+    import json
+    import warnings
+
+    from tools.optimise import CACHE, GameEvaluator, Trial
+    from validator.flight import run_flight
+    from validator.validate import Report
+
+    class Trips(GameEvaluator):
+        def __init__(self):
+            super().__init__(server, generator)
+            self.path = CACHE / f"{generator}-trips.json"
+            stored = json.loads(self.path.read_text()) if self.path.exists() else {}
+            self.cache = stored.get(self.code, {})
+
+        def __call__(self, params):
+            return super().__call__({**params, "runs": runs})
+
+        def _run(self, params):
+            params = {k: v for k, v in params.items() if k != "runs"}
+            shape = {k: v for k, v in params.items() if k in inspect.signature(self.module.build).parameters}
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                data = self.module.build(**shape).to_dict()
+                [flight] = self.module.flight_tests(**params)
+            flights = []
+            for _ in range(runs):
+                flown = run_flight(server, data, flight, Report(server.version))
+                if flown.error:
+                    return Trial(params, False, error=flown.error)
+                flights.append({**trip_flown(flown, params.get("supplies") or {}, params["turn"]), "legs": flown.legs()})
+                print(f"trip {len(flights)}: {flights[-1]['ended']} after {flown.seconds:,.0f} s", file=sys.stderr,
+                      flush=True)
+            return Trial(params, True, {"flights": flights})
+
+    return Trips()
+
+
+def measure_legs(server, generator: str, design: dict, research: dict, stock: dict, runs: int) -> list[dict]:
+    """The legs from Nauvis to the solar system edge and home (VIA), flown `runs` times with the hub
+    held at stock and turning at once on the route: leg_rates, each leg's use from the flight's
+    counters (a held hub's cargo doesn't move) and the chunks it brought from its cargo."""
+    t = _trips(server, generator, runs)({**design, "turn": LEGS_TURN, "home": HOME, "via": list(VIA),
+                                         "fill": bool(design.get("ammo_feed")), "seconds": LEGS_SECONDS,
+                                         "supplies": stock, "research": research, "hold": sorted(stock)})
+    if not t.passed:
+        raise ValueError(f"the legs couldn't be flown: {t.error}")
+    for f in t.rates["flights"]:
+        for leg in f["legs"]:
+            chunks = leg["used"].get(trip.CHUNK)
+            leg["used"] = {k: n for k, n in leg.get("counted", {}).items() if k in items.raw}
+            if chunks:
+                leg["used"][trip.CHUNK] = chunks
+    return leg_rates(t.rates["flights"])
+
+
+def verify(server, generator: str, plan: dict, runs: int) -> dict:
+    """The planned trip flown whole `runs` times on its stock, nothing held: compare against the plan."""
+    design, t = plan["design"], plan["trip"]
+    stock = {s["item"]: s["count"] for s in plan["stock"]}
+    home = {"home": HOME, "via": list(VIA)} if plan["from"] == "nauvis" else {}
+    flights = _trips(server, generator, runs)({**design, **home, "turn": t["flown turn"],
+                                               "fill": bool(design.get("ammo_feed")),
+                                               "seconds": math.ceil(max(VERIFY_SECONDS, 3 * t["hours"] * 3600)), "supplies": stock,
+                                               "research": plan["research"]})
+    if not flights.passed:
+        raise ValueError(f"the trip couldn't be flown: {flights.error}")
+    return compare(plan, trip_means(flights.rates["flights"]))
+
+
+def plan(server, generator: str, design: dict, origin: str = "edge", runs: int = 8, research: dict | None = None,
+         starts=None, seconds: float | None = None, data: dict | None = None) -> dict:
+    """Measure the design and plan its trip (assemble); data is its blueprint, built if not given.
+    starts and seconds default to STARTS and SECONDS."""
+    import inspect
+    import importlib
+    import warnings
+
+    reason = cannot_plan(design)
+    if reason:
+        raise ValueError(f"no promethium trip: {reason}")
+    module = importlib.import_module(f"generators.{generator}")
+    if data is None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            data = module.build(**{k: v for k, v in design.items()
+                                   if k in inspect.signature(module.build).parameters}).to_dict()
+    research = research_for(design, research)
+    stock = measure_stock(data, design)
+    rows = measure(server, generator, design, research, stock, runs, STARTS if starts is None else starts,
+                   SECONDS if seconds is None else seconds)
+    legs = measure_legs(server, generator, design, research, stock, runs) if origin == "nauvis" else None
+    return assemble(design, origin, research, runs, rows, legs)

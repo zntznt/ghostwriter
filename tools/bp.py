@@ -19,6 +19,11 @@
       [--research k=n,...]  --research sets levels researched, e.g. railgun-damage=4;
       [--start F]           --start begins F of the way along the route, e.g. 0.4;
       [--turn F]            --turn turns back home at F of the way: a round trip)
+  plan NAME [k=v ...]   a promethium trip for a platform generator's design (tools.plan):
+      [--from edge|nauvis]  check and validate it, measure it in flights along the route (and
+      [--runs N]            by its legs from Nauvis), and print where to turn, what to load
+      [--verify N]          and what to do before leaving; --verify flies the plan whole N
+      [--json]              times against it; research=k=n,... sets what the flights assume
 
 SRC is a blueprint string, a path to a file holding one (or JSON), or - for
 stdin; `validate` also takes library folders (validated as books).
@@ -232,6 +237,50 @@ def cmd_fly(args):
     print(f"{len(km)} flights: {min(km):,.0f} to {max(km):,.0f} km, mean {sum(km) / len(km):,.0f}", file=sys.stderr)
 
 
+def cmd_plan(args):
+    import json
+
+    from tools import plan as planner
+
+    module = importlib.import_module(f"generators.{args.name}")
+    if not hasattr(module, "flight_tests"):
+        sys.exit(f"error: {args.name} builds nothing that flies (no flight_tests)")
+    params = dict(_param(p) for p in args.params)
+    research = None
+    if "research" in params:
+        research = dict(_param(kv) for kv in str(params.pop("research")).split(",") if kv)
+    reason = planner.cannot_plan(params)
+    if reason:
+        sys.exit(f"error: no promethium trip: {reason}")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            data = module.build(**params).to_dict()
+        except ValueError as e:  # the generator saying these parameters can't work, and why
+            sys.exit(f"error: {e}")
+    if _report(check(data)):
+        sys.exit(1)
+    with Server(args.factorio) as server:
+        print(f"planning in Factorio {server.version}", file=sys.stderr)
+        report = validate(server, data)
+        for line in report.lines():
+            print(line, file=sys.stderr)
+        if not report.ok:
+            sys.exit("error: not planned: the blueprint failed validation")
+        try:
+            p = planner.plan(server, args.name, params, args.origin, args.runs, research, data=data)
+            if args.verify and p["trip"]:
+                p["verified"] = planner.verify(server, args.name, p, args.verify)
+        except ValueError as e:
+            sys.exit(f"error: {e}")
+    if args.json:
+        print(json.dumps(p, indent=1))
+    else:
+        print(planner.text(p) + (f"\n{planner.compare_text(p['verified'])}" if p.get("verified") else ""))
+    if p["error"]:
+        sys.exit(1)
+
+
 def _param(text: str):
     key, _, value = text.partition("=")
     for cast in (int, float):
@@ -291,6 +340,17 @@ def main(argv=None):
     p.add_argument("--destination", default="shattered-planet")
     p.add_argument("--factorio", help="Factorio executable (headless server or game)")
     p.set_defaults(fn=cmd_fly)
+
+    p = sub.add_parser("plan")
+    p.add_argument("name")
+    p.add_argument("params", nargs="*", metavar="key=value")
+    p.add_argument("--from", dest="origin", choices=("edge", "nauvis"), default="edge",
+                   help="where the trip sets out: the solar system edge, or Nauvis by its legs")
+    p.add_argument("--runs", type=int, default=8, help="flights at each start (they differ run to run)")
+    p.add_argument("--verify", type=int, default=0, metavar="N", help="fly the planned trip whole N times")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--factorio", help="Factorio executable (headless server or game)")
+    p.set_defaults(fn=cmd_plan)
 
     args = ap.parse_args(argv)
     args.fn(args)

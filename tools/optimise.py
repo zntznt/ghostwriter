@@ -150,6 +150,8 @@ class FlightEvaluator(GameEvaluator):
             if flown.error or flown.built < flown.entities:
                 return Trial(params, False, error="; ".join(errors) or f"built {flown.built} of {flown.entities}")
             flights.append(flown)
+            print(f"  flight {len(flights)} of {self.runs}: {flown.km:,.0f} km in {flown.seconds:,.0f} s, "
+                  f"{'lived' if flown.survived else flown.ended}", file=sys.stderr, flush=True)
         km = [f.km for f in flights]
         rates = {"km_mean": sum(km) / len(km), "km_min": min(km), "km_max": max(km),
                  "seconds_mean": sum(f.seconds for f in flights) / len(flights),
