@@ -445,6 +445,23 @@ class Validator(unittest.TestCase):
         self.assertAlmostEqual(flown.at_turn["km"], 0.15 * 15000, delta=0.02 * 15000)  # the two legs apart
         self.assertIsInstance(flown.at_turn["cargo"], dict)
 
+    def test_a_shock_kills_the_middle_railguns_as_it_turns(self):
+        # shock: as the flight turns, that many railguns nearest the platform's middle die, as a
+        # gap in the line would open where asteroids are thickest; with construction-robotics and
+        # spares the hub rebuilds them (NOTES.md). Nauvis toward Vulcanus: few, small asteroids.
+        data = platform.build(railguns=4, guns=6, thrusters=1).to_dict()
+        flight = Flight("shocked", origin="nauvis", destination="vulcanus", start=0.3, turn=0.45, seconds=300,
+                        fuel=True, power=True, ammo=platform.AMMO, shock=2, research={"construction-robotics": 1},
+                        supplies={"railgun-turret": 1})
+        report = Report(self.server.version)
+        flown = run_flight(self.server, data, flight, report)
+        self.assertEqual(report.errors, [])
+        self.assertTrue(flown.survived, flown.ended)
+        self.assertEqual(sum(n for k, n in flown.deaths.items() if k.startswith("railgun-turret <- ")), 2,
+                         flown.deaths)
+        self.assertEqual(flown.rebuilt.get("railgun-turret"), 1)  # all the hub had
+        self.assertEqual(flown.cargo.get("railgun-turret", 0), 0)
+
     def test_an_item_runs_out_for_good_not_while_a_bay_has_spilled_it(self):
         # A cargo bay that dies spills its slots' items, and they come back when the hub rebuilds
         # it (NOTES.md): ran_out keeps only an item the hub has held none of since, here one taken

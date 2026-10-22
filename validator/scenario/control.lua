@@ -535,6 +535,10 @@ local function flight_tick()
     fl.turned = game.tick
     -- What it had then: the two legs apart.
     fl.at_turn = {km = fl.odometer, cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()}
+    -- shock: a gap in the railgun line where asteroids are thickest, nearest the middle first.
+    local railguns = p.surface.find_entities_filtered{name = "railgun-turret"}
+    table.sort(railguns, function(a, b) return math.abs(a.position.x) < math.abs(b.position.x) end)
+    for i = 1, math.min(fl.shock or 0, #railguns) do railguns[i].die() end
   end
   if fl.turned and not fl.back and p.space_location and p.space_location.name == fl.origin then fl.back = game.tick end
   if game.tick % 60 == 0 then
@@ -1215,7 +1219,7 @@ remote.add_interface("ghostwriter", {
                       supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0, made = {},
                       generated_j = 0, plant_j = 0, brownout = 0, take = args.take, taken = {}, bays_lost = {},
                       fed = {}, dry = 0, origin = args.from, destination = args.to, start_speed = args.start_speed,
-                      turn = args.turn, low_fuel = args.low_fuel, low = 0, pos = start, odometer = 0, watch = {},
+                      turn = args.turn, shock = args.shock, low_fuel = args.low_fuel, low = 0, pos = start, odometer = 0, watch = {},
                       ran_out = {}, filled = {}, made_base = {}}
     -- feed: the hub feeds the turrets by its own inserters, and what leaves it counts as
     -- used (fed), counted from here; loaded: each turret filled once from the hub to what

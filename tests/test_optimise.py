@@ -281,6 +281,13 @@ class Cache(unittest.TestCase):
 
         self.assertEqual([slots(s) for s in studies.CASCADE_STOCKS.values()], [530, 530, 533, 536])  # of 539
 
+    def test_the_shock_study_opens_the_same_gap_for_each_load(self):
+        # 8 railguns at once, just under the 9 to 21 lost trips lost, against 6, 10 and 20 spares.
+        from tools import studies
+
+        self.assertEqual(studies.SHOCK, 8)
+        self.assertEqual([s["railgun-turret"] for s in studies.SHOCK_STOCKS.values()], [6, 10, 20])
+
     def test_fingerprint_changes_with_the_code(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

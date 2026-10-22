@@ -728,6 +728,13 @@ class Platform(unittest.TestCase):
         self.assertEqual(flight.supplies, {"repair-pack": 100})
         self.assertEqual(platform.flight_tests()[0].supplies, {})
 
+    def test_a_round_trip_can_take_a_shock_as_it_turns(self):
+        # A gap in the railgun line where asteroids are thickest, for the hub to close.
+        self.assertEqual(platform.flight_tests(start=0.0, turn=0.02, shock=8)[0].shock, 8)
+        self.assertEqual(platform.flight_tests()[0].shock, 0)
+        with self.assertRaises(ValueError):
+            platform.flight_tests(shock=8)  # no turn to take it at
+
     def test_a_round_trip_turns_and_a_fed_platform_can_ready_in_orbit(self):
         [flight] = platform.flight_tests(turn=0.02, fill=True, ammo_feed=True)
         self.assertEqual((flight.turn, flight.fill), (0.02, True))

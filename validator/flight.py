@@ -80,6 +80,9 @@ class Flight:
     # fills its belts and turrets while the script holds the hub's feed items at their stock,
     # as a player would top it up; then it leaves with the hub holding exactly that stock.
     fill: bool = False
+    # As it turns, that many railguns nearest the platform's middle die (a gap in the line where
+    # asteroids are thickest), for the hub to rebuild from its spares.
+    shock: int = 0
 
 
 @dataclass
@@ -190,7 +193,7 @@ def start_flight(server: Server, data: dict, flight: Flight) -> tuple[dict, dict
         "primed": flight.primed or None, "start_speed": flight.start_speed or None,
         "charged": flight.charged, "coolant": flight.coolant or None, "take": flight.take or None,
         "loaded": flight.loaded or None, "feed": flight.feed or None, "turn": flight.turn or None,
-        "fill": flight.fill, "low_fuel": LOW_FUEL * PRIME}))
+        "fill": flight.fill, "shock": flight.shock or None, "low_fuel": LOW_FUEL * PRIME}))
     if "error" in setup or not flight.fill:
         return setup, {}
     idle, got = 0, {}

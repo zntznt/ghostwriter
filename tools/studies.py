@@ -839,6 +839,11 @@ CASCADE_STOCKS = {
         **full_stacks(WHOLE_TRIP_STOCK), "railgun-turret": 30, "cargo-bay": 30, "fusion-reactor": 2,
         "fusion-generator": 10},  # 536
 }
+# The cascade comes rarely (3 of 24 trips on the NOTES stock), so 8 trips a load can't tell loads
+# apart: platform-whole-trip-shock opens the gap itself, as the trip turns where asteroids are
+# thickest, SHOCK railguns at once, just under the 9 to 21 lost trips lost.
+SHOCK = 8
+SHOCK_STOCKS = {k: CASCADE_STOCKS[k] for k in list(CASCADE_STOCKS)[:3]}
 WHOLE_TRIP_RESEARCH = {**MIX_RESEARCH, "construction-robotics": 1, **FEED_RESEARCH}
 WHOLE_TRIP_SECONDS = 9000  # at most: the plan's 162,000 km at its 50 km/s take 3,240
 WHOLE_TRIP_RATES = ("platform-feed-fast.result.json", "hub feeds, inserter capacity 7")  # what the plan came from
@@ -898,7 +903,7 @@ def whole_trip_means(rows: list[dict]) -> dict:
             "brownout s": mean(r["brownout s"] for r in rows)}
 
 
-def platform_whole_trip(server, runs: int = 8, stock=None, fold: str = "") -> dict:
+def platform_whole_trip(server, runs: int = 8, stock=None, fold: str = "", shock: int = 0) -> dict:
     """Does the planned trip hold when flown in one go? PROMETHIUM_PLATFORM, readied in Nauvis
     orbit (Flight.fill) with stock (WHOLE_TRIP_STOCK), flies from the solar system edge out to
     WHOLE_TRIP_TURN and back home, `runs` times, with nothing topped up and every chunk kept in
@@ -922,7 +927,7 @@ def platform_whole_trip(server, runs: int = 8, stock=None, fold: str = "") -> di
                                  if k in inspect.signature(platform.build).parameters}).to_dict()
         [flight] = platform.flight_tests(**PROMETHIUM_PLATFORM, start=0.0, turn=WHOLE_TRIP_TURN, fill=True,
                                          seconds=WHOLE_TRIP_SECONDS, supplies=stock or WHOLE_TRIP_STOCK,
-                                         research=WHOLE_TRIP_RESEARCH)
+                                         research=WHOLE_TRIP_RESEARCH, shock=shock)
     stock = stock or WHOLE_TRIP_STOCK
     rows = []
     for run in range(runs):
@@ -961,14 +966,15 @@ def platform_whole_trip(server, runs: int = 8, stock=None, fold: str = "") -> di
             "research": WHOLE_TRIP_RESEARCH, "flights": rows, "means": means, "model": model}
 
 
-def platform_whole_trip_cascade(server, runs: int = 8) -> dict:
-    """Do more spares stop the cascade that loses whole trips? Each of CASCADE_STOCKS flown as
-    platform-whole-trip, `runs` times in the same run: how many came back, the chunks per trip
-    that came back and per trip counting losses, and the bays and railguns that died."""
+def platform_whole_trip_cascade(server, runs: int = 8, stocks=None, shock: int = 0) -> dict:
+    """Do more spares stop the cascade that loses whole trips? Each of `stocks` (CASCADE_STOCKS)
+    flown as platform-whole-trip, `runs` times in the same run, with `shock` railguns killed as
+    it turns: how many came back, the chunks per trip that came back and per trip counting
+    losses, and the bays and railguns that died."""
     out = {}
-    for name, stock in CASCADE_STOCKS.items():
+    for name, stock in (stocks or CASCADE_STOCKS).items():
         print(f"== {name}", file=sys.stderr, flush=True)
-        r = platform_whole_trip(server, runs, stock=stock)
+        r = platform_whole_trip(server, runs, stock=stock, shock=shock)
         m = r["means"]
         print(f"{name}: back {sum(f['back'] for f in r['flights'])}/{runs}, {m['chunks per trip back'] or 0:.0f} chunks "
               f"a trip back, {m['chunks back']:.0f} a trip counting losses; {m['cargo bays died']:.1f} bays and "
@@ -991,4 +997,6 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
            "platform-whole-trip": platform_whole_trip,
            "platform-whole-trip-corrected": lambda server: platform_whole_trip(
                server, stock=CORRECTED_TRIP_STOCK, fold="platform-whole-trip.result.json"),
-           "platform-whole-trip-cascade": platform_whole_trip_cascade}
+           "platform-whole-trip-cascade": platform_whole_trip_cascade,
+           "platform-whole-trip-shock": lambda server: platform_whole_trip_cascade(server, stocks=SHOCK_STOCKS,
+                                                                                    shock=SHOCK)}
