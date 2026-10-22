@@ -435,6 +435,23 @@ class Cache(unittest.TestCase):
         self.assertEqual(studies.SHOCK, 8)
         self.assertEqual([s["railgun-turret"] for s in studies.SHOCK_STOCKS.values()], [6, 10, 20])
 
+    def test_a_crossing_counts_once_it_reaches_the_edge(self):
+        # Aquilo to the edge is 100,000 km: a flight crossed once its log first reaches it; one that
+        # stranded short of it, out of time, didn't. Made a second over the whole flight.
+        from tools import studies
+        from validator.flight import Flown
+
+        crossed = Flown("x", km=100_000, seconds=2000, made={"thruster-fuel": 200_000, "thruster-oxidizer": 100_000},
+                        held={"thruster-fuel": 20_000}, low_fuel=3,
+                        log=[{"seconds": 10, "km": 500}, {"seconds": 1500, "km": 99_995}, {"seconds": 2000, "km": 100_000}])
+        row = studies.crossing_flown(crossed)
+        self.assertEqual((row["crossed"], row["seconds to cross"], row["ended"]), (True, 1500, "crossed"))
+        self.assertEqual(row["made/s"], {"thruster-fuel": 100.0, "thruster-oxidizer": 50.0})
+        self.assertEqual(row["held"], {"thruster-fuel": 20_000, "thruster-oxidizer": 0.0})
+        stranded = Flown("y", km=40_000, seconds=4000, log=[{"seconds": 4000, "km": 40_000}])
+        self.assertEqual((studies.crossing_flown(stranded)["crossed"], studies.crossing_flown(stranded)["ended"]),
+                         (False, "out of time"))
+
     def test_fingerprint_changes_with_the_code(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

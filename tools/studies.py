@@ -1227,6 +1227,68 @@ def platform_advanced_fuel_margin(server, runs: int = 8) -> dict:
             "plan": margin["plan"]}
 
 
+# The crossing (NOTES.md): Aquilo to the solar system edge, 100,000 km, where flights from Nauvis
+# on their own fuel strand. Flown from Aquilo with the line full, as from the last leg: what one
+# tank a fluid does once there, apart from how full it arrives.
+CROSSING_SECONDS = 4000  # at most: 100,000 km at 50 km/s take 2,000
+CROSSING_KM = 100_000  # aquilo-solar-system-edge (dump)
+CROSSING_DESIGNS = {"plain": PROMETHIUM_PLATFORM}
+
+
+def crossing_flown(flown) -> dict:
+    """One crossing in numbers: whether and when it reached the edge, what it made a second and
+    held at the end, and its thrusters' seconds short of fuel."""
+    from validator.flight import THRUSTER_FLUIDS
+
+    at = next((r["seconds"] for r in flown.log if r["km"] >= CROSSING_KM - 10), None)
+    return {"crossed": at is not None, "seconds to cross": at, "km": flown.km,
+            "ended": flown.ended or ("crossed" if at is not None else "out of time"), "low fuel s": flown.low_fuel,
+            "made/s": {k: flown.made.get(k, 0.0) / flown.seconds for k in THRUSTER_FLUIDS} if flown.seconds else {},
+            "held": {k: flown.held.get(k, 0.0) for k in THRUSTER_FLUIDS}, "dry turret s": flown.dry}
+
+
+def platform_crossing(server, runs: int = 8) -> dict:
+    """Does each of CROSSING_DESIGNS cross from Aquilo to the edge on its own fuel? Flown from Aquilo
+    as from the last leg (its line full and moving at CRUISE), with LEGS_STOCK and WHOLE_TRIP_RESEARCH,
+    `runs` times each: crossed n of runs, the time, fuel made and held, seconds short of fuel."""
+    import dataclasses
+    import inspect
+    import json
+    import warnings
+
+    from generators import platform
+    from validator.flight import run_flight
+    from validator.validate import Report
+
+    out = {}
+    for name, design in CROSSING_DESIGNS.items():
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            data = platform.build(**{k: v for k, v in design.items()
+                                     if k in inspect.signature(platform.build).parameters}).to_dict()
+            [flight] = platform.flight_tests(**design, start=0.0, seconds=CROSSING_SECONDS, supplies=LEGS_STOCK,
+                                             research=WHOLE_TRIP_RESEARCH)
+        flight = dataclasses.replace(flight, origin="aquilo", destination="solar-system-edge")
+        rows = []
+        for run in range(runs):
+            flown = run_flight(server, data, flight, Report(server.version))
+            if flown.error:
+                raise RuntimeError(flown.error)
+            row = crossing_flown(flown)
+            rows.append(row)
+            print(f"platform-crossing {name} {run + 1}: {row['ended']}"
+                  + (f" in {row['seconds to cross']:,.0f} s" if row["crossed"] else f", {row['km']:,.0f} km")
+                  + f"; made {json.dumps({k: round(v, 1) for k, v in row['made/s'].items()})} a second, held "
+                  f"{json.dumps({k: round(v) for k, v in row['held'].items()})}; short of fuel {row['low fuel s']} s",
+                  file=sys.stderr, flush=True)
+        crossed = [r for r in rows if r["crossed"]]
+        out[name] = {"design": design, "flights": rows, "crossed": len(crossed),
+                     "seconds to cross": sum(r["seconds to cross"] for r in crossed) / len(crossed) if crossed else None}
+        print(f"platform-crossing {name}: crossed {len(crossed)}/{runs}", file=sys.stderr, flush=True)
+    return {"from": "aquilo", "to": "solar-system-edge", "supplies": LEGS_STOCK, "research": WHOLE_TRIP_RESEARCH,
+            "designs": out}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
@@ -1248,4 +1310,4 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
            "platform-legs-planned": platform_legs_planned, "platform-legs-margin": platform_legs_margin,
            "platform-advanced-fuel": lambda server: platform_legs(server, design=ADVANCED_PLATFORM),
            "platform-advanced-fuel-control": lambda server: platform_legs(server),
-           "platform-advanced-fuel-margin": platform_advanced_fuel_margin}
+           "platform-advanced-fuel-margin": platform_advanced_fuel_margin, "platform-crossing": platform_crossing}
