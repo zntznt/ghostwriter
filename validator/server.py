@@ -21,6 +21,7 @@ from validator.rcon import Rcon
 
 SCENARIO = Path(__file__).resolve().parent / "scenario"
 PASSWORD = "ghostwriter"
+PORT_ATTEMPTS = 3
 
 
 class ServerError(RuntimeError):
@@ -44,20 +45,30 @@ class Server:
         settings = json.loads((data_dir(self.exe) / "server-settings.example.json").read_text())
         settings.update(auto_pause=False, visibility={"public": False, "lan": False})
         (self.dir / "server-settings.json").write_text(json.dumps(settings))
-        rcon_port = _free_port(socket.SOCK_STREAM)
         self.log_path = self.dir / "server.log"
-        self.proc = subprocess.Popen(
-            [
-                str(self.exe), "--config", str(self.dir / "config.ini"),
-                "--start-server-load-scenario", "ghostwriter",
-                "--server-settings", str(self.dir / "server-settings.json"),
-                "--port", str(_free_port(socket.SOCK_DGRAM)),
-                "--rcon-port", str(rcon_port), "--rcon-password", PASSWORD,
-            ],
-            stdin=subprocess.DEVNULL, stdout=self.log_path.open("w"), stderr=subprocess.STDOUT,
-        )
+        # A port found free is released before the game binds it, about 2 s later, so
+        # another process can take it in between: then start again on fresh ports.
+        for attempt in range(PORT_ATTEMPTS):
+            rcon_port = _free_port(socket.SOCK_STREAM)
+            self.proc = subprocess.Popen(
+                [
+                    str(self.exe), "--config", str(self.dir / "config.ini"),
+                    "--start-server-load-scenario", "ghostwriter",
+                    "--server-settings", str(self.dir / "server-settings.json"),
+                    "--port", str(_free_port(socket.SOCK_DGRAM)),
+                    "--rcon-port", str(rcon_port), "--rcon-password", PASSWORD,
+                ],
+                stdin=subprocess.DEVNULL, stdout=self.log_path.open("w"), stderr=subprocess.STDOUT,
+            )
+            try:
+                self._wait_for("Starting RCON interface")
+                break
+            except ServerError as e:
+                if "already in use" not in str(e) or attempt == PORT_ATTEMPTS - 1:
+                    self.__exit__(None, None, None)
+                    raise
+                self.proc.wait()
         try:
-            self._wait_for("Starting RCON interface")
             self.rcon = Rcon("127.0.0.1", rcon_port, PASSWORD)
             self.version = self.command('/sc remote.call("ghostwriter", "version")').strip()
         except Exception:
