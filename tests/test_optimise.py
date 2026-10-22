@@ -618,6 +618,65 @@ class Plan(unittest.TestCase):
         self.assertIsNone(p["trip"])
         self.assertIn("aquilo", p["error"])
 
+    def filed(self, lib):
+        # A library with DESIGN's blueprint filed, and its plan as bp plan makes one.
+        from tools import plan
+        from tools.library import save
+
+        data = plan.build("platform", self.DESIGN)
+        path = save(data, lib)
+        p = {**plan.assemble(self.DESIGN, "edge", {}, runs=8, rows=self.rows()), "generator": "platform",
+             "game": "2.1.23"}
+        return data, path, p
+
+    def test_a_plan_is_filed_beside_the_blueprint_its_design_builds(self):
+        from tools import plan
+        from tools.library import plan_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp)
+            data, path, p = self.filed(lib)
+            self.assertEqual(plan.save(p, data, lib, "2.1.23"), plan_path(path))
+            self.assertEqual(json.loads(plan_path(path).read_text()), json.loads(json.dumps(p)))
+            self.assertEqual(plan.problems(lib, "2.1.23"), [])
+
+    def test_a_plan_is_refused_without_its_blueprint_filed_on_another_game_or_with_no_trip(self):
+        from tools import plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp)
+            data, path, p = self.filed(lib)
+            with self.assertRaisesRegex(ValueError, "file it first"):
+                plan.save(p, plan.build("platform", {**self.DESIGN, "railguns": 9}), lib, "2.1.23")
+            with self.assertRaisesRegex(ValueError, "2.1.22"):
+                plan.save({**p, "game": "2.1.22"}, data, lib, "2.1.23")
+            with self.assertRaisesRegex(ValueError, "no trip"):
+                plan.save({**p, "trip": None, "error": "its flights failed: x"}, data, lib, "2.1.23")
+            self.assertEqual(list(lib.rglob("*.plan.json")), [])
+
+    def test_a_filed_plan_goes_stale_when_its_design_or_game_moves_on(self):
+        from tools import plan
+        from tools.library import plan_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp)
+            data, path, p = self.filed(lib)
+            plan.save(p, data, lib, "2.1.23")
+            self.assertIn("2.1.24", " ".join(plan.problems(lib, "2.1.24")))  # the library's target moved on
+            stale = json.loads(plan_path(path).read_text())
+            stale["design"]["railguns"] = 9
+            plan_path(path).write_text(json.dumps(stale))
+            self.assertIn("no longer builds", " ".join(plan.problems(lib, "2.1.23")))
+            path.unlink()
+            self.assertIn("beside it", " ".join(plan.problems(lib, "2.1.23")))
+
+    def test_every_filed_plan_holds(self):
+        # CI: a plan filed in library/ still matches its blueprint and the game the library targets.
+        from tools import plan
+        from tools.settings import registry
+
+        self.assertEqual(plan.problems(Path(__file__).parent.parent / "library", registry()["game_version"]), [])
+
     def test_a_check_against_trips_flown_whole(self):
         from tools import plan
 

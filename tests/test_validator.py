@@ -1065,16 +1065,26 @@ class Validator(unittest.TestCase):
         import io
         from unittest import mock
 
+        import tempfile
+
         from tools import bp, plan, trip
+        from tools.library import plan_path, save
 
         out = io.StringIO()
-        with mock.patch.object(plan, "STARTS", (0.0, 0.1)), mock.patch.object(plan, "SECONDS", 20), \
-                mock.patch.object(plan, "VERIFY_SECONDS", 60), mock.patch.object(trip, "turns", lambda _: [0.001]), \
-                mock.patch.object(trip, "STAYS", (0.0,)), contextlib.redirect_stdout(out), \
-                contextlib.redirect_stderr(io.StringIO()):
-            bp.main(["plan", "platform", "railguns=8", "guns=4", "thrusters=1", "fuel=1", "promethium=1",
-                     "--runs", "1", "--verify", "1", "--json"])
-        got = json.loads(out.getvalue())
+        design = {"railguns": 8, "guns": 4, "thrusters": 1, "fuel": 1, "promethium": 1}
+        with tempfile.TemporaryDirectory() as tmp:
+            # --save files the plan beside the design's blueprint in a library.
+            filed = save(plan.build("platform", design), Path(tmp))
+            with mock.patch.object(plan, "STARTS", (0.0, 0.1)), mock.patch.object(plan, "SECONDS", 20), \
+                    mock.patch.object(plan, "VERIFY_SECONDS", 60), mock.patch.object(trip, "turns", lambda _: [0.001]), \
+                    mock.patch.object(trip, "STAYS", (0.0,)), mock.patch.object(bp, "LIBRARY", Path(tmp)), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                bp.main(["plan", "platform", *(f"{k}={v}" for k, v in design.items()),
+                         "--runs", "1", "--verify", "1", "--json", "--save"])
+            got = json.loads(out.getvalue())
+            self.assertEqual(json.loads(plan_path(filed).read_text()), got)
+            self.assertEqual(plan.problems(Path(tmp), self.server.version), [])
+        self.assertEqual((got["generator"], got["game"]), ("platform", self.server.version))
         self.assertEqual(sorted(got["measured"]), ["0.0", "0.1"])
         self.assertEqual(got["research"], plan.research_for({"promethium": 1}))
         self.assertIsNone(got["error"])

@@ -16,7 +16,7 @@ from pathlib import Path
 from draftsman.blueprintable import get_blueprintable_from_JSON
 
 from tools.codec import encode, root_key
-from tools.library import BOOK_META, load_book
+from tools.library import is_entry, load_book, plan_path
 from validator.tests_file import load_tests, tests_path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -54,8 +54,7 @@ def build(library: Path = LIBRARY) -> dict:
 
 
 def _entries(folder: Path) -> list[Path]:
-    return sorted(p for p in folder.iterdir()
-                  if p.is_dir() or (p.suffix == ".json" and p.name != BOOK_META))
+    return sorted(p for p in folder.iterdir() if p.is_dir() or is_entry(p))
 
 
 def _node(path: Path, library: Path) -> dict:

@@ -23,7 +23,8 @@
       [--from edge|nauvis]  check and validate it, measure it in flights along the route (and
       [--runs N]            by its legs from Nauvis), and print where to turn, what to load
       [--verify N]          and what to do before leaving; --verify flies the plan whole N
-      [--json]              times against it; research=k=n,... sets what the flights assume
+      [--json]              times against it; research=k=n,... sets what the flights assume;
+      [--save]              --save files it beside the design's blueprint in library/ (NAME.plan.json)
 
 SRC is a blueprint string, a path to a file holding one (or JSON), or - for
 stdin; `validate` also takes library folders (validated as books).
@@ -277,6 +278,14 @@ def cmd_plan(args):
         print(json.dumps(p, indent=1))
     else:
         print(planner.text(p) + (f"\n{planner.compare_text(p['verified'])}" if p.get("verified") else ""))
+    if args.save:
+        from tools.settings import registry
+
+        try:
+            filed = planner.save(p, data, LIBRARY, registry()["game_version"])
+        except ValueError as e:
+            sys.exit(f"error: not filed: {e}")
+        print(f"filed {filed}", file=sys.stderr)
     if p["error"]:
         sys.exit(1)
 
@@ -348,6 +357,8 @@ def main(argv=None):
                    help="where the trip sets out: the solar system edge, or Nauvis by its legs")
     p.add_argument("--runs", type=int, default=8, help="flights at each start (they differ run to run)")
     p.add_argument("--verify", type=int, default=0, metavar="N", help="fly the planned trip whole N times")
+    p.add_argument("--save", action="store_true",
+                   help="file the plan beside the library entry that is this design's blueprint (NAME.plan.json)")
     p.add_argument("--json", action="store_true")
     p.add_argument("--factorio", help="Factorio executable (headless server or game)")
     p.set_defaults(fn=cmd_plan)

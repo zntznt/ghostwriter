@@ -18,7 +18,7 @@ from tools import pipes, rates
 from tools.check import check
 from tools.codec import CodecError, decode, encode, root_key
 from tools.factorio import data_dir
-from tools.library import entries, load_book, save
+from tools.library import entries, is_entry, load_book, plan_path, save
 from tools.settings import game_settings, known, registry
 from validator.tests_file import library_tests
 
@@ -674,7 +674,7 @@ class Platform(unittest.TestCase):
         from tools.studies import FILED_PLATFORM, PROMETHIUM_PLATFORM
 
         filed = {}
-        for path in (Path(__file__).parent.parent / "library" / "platforms").glob("*.json"):
+        for path in filter(is_entry, (Path(__file__).parent.parent / "library" / "platforms").glob("*.json")):
             bp = json.loads(path.read_text())["blueprint"]
             filed[bp["label"]] = bp
         for params in (FILED_PLATFORM, PROMETHIUM_PLATFORM):
@@ -1691,7 +1691,7 @@ class LibraryTests(unittest.TestCase):
 class Library(unittest.TestCase):
     def test_library_files_check_clean(self):
         for path in sorted(LIBRARY.rglob("*.json")):
-            if path.name != "_book.json":
+            if is_entry(path):
                 with self.subTest(str(path.relative_to(LIBRARY))):
                     data = decode(path.read_text())
                     data.pop("index", None)
@@ -1722,6 +1722,21 @@ class Library(unittest.TestCase):
             save(generated(), lib / "a-book")   # folder book
             got = {name: root_key(data) for name, data in entries(lib)}
             self.assertEqual(got, {"gated-requester.json": "blueprint", "a-book": "blueprint_book"})
+
+    def test_a_plan_beside_a_blueprint_is_not_an_entry(self):
+        # NAME.plan.json is NAME.json's trip plan (tools.plan), not a blueprint of its book.
+        book = make_book()
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp)
+            folder = save(copy.deepcopy(book), lib)
+            plan_path(folder / "02-trees.json").write_text("{}")
+            loose = save(generated(), lib)
+            plan_path(loose).write_text("{}")
+            self.assertEqual(load_book(folder), book)
+            self.assertEqual(sorted(name for name, _ in entries(lib)), sorted([folder.name, loose.name]))
+            self.assertEqual(sorted(p.name for p in lib.rglob("*") if is_entry(p)),
+                             sorted(["00-gated-requester.json", "00-gated-requester.json", "02-trees.json",
+                                     "03-belts.json", loose.name]))
 
     def test_plain_folder_becomes_book(self):
         with tempfile.TemporaryDirectory() as tmp:
