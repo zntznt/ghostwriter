@@ -219,7 +219,7 @@ class Cache(unittest.TestCase):
         self.assertAlmostEqual(2 * studies.WHOLE_TRIP_TURN * trip.LENGTH, 162_000)  # out, the stay, and back
 
     def test_a_whole_trip_flight_in_numbers(self):
-        from tools import studies
+        from tools import plan, studies
         from validator.flight import Flown
 
         turn_km = studies.WHOLE_TRIP_TURN * 4_000_000
@@ -243,7 +243,7 @@ class Cache(unittest.TestCase):
         self.assertEqual(rows[0]["used out"], {"railgun-ammo": 2300, "space-platform-foundation": 1329})
         self.assertEqual(rows[0]["used back"], {"railgun-ammo": 1995, "space-platform-foundation": 1000})
         self.assertEqual((rows[1]["chunks out"], rows[1]["used back"]), (None, None))  # it never turned
-        means = studies.whole_trip_means(rows)
+        means = plan.trip_means(rows)
         self.assertEqual(means["came back"], 0.5)
         self.assertEqual(means["chunks back"], 150)  # over every flight: a lost one brings back none
         self.assertEqual(means["chunks per trip back"], 300)  # over the ones that came back
@@ -368,7 +368,7 @@ class Cache(unittest.TestCase):
         # platform-legs: per leg, in the order flown (out, the route, home), what the hub gave per
         # 1,000 km over all the km flown on it (a leg it died on counts its km too), the chunks it
         # brought in, its km/s, and the trips lost on it per 1,000 km.
-        from tools import studies
+        from tools import plan
 
         def leg(a, b, km, s, used):
             return {"from": a, "to": b, "km": km, "seconds": s, "used": used, "died": {}}
@@ -380,7 +380,7 @@ class Cache(unittest.TestCase):
                                        leg(edge, "aquilo", 100000, 1600, {"railgun-ammo": 100})]}
         lost = {"back": False, "legs": [leg("nauvis", "aquilo", 45000, 900, {"railgun-ammo": 9}),
                                         leg("aquilo", None, 50000, 1000, {"railgun-ammo": 250})]}
-        rates = studies.leg_rates([back, lost])
+        rates = plan.leg_rates([back, lost])
         self.assertEqual([(r["part"], r["from"], r["to"]) for r in rates],
                          [("out", "nauvis", "aquilo"), ("out", "aquilo", edge), ("route", edge, edge),
                           ("home", edge, "aquilo")])
@@ -396,15 +396,15 @@ class Cache(unittest.TestCase):
         self.assertEqual(home["row"]["deaths"], 0.0)
         # The route starts at the first leg from the edge, whether or not a flight finished it.
         died = {"back": False, "legs": [leg("nauvis", edge, 145000, 3000, {}), leg(edge, None, 100000, 2000, {})]}
-        self.assertEqual([r["part"] for r in studies.leg_rates([died])], ["out", "route"])
+        self.assertEqual([r["part"] for r in plan.leg_rates([died])], ["out", "route"])
 
     def test_the_planned_trip_with_legs_loads_its_plan_and_flies_its_stay_further_out(self):
         # A platform can't hold still on a connection, so a stay is flown as half further out and
         # half back (NOTES.md), and the load is what the plan uses, in whole items.
-        from tools import studies
+        from tools import plan
 
         best = {"turn": 0.004, "stay": 50000.0, "used": {"railgun-ammo": 4550.4, "cargo-bay": 2.7, "pipe": 0.0}}
-        turn, stock = studies.planned_trip(best)
+        turn, stock = plan.planned_trip(best)
         self.assertAlmostEqual(turn, 0.004 + 25000 / 4_000_000)
         self.assertEqual(stock, {"railgun-ammo": 4551, "cargo-bay": 3})
 
@@ -434,20 +434,20 @@ class Cache(unittest.TestCase):
 
     def test_with_no_flight_home_the_legs_home_mirror_the_legs_out(self):
         # legs_model: the way home is the way out reversed when no flight came home to measure it.
-        from tools import studies
+        from tools import plan
 
         rates = [{"part": "out", "from": "nauvis", "to": "aquilo", "km": 45000, "row": {"km/s": 50.0}},
                  {"part": "out", "from": "aquilo", "to": "solar-system-edge", "km": 100000, "row": {"km/s": 60.0}},
                  {"part": "route", "from": "solar-system-edge", "to": None, "km": None, "row": {}}]
-        legs = studies.legs_home(rates)
+        legs = plan.legs_home(rates)
         self.assertEqual([(r["part"], r["from"], r["to"], r["km"], r["mirrored"]) for r in legs[-2:]],
                          [("home", "solar-system-edge", "aquilo", 100000, True), ("home", "aquilo", "nauvis", 45000, True)])
         measured = rates + [{"part": "home", "from": "solar-system-edge", "to": "aquilo", "km": 100000, "row": {}}]
-        self.assertEqual(studies.legs_home(measured), measured)  # measured ones stand
+        self.assertEqual(plan.legs_home(measured), measured)  # measured ones stand
 
     def test_lost_trips_count_the_bays_and_railguns_that_died(self):
         # What starts the cascade (NOTES.md): railguns die, huge asteroids get through to the bays.
-        from tools import studies
+        from tools import plan, studies
         from validator.flight import Flown
 
         died = Flown("trip", odometer=70_000, seconds=1_400, ended="hub destroyed by huge asteroid",
@@ -455,7 +455,7 @@ class Cache(unittest.TestCase):
                              "railgun-turret <- huge-carbonic-asteroid": 7, "gun-turret <- small-oxide-asteroid": 3})
         back = Flown("trip", odometer=162_000, seconds=3_000, survived=True, back=3_000,
                      deaths={"cargo-bay <- big-carbonic-asteroid": 1})
-        means = studies.whole_trip_means([studies.whole_trip_flown(f, {}) for f in (died, back)])
+        means = plan.trip_means([studies.whole_trip_flown(f, {}) for f in (died, back)])
         self.assertEqual((means["cargo bays died"], means["railgun turrets died"]), (6.5, 3.5))
         self.assertEqual(means["killed by huge asteroids"], 8.5)  # 17 of ours, over 2 flights
 
@@ -465,9 +465,9 @@ class Cache(unittest.TestCase):
 
         from draftsman.data import items
 
-        from tools import studies
+        from tools import plan, studies
 
-        self.assertEqual(studies.full_stacks({"railgun-turret": 6, "fusion-reactor": 1, "uranium-rounds-magazine": 5450}),
+        self.assertEqual(plan.full_stacks({"railgun-turret": 6, "fusion-reactor": 1, "uranium-rounds-magazine": 5450}),
                          {"railgun-turret": 10, "fusion-reactor": 1, "uranium-rounds-magazine": 5500})
 
         def slots(stock):
