@@ -984,6 +984,204 @@ def platform_whole_trip_cascade(server, runs: int = 8, stocks=None, shock: int =
     return {"stocks": out}
 
 
+# Getting there (NOTES.md): Nauvis to the solar system edge is 145,000 km by Fulgora and Aquilo,
+# and the chunks go home to Nauvis orbit, where promethium science is made. platform-legs flies
+# the filed platform from Nauvis out to WHOLE_TRIP_TURN and home in one flight.
+LEGS_HOME, LEGS_VIA = "nauvis", ["fulgora", "aquilo"]
+LEGS_STOCK = CASCADE_STOCKS["full stacks, 20 railguns, 20 bays, 2 reactors"]  # the filed platform's (NOTES.md)
+LEGS_SECONDS = 18_000  # at most: 452,000 km at the whole trip's 50 km/s take about 9,000
+
+
+def leg_rates(rows: list[dict]) -> list[dict]:
+    """Per leg, in the order flown (out, the route edge to edge, home), over every flight that got
+    onto it: the km of a whole leg (over the flights that finished it), what the hub gave per
+    1,000 km over all the km flown on it (a gain is negative; promethium chunks are what came in),
+    its km/s, and the trips lost on it per 1,000 km."""
+    from tools.trip import CHUNK, DEATHS, SPEED
+
+    edge = "solar-system-edge"
+    # The route is the first leg from the edge, whether or not a flight finished it.
+    starts = [next((i for i, leg in enumerate(r["legs"]) if leg["from"] == edge), None) for r in rows]
+    route = min((i for i in starts if i is not None), default=None)
+    out = []
+    for i in range(max((len(r["legs"]) for r in rows), default=0)):
+        on = [r["legs"][i] for r in rows if len(r["legs"]) > i]
+        whole = [leg for leg in on if leg["to"] is not None]
+        km = sum(leg["km"] for leg in on)
+        used = {}
+        for leg in on:
+            for k, n in leg["used"].items():
+                used[k] = used.get(k, 0) + n
+        row = {k: n / km * 1000 for k, n in used.items() if k != CHUNK} if km else {}
+        if used.get(CHUNK):
+            row[CHUNK] = -used[CHUNK] / km * 1000
+        row[SPEED] = km / sum(leg["seconds"] for leg in on) if km else 0.0
+        row[DEATHS] = sum(leg["to"] is None for leg in on) / km * 1000 if km else 0.0
+        name = whole[0] if whole else on[0]
+        out.append({"part": "out" if route is None or i < route else "route" if i == route else "home",
+                    "from": name["from"], "to": name["to"], "flights": len(on), "finished": len(whole),
+                    "km": sum(leg["km"] for leg in whole) / len(whole) if whole else None, "row": row,
+                    "died": {k: sum(leg["died"].get(k, 0) for leg in on) for k in {k for leg in on for k in leg["died"]}}})
+    return out
+
+
+def legs_home(rates: list[dict]) -> list[dict]:
+    """leg_rates with the way home as the way out reversed (mirrored) when no flight came home to
+    measure it; measured legs home stand."""
+    if any(r["part"] == "home" for r in rates):
+        return rates
+    return rates + [{**r, "part": "home", "from": r["to"], "to": r["from"], "mirrored": True}
+                    for r in reversed(rates) if r["part"] == "out"]
+
+
+def legs_model(rates_by_leg: list[dict], stock: dict) -> dict | None:
+    """The trip model with the legs before and after the route (the way home mirrored if unmeasured):
+    the planned trip (0.019 and a 10,000 km stay) on `stock`, and the best trip that fits with the
+    legs, from the rates the plan came from with the whole trip folded in. None if a leg out was
+    never finished or the rates aren't cached."""
+    import json
+
+    from tools import trip
+    from tools.optimise import CACHE
+
+    rates_file = CACHE / WHOLE_TRIP_RATES[0]
+    legs = legs_home(rates_by_leg)
+    if not rates_file.exists() or any(r["km"] is None for r in legs if r["part"] != "route"):
+        return None
+    rates = trip.table(json.loads(rates_file.read_text()), WHOLE_TRIP_RATES[1])
+    if (CACHE / "platform-whole-trip.result.json").exists():  # the route near the edge, as flown (NOTES.md)
+        share, measured_row = trip.measured(json.loads((CACHE / "platform-whole-trip.result.json").read_text()))
+        rates[share] = measured_row
+    before, after = trip.legs({"leg rates": legs})
+    slots = trip.HUB_SLOTS + trip.BAY_SLOTS * PROMETHIUM_PLATFORM["cargo_bays"]
+    same = trip.trip(rates, 0.019, slots, stock=stock, stay=10_000, before=before, after=after)
+    top, _ = trip.best(rates, slots, [t / 1000 for t in range(1, 51)], stays=(0.0, 10_000.0, 50_000.0),
+                       before=before, after=after)
+    keys = ("turn", "stay", "chunks", "comes back", "km", "hours", "ran out", "fits", "loaded slots", "used", "largest")
+    return {"mirrored home": any(r.get("mirrored") for r in legs), "same trip": {k: same.get(k) for k in keys},
+            "best": top and {k: top.get(k) for k in keys}}
+
+
+def planned_trip(best: dict) -> tuple[float, dict]:
+    """A trip model plan as flown: its stay half further out and half back (a platform can't hold
+    still on a connection, NOTES.md), and its load in whole items."""
+    import math
+
+    from tools.trip import LENGTH
+
+    return (best["turn"] + best["stay"] / 2 / LENGTH,
+            {k: math.ceil(v - 1e-9) for k, v in best["used"].items() if math.ceil(v - 1e-9) > 0})
+
+
+def platform_legs_planned(server, runs: int = 8) -> dict:
+    """Does the best trip with the legs hold? The trip model's best from platform-legs' flights with
+    fuel by script (legs_model), flown from Nauvis as planned (planned_trip), `runs` times, fuel by
+    script: the module can't keep up from Aquilo to the edge (NOTES.md)."""
+    import json
+
+    from tools.optimise import CACHE
+
+    legs = json.loads((CACHE / "platform-legs.result.json").read_text())["fuel by script"]
+    best = legs_model(leg_rates(legs["flights"]), legs["supplies"])["best"]
+    turn, stock = planned_trip(best)
+    print(f"plan: turn {best['turn']:g}, stay {best['stay']:,.0f} km, {best['chunks']:.0f} chunks, comes back "
+          f"{best['comes back']:.0%}; flown to {turn:.5f}", file=sys.stderr, flush=True)
+    return {**platform_legs(server, runs, stock=stock, script_fuel=True, turn=turn), "plan": best}
+
+
+MARGIN = 1.1  # over the most a planned flight used
+
+
+def margin_stock(planned: dict, slots: int) -> dict:
+    """A load with a margin, from the planned trip's flights (platform-legs-planned): magazines and
+    foundation at MARGIN over the most a flight used, in whole stacks; every spare in whole stacks,
+    with the 20 railguns, 20 bays and 2 reactors that closed the cascade (NOTES.md); and railgun
+    ammo, which never ran out, in the slots left of `slots`."""
+    import math
+
+    from draftsman.data import items
+
+    stock = planned["supplies"]
+
+    def stacks(k, n):
+        return math.ceil(n / items.raw[k]["stack_size"] - 1e-9)
+
+    most = {k: max(n - f["left"].get(k, 0) for f in planned["flights"]) for k, n in stock.items()}
+    out = {**full_stacks(stock), "railgun-turret": 20, "cargo-bay": 20, "fusion-reactor": 2}
+    for k in ("uranium-rounds-magazine", "space-platform-foundation"):
+        out[k] = stacks(k, most[k] * MARGIN) * items.raw[k]["stack_size"]
+    out.pop("railgun-ammo", None)
+    room = slots - sum(stacks(k, n) for k, n in out.items())
+    return {**out, "railgun-ammo": room * items.raw["railgun-ammo"]["stack_size"]}
+
+
+def platform_legs_margin(server, runs: int = 8) -> dict:
+    """The planned trip with the legs on a load with a margin (margin_stock), fuel by script."""
+    import json
+
+    from tools import trip
+    from tools.optimise import CACHE
+
+    planned = json.loads((CACHE / "platform-legs-planned.result.json").read_text())
+    stock = margin_stock(planned, trip.HUB_SLOTS + trip.BAY_SLOTS * PROMETHIUM_PLATFORM["cargo_bays"])
+    return {**platform_legs(server, runs, stock=stock, script_fuel=True, turn=planned["turn"]), "plan": planned["plan"]}
+
+
+def platform_legs(server, runs: int = 8, stock=None, script_fuel: bool = False, turn: float = WHOLE_TRIP_TURN) -> dict:
+    """What does getting there cost? PROMETHIUM_PLATFORM, readied in Nauvis orbit with stock
+    (LEGS_STOCK), flies by Fulgora and Aquilo to the solar system edge, out to WHOLE_TRIP_TURN and
+    back, and home to Nauvis the same way, `runs` times, with nothing topped up and every chunk
+    kept: per flight as platform-whole-trip, with its legs; per leg (leg_rates); and the trip model
+    for the same trip with the measured legs before and after the route, and its best trip with them.
+    With script_fuel its thrusters are kept full by script, the module still aboard: what the legs
+    cost in stock when fuel can't strand it."""
+    import inspect
+    import json
+    import warnings
+
+    from generators import platform
+    from validator.flight import run_flight
+    from validator.validate import Report
+
+    stock = stock or LEGS_STOCK
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        data = platform.build(**{k: v for k, v in PROMETHIUM_PLATFORM.items()
+                                 if k in inspect.signature(platform.build).parameters}).to_dict()
+        [flight] = platform.flight_tests(**PROMETHIUM_PLATFORM, start=0.0, turn=turn, fill=True,
+                                         seconds=LEGS_SECONDS, supplies=stock, research=WHOLE_TRIP_RESEARCH,
+                                         home=LEGS_HOME, via=LEGS_VIA, script_fuel=script_fuel)
+    rows = []
+    for run in range(runs):
+        flown = run_flight(server, data, flight, Report(server.version))
+        if flown.error:
+            raise RuntimeError(flown.error)
+        row = {**whole_trip_flown(flown, stock), "legs": flown.legs(), "trip km": flown.trip_km,
+               "out km/s": None, "back km/s": None}  # the route's own are in its leg
+        row["died on"] = None if flown.back or not row["legs"] else (row["legs"][-1]["from"], row["legs"][-1]["to"])
+        rows.append(row)
+        out = row["first out"]
+        print(f"flight {run + 1}: {row['ended']} after {row['seconds']:,.0f} s and {row['trip km']:,.0f} km"
+              + (f" (died between {row['died on'][0]} and the next stop)" if row["died on"] else "")
+              + f"; {row['chunks aboard']} chunks aboard; first out "
+              + (f"{out['item']} at {out['km']:,.0f} km" if out else "nothing")
+              + f"; dry {row['dry turret s']} turret-s, low fuel {row['low fuel s']} s; legs "
+              + ", ".join(f"{leg['from']}-{leg['to']} {leg['km']:,.0f} km in {leg['seconds']:,.0f} s"
+                          for leg in row["legs"]), file=sys.stderr, flush=True)
+    means = whole_trip_means(rows)
+    rates_by_leg = leg_rates(rows)
+    print(f"means: {json.dumps(means)}", file=sys.stderr)
+    for r in rates_by_leg:
+        print(f"{r['part']} {r['from']}-{r['to']}: {r['finished']}/{r['flights']} finished, "
+              f"{json.dumps({k: round(v, 3) for k, v in r['row'].items()})}", file=sys.stderr)
+    model = legs_model(rates_by_leg, stock)
+    print(f"model: {json.dumps(model)}", file=sys.stderr)
+    return {"design": PROMETHIUM_PLATFORM, "home": LEGS_HOME, "via": LEGS_VIA, "script fuel": script_fuel,
+            "turn": turn,
+            "supplies": stock, "research": WHOLE_TRIP_RESEARCH, "flights": rows, "means": means,
+            "leg rates": rates_by_leg, "model": model}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
@@ -999,4 +1197,7 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
                server, stock=CORRECTED_TRIP_STOCK, fold="platform-whole-trip.result.json"),
            "platform-whole-trip-cascade": platform_whole_trip_cascade,
            "platform-whole-trip-shock": lambda server: platform_whole_trip_cascade(server, stocks=SHOCK_STOCKS,
-                                                                                    shock=SHOCK)}
+                                                                                    shock=SHOCK),
+           "platform-legs": lambda server: {"on board": platform_legs(server),
+                                            "fuel by script": platform_legs(server, script_fuel=True)},
+           "platform-legs-planned": platform_legs_planned, "platform-legs-margin": platform_legs_margin}

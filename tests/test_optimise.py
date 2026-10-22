@@ -276,6 +276,87 @@ class Cache(unittest.TestCase):
              "died": {"railgun-turret <- big-oxide-asteroid": 1}}])
         self.assertEqual(Flown("plain").legs(), [])
 
+    def test_leg_rates_come_from_every_flight_that_got_onto_the_leg(self):
+        # platform-legs: per leg, in the order flown (out, the route, home), what the hub gave per
+        # 1,000 km over all the km flown on it (a leg it died on counts its km too), the chunks it
+        # brought in, its km/s, and the trips lost on it per 1,000 km.
+        from tools import studies
+
+        def leg(a, b, km, s, used):
+            return {"from": a, "to": b, "km": km, "seconds": s, "used": used, "died": {}}
+
+        edge = "solar-system-edge"
+        back = {"back": True, "legs": [leg("nauvis", "aquilo", 45000, 900, {"railgun-ammo": 9}),
+                                       leg("aquilo", edge, 100000, 2000, {"railgun-ammo": 200}),
+                                       leg(edge, edge, 160000, 3200, {"railgun-ammo": 300, "promethium-asteroid-chunk": -480}),
+                                       leg(edge, "aquilo", 100000, 1600, {"railgun-ammo": 100})]}
+        lost = {"back": False, "legs": [leg("nauvis", "aquilo", 45000, 900, {"railgun-ammo": 9}),
+                                        leg("aquilo", None, 50000, 1000, {"railgun-ammo": 250})]}
+        rates = studies.leg_rates([back, lost])
+        self.assertEqual([(r["part"], r["from"], r["to"]) for r in rates],
+                         [("out", "nauvis", "aquilo"), ("out", "aquilo", edge), ("route", edge, edge),
+                          ("home", edge, "aquilo")])
+        out, edge_leg, route, home = rates
+        self.assertEqual(out["km"], 45000)
+        self.assertAlmostEqual(out["row"]["railgun-ammo"], 18 / 90000 * 1000)
+        self.assertEqual(edge_leg["km"], 100000)  # a whole leg: the one that got there
+        self.assertAlmostEqual(edge_leg["row"]["railgun-ammo"], 450 / 150000 * 1000)
+        self.assertAlmostEqual(edge_leg["row"]["deaths"], 1 / 150000 * 1000)
+        self.assertAlmostEqual(edge_leg["row"]["km/s"], 150000 / 3000)
+        self.assertAlmostEqual(route["row"]["promethium-asteroid-chunk"], 480 / 160000 * 1000)
+        self.assertNotIn("promethium-asteroid-chunk", out["row"])
+        self.assertEqual(home["row"]["deaths"], 0.0)
+        # The route starts at the first leg from the edge, whether or not a flight finished it.
+        died = {"back": False, "legs": [leg("nauvis", edge, 145000, 3000, {}), leg(edge, None, 100000, 2000, {})]}
+        self.assertEqual([r["part"] for r in studies.leg_rates([died])], ["out", "route"])
+
+    def test_the_planned_trip_with_legs_loads_its_plan_and_flies_its_stay_further_out(self):
+        # A platform can't hold still on a connection, so a stay is flown as half further out and
+        # half back (NOTES.md), and the load is what the plan uses, in whole items.
+        from tools import studies
+
+        best = {"turn": 0.004, "stay": 50000.0, "used": {"railgun-ammo": 4550.4, "cargo-bay": 2.7, "pipe": 0.0}}
+        turn, stock = studies.planned_trip(best)
+        self.assertAlmostEqual(turn, 0.004 + 25000 / 4_000_000)
+        self.assertEqual(stock, {"railgun-ammo": 4551, "cargo-bay": 3})
+
+    def test_a_margin_load_tops_up_what_ran_out_and_fills_the_hub_with_railgun_ammo(self):
+        # margin_stock: from the planned trip's flights, magazines and foundation at 10% over the most
+        # a flight used, in whole stacks; every spare in whole stacks, with the cascade's 20 railguns,
+        # 20 bays and 2 reactors (NOTES.md); and railgun ammo, which never ran out, in what's left.
+        import math
+
+        from draftsman.data import items
+
+        from tools import studies
+
+        stock = {"uranium-rounds-magazine": 5726, "railgun-ammo": 4551, "space-platform-foundation": 625,
+                 "crusher": 3, "railgun-turret": 2}
+        flights = [{"left": {"uranium-rounds-magazine": 0, "railgun-ammo": 246, "space-platform-foundation": 0,
+                             "crusher": 0, "railgun-turret": 0}},
+                   {"left": {"uranium-rounds-magazine": 158, "railgun-ammo": 699, "space-platform-foundation": 483,
+                             "crusher": 3, "railgun-turret": 1}}]
+        margin = studies.margin_stock({"supplies": stock, "flights": flights}, slots=539)
+        self.assertEqual(margin["uranium-rounds-magazine"], 6300)  # 5,726 x 1.1, in stacks of 100
+        self.assertEqual(margin["space-platform-foundation"], 700)
+        self.assertEqual((margin["crusher"], margin["railgun-turret"], margin["cargo-bay"], margin["fusion-reactor"]),
+                         (10, 20, 20, 2))
+        self.assertEqual(sum(math.ceil(n / items.raw[k]["stack_size"]) for k, n in margin.items()), 539)
+        self.assertEqual(margin["railgun-ammo"] % 10, 0)
+
+    def test_with_no_flight_home_the_legs_home_mirror_the_legs_out(self):
+        # legs_model: the way home is the way out reversed when no flight came home to measure it.
+        from tools import studies
+
+        rates = [{"part": "out", "from": "nauvis", "to": "aquilo", "km": 45000, "row": {"km/s": 50.0}},
+                 {"part": "out", "from": "aquilo", "to": "solar-system-edge", "km": 100000, "row": {"km/s": 60.0}},
+                 {"part": "route", "from": "solar-system-edge", "to": None, "km": None, "row": {}}]
+        legs = studies.legs_home(rates)
+        self.assertEqual([(r["part"], r["from"], r["to"], r["km"], r["mirrored"]) for r in legs[-2:]],
+                         [("home", "solar-system-edge", "aquilo", 100000, True), ("home", "aquilo", "nauvis", 45000, True)])
+        measured = rates + [{"part": "home", "from": "solar-system-edge", "to": "aquilo", "km": 100000, "row": {}}]
+        self.assertEqual(studies.legs_home(measured), measured)  # measured ones stand
+
     def test_lost_trips_count_the_bays_and_railguns_that_died(self):
         # What starts the cascade (NOTES.md): railguns die, huge asteroids get through to the bays.
         from tools import studies
