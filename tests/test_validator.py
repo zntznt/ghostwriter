@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from draftsman.blueprintable import Blueprint
+from draftsman.constants import Direction
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
@@ -873,6 +874,38 @@ class Validator(unittest.TestCase):
             self.assertGreaterEqual(sum(counts), 80, counts)
             self.assertGreaterEqual(got["fed"]["railgun-ammo"], 40)
             self.assertGreaterEqual(got["fed"]["uranium-rounds-magazine"], 60)
+
+    def test_feed_research_speeds_the_hubs_inserters(self):
+        # ammo_feed's hub inserters bind its feed 0.1 out (NOTES.md): a filtered fast inserter
+        # on the hub's north face moves one magazine a swing, 2.5 a second, until inserter
+        # capacity research adds to its hand (levels 2 and 7: 3 a swing). It drops onto a belt
+        # long enough not to back up; the hub's count is read 5 and 15 s in, whatever the tick.
+        bp = Blueprint()
+        for x in range(-6, 7):
+            for y in range(-126, 6):
+                bp.tiles.append("space-platform-foundation", position=(x, y))
+        bp.entities.append("fast-inserter", tile_position=(-3, -5), direction=Direction.SOUTH, use_filters=True)
+        bp.entities[-1].set_item_filter(0, platform.AMMO["gun-turret"])
+        bp.entities.append("medium-electric-pole", tile_position=(-5, -5))
+        for y in range(-6, -126, -1):
+            bp.entities.append("transport-belt", tile_position=(-3, y), direction=Direction.NORTH)
+        hub = ("/sc rcon.print(storage.flight.platform.hub.get_inventory(defines.inventory.hub_main)"
+               f".get_item_count('{platform.AMMO['gun-turret']}'))")
+        rate = {}
+        for name, research in (("none", {}), ("feed", platform.FEED_RESEARCH)):
+            try:
+                setup = self.server.call("flight_setup", json.dumps({
+                    "blueprint": encode(bp.to_dict()), "from": "nauvis", "to": "vulcanus", "power": True,
+                    "supplies": {platform.AMMO["gun-turret"]: 500}, "research": research}))
+                self.assertNotIn("error", setup)
+                _step(self.server, 300, timeout=60)
+                before = int(self.server.command(hub))
+                _step(self.server, 600, timeout=60)
+                rate[name] = (before - int(self.server.command(hub))) / 10
+            finally:
+                self.server.call("flight_teardown")
+        self.assertAlmostEqual(rate["none"], 2.5, delta=0.2)
+        self.assertGreaterEqual(rate["feed"], 5.0, rate)
 
     def test_a_reserve_tank_shares_the_thrusters_fill(self):
         # reserve=True: a storage tank on each thruster input joins its line, which has
