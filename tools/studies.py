@@ -9,6 +9,8 @@ from collections import Counter
 
 from generators.platform import FEED_RESEARCH
 from tools.optimise import GameEvaluator, grid
+from tools.plan import (HIGH_RESEARCH, MIX_RESEARCH, full_stacks, leg_rates, legs_home, planned_trip,  # noqa: F401
+                        trip_flown, trip_means as whole_trip_means)
 
 SHARES = [0.8, 0.825, 0.85, 0.875, 0.9, 0.925, 0.95, 0.975, 1.0]
 # Each book makes one line run at a chosen share of a yellow belt (15/s), with
@@ -109,12 +111,7 @@ def platform_research(server) -> dict:
     return {"design": PLATFORM_BEST, "trials": rows}
 
 
-HIGH_RESEARCH = {"railgun-shooting-speed": 6, "railgun-damage": 2, "physical-projectile-damage": 10,
-                 "weapon-shooting-speed": 6}  # platform-research's best row
-# The same for rockets and lasers: their damage series to 10, as physical projectile damage
-# is, and laser shooting speed to its last level. Rockets' shooting speed comes with weapon
-# shooting speed 6 (+340%).
-MIX_RESEARCH = {**HIGH_RESEARCH, "stronger-explosives": 10, "laser-weapons-damage": 10, "laser-shooting-speed": 7}
+# HIGH_RESEARCH (platform-research's best row) and MIX_RESEARCH (with rockets and lasers): tools.plan.
 PROMETHIUM_STARTS = [0.0, 0.2, 0.3, 0.4]  # huge promethium asteroids are rare before 0.2 (NOTES.md)
 
 
@@ -819,13 +816,6 @@ CORRECTED_TRIP_STOCK = {"uranium-rounds-magazine": 5672, "railgun-ammo": 4450, "
                         "express-underground-belt": 1}
 
 
-def full_stacks(stock: dict) -> dict:
-    """Every item rounded up to whole stacks: a hub slot holds a stack, so it costs no slots."""
-    from draftsman.data import items
-
-    return {k: -(-n // items.raw[k]["stack_size"]) * items.raw[k]["stack_size"] for k, n in stock.items()}
-
-
 # Lost whole trips lost 9 to 21 railguns, against 0 to 6 in the ones that came back, most to huge
 # asteroids, and then 14 to 25 cargo bays to the huge asteroids that got through (NOTES.md): the
 # 6 spare railguns, 4 bays and 1 fusion reactor ran out. The loads platform-whole-trip-cascade
@@ -850,57 +840,8 @@ WHOLE_TRIP_RATES = ("platform-feed-fast.result.json", "hub feeds, inserter capac
 
 
 def whole_trip_flown(flown, stock: dict) -> dict:
-    """One whole-trip flight in numbers. A flight that didn't come back brings back no chunks."""
-    turn_km = WHOLE_TRIP_TURN * 4_000_000
-    first = min(flown.ran_out.items(), key=lambda kv: kv[1]) if flown.ran_out else None
-    chunks = flown.cargo.get("promethium-asteroid-chunk", 0)
-    # The two legs apart, from the hub's cargo as it turned (None if it never did, or didn't come back).
-    turned = flown.at_turn.get("cargo") if flown.at_turn else None
-    legs = {"chunks out": None, "chunks on the way back": None, "used out": None, "used back": None}
-    if turned is not None:
-        legs["chunks out"] = turned.get("promethium-asteroid-chunk", 0)
-        legs["used out"] = {k: stock[k] - turned.get(k, 0) for k in stock if stock[k] != turned.get(k, 0)}
-        if flown.back:
-            legs["chunks on the way back"] = chunks - legs["chunks out"]
-            legs["used back"] = {k: turned.get(k, 0) - flown.cargo.get(k, 0) for k in stock
-                                 if turned.get(k, 0) != flown.cargo.get(k, 0)}
-    return {**legs, "back": bool(flown.back), "ended": flown.ended or ("back" if flown.back else "out of time"),
-            "died at": None if flown.back or not flown.ended else flown.position, "km": flown.odometer,
-            "seconds": flown.seconds, "chunks back": chunks if flown.back else 0, "chunks aboard": chunks,
-            "left": {k: flown.cargo.get(k, 0) for k in stock}, "first out": first and {"item": first[0], "km": first[1]},
-            "ran out": flown.ran_out, "filled": flown.filled,
-            "dry turret s": flown.dry, "low fuel s": flown.low_fuel, "brownout s": flown.brownout,
-            "out km/s": turn_km / flown.turned if flown.turned else None,
-            "back km/s": (flown.odometer - turn_km) / (flown.back - flown.turned) if flown.back else None,
-            "deaths": flown.deaths, "rebuilt": flown.rebuilt}
-
-
-def whole_trip_means(rows: list[dict]) -> dict:
-    """The means over whole-trip flights: chunks over every flight (a lost one brings back none),
-    what was left over the ones that came back, and which item ran out first how often."""
-    from collections import Counter
-
-    def mean(xs):
-        xs = [x for x in xs if x is not None]
-        return sum(xs) / len(xs) if xs else None
-
-    def died(row, kind=None, cause=""):
-        # Ours, not asteroids' own deaths: "cargo-bay <- huge-oxide-asteroid".
-        return sum(n for k, n in row["deaths"].items() if not k.split(" <- ")[0].endswith("asteroid")
-                   and (kind is None or k.split(" <- ")[0] == kind) and k.split(" <- ")[1].startswith(cause))
-
-    back = [r for r in rows if r["back"]]
-    return {"flights": len(rows), "came back": len(back) / len(rows), "chunks back": mean(r["chunks back"] for r in rows),
-            "chunks per trip back": mean(r["chunks back"] for r in back),
-            "cargo bays died": mean(died(r, "cargo-bay") for r in rows),
-            "railgun turrets died": mean(died(r, "railgun-turret") for r in rows),
-            "killed by huge asteroids": mean(died(r, cause="huge-") for r in rows),
-            "km": mean(r["km"] for r in rows), "seconds": mean(r["seconds"] for r in rows),
-            "out km/s": mean(r["out km/s"] for r in rows), "back km/s": mean(r["back km/s"] for r in rows),
-            "left, came back": {k: mean(r["left"][k] for r in back) for k in (back[0]["left"] if back else {})},
-            "first out": dict(Counter(r["first out"]["item"] for r in rows if r["first out"])),
-            "dry turret s": mean(r["dry turret s"] for r in rows), "low fuel s": mean(r["low fuel s"] for r in rows),
-            "brownout s": mean(r["brownout s"] for r in rows)}
+    """One whole-trip flight in numbers (tools.plan.trip_flown, turning at WHOLE_TRIP_TURN)."""
+    return trip_flown(flown, stock, WHOLE_TRIP_TURN)
 
 
 def platform_whole_trip(server, runs: int = 8, stock=None, fold: str = "", shock: int = 0) -> dict:
@@ -992,39 +933,6 @@ LEGS_STOCK = CASCADE_STOCKS["full stacks, 20 railguns, 20 bays, 2 reactors"]  # 
 LEGS_SECONDS = 18_000  # at most: 452,000 km at the whole trip's 50 km/s take about 9,000
 
 
-def leg_rates(rows: list[dict]) -> list[dict]:
-    """Per leg, in the order flown (out, the route edge to edge, home), over every flight that got
-    onto it: the km of a whole leg (over the flights that finished it), what the hub gave per
-    1,000 km over all the km flown on it (a gain is negative; promethium chunks are what came in),
-    its km/s, and the trips lost on it per 1,000 km."""
-    from tools.trip import CHUNK, DEATHS, SPEED
-
-    edge = "solar-system-edge"
-    # The route is the first leg from the edge, whether or not a flight finished it.
-    starts = [next((i for i, leg in enumerate(r["legs"]) if leg["from"] == edge), None) for r in rows]
-    route = min((i for i in starts if i is not None), default=None)
-    out = []
-    for i in range(max((len(r["legs"]) for r in rows), default=0)):
-        on = [r["legs"][i] for r in rows if len(r["legs"]) > i]
-        whole = [leg for leg in on if leg["to"] is not None]
-        km = sum(leg["km"] for leg in on)
-        used = {}
-        for leg in on:
-            for k, n in leg["used"].items():
-                used[k] = used.get(k, 0) + n
-        row = {k: n / km * 1000 for k, n in used.items() if k != CHUNK} if km else {}
-        if used.get(CHUNK):
-            row[CHUNK] = -used[CHUNK] / km * 1000
-        row[SPEED] = km / sum(leg["seconds"] for leg in on) if km else 0.0
-        row[DEATHS] = sum(leg["to"] is None for leg in on) / km * 1000 if km else 0.0
-        name = whole[0] if whole else on[0]
-        out.append({"part": "out" if route is None or i < route else "route" if i == route else "home",
-                    "from": name["from"], "to": name["to"], "flights": len(on), "finished": len(whole),
-                    "km": sum(leg["km"] for leg in whole) / len(whole) if whole else None, "row": row,
-                    "died": {k: sum(leg["died"].get(k, 0) for leg in on) for k in {k for leg in on for k in leg["died"]}}})
-    return out
-
-
 def leg_fuel(rows: list[dict]) -> list[dict]:
     """Per leg, in the order flown: fuel and oxidizer the module made a second over every flight that
     got onto it, and what the thruster and its tanks held at its end (the reserve as it got there)
@@ -1043,15 +951,6 @@ def leg_fuel(rows: list[dict]) -> list[dict]:
                     "held at end": {k: sum(leg["held"].get(k, 0) for leg in whole) / len(whole) for k in fluids}
                     if whole else {}})
     return out
-
-
-def legs_home(rates: list[dict]) -> list[dict]:
-    """leg_rates with the way home as the way out reversed (mirrored) when no flight came home to
-    measure it; measured legs home stand."""
-    if any(r["part"] == "home" for r in rates):
-        return rates
-    return rates + [{**r, "part": "home", "from": r["to"], "to": r["from"], "mirrored": True}
-                    for r in reversed(rates) if r["part"] == "out"]
 
 
 def legs_model(rates_by_leg: list[dict], stock: dict) -> dict | None:
@@ -1080,17 +979,6 @@ def legs_model(rates_by_leg: list[dict], stock: dict) -> dict | None:
     keys = ("turn", "stay", "chunks", "comes back", "km", "hours", "ran out", "fits", "loaded slots", "used", "largest")
     return {"mirrored home": any(r.get("mirrored") for r in legs), "same trip": {k: same.get(k) for k in keys},
             "best": top and {k: top.get(k) for k in keys}}
-
-
-def planned_trip(best: dict) -> tuple[float, dict]:
-    """A trip model plan as flown: its stay half further out and half back (a platform can't hold
-    still on a connection, NOTES.md), and its load in whole items."""
-    import math
-
-    from tools.trip import LENGTH
-
-    return (best["turn"] + best["stay"] / 2 / LENGTH,
-            {k: math.ceil(v - 1e-9) for k, v in best["used"].items() if math.ceil(v - 1e-9) > 0})
 
 
 def platform_legs_planned(server, runs: int = 8) -> dict:
