@@ -477,6 +477,20 @@ local function held_by(thrusters, turrets, tanks)
   return held
 end
 
+-- What of the hub-fed ammo (Flight.feed) is on the platform's belts: it left the hub but
+-- hasn't been used.
+local function on_belts(surface, names)
+  local held = {}
+  for _, b in pairs(surface.find_entities_filtered{type = {"transport-belt", "underground-belt"}}) do
+    for i = 1, b.get_max_transport_line_index() do
+      for _, c in pairs(b.get_transport_line(i).get_contents()) do
+        if names[c.name] then held[c.name] = (held[c.name] or 0) + c.count end
+      end
+    end
+  end
+  return held
+end
+
 local function flight_tick()
   local fl = storage.flight
   if not fl then return end
@@ -523,6 +537,13 @@ local function flight_tick()
       local n = hub.get_item_count(name)
       if n > 0 then fl.taken[name] = (fl.taken[name] or 0) + hub.remove{name = name, count = n} end
     end
+    -- feed: what left the hub of the ammo its inserters feed the turrets.
+    for name, n in pairs(fl.feed_start or {}) do fl.fed[name] = n - hub.get_item_count(name) end
+    -- A turret with no ammo, each second.
+    for _, t in pairs(fl.turrets) do
+      local inv = t.valid and t.get_inventory(defines.inventory.turret_ammo)
+      if inv and inv.is_empty() then fl.dry = fl.dry + 1 end
+    end
     -- Kept each second: the cargo and the source go with the hub.
     fl.cargo = hub.get_contents()
     fl.hub_health = p.hub.health
@@ -544,6 +565,9 @@ local function flight_tick()
       end
     end
     fl.held = held_by(fl.thrusters, fl.turrets, p.surface.find_entities_filtered{type = "storage-tank"})
+    if fl.feed_start then
+      for name, n in pairs(on_belts(p.surface, fl.feed_start)) do fl.held[name] = (fl.held[name] or 0) + n end
+    end
     -- What the platform's own machines made (script inserts don't count).
     local stats = p.force.get_fluid_production_statistics(p.surface)
     fl.made = {}
@@ -1121,7 +1145,21 @@ remote.add_interface("ghostwriter", {
                       turrets = s.find_entities_filtered{type = "ammo-turret"}, helpers = helpers_,
                       cargo = {}, hub_health = p.hub.health, start = game.tick, research = research,
                       supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0, made = {},
-                      generated_j = 0, plant_j = 0, brownout = 0, take = args.take, taken = {}, bays_lost = {}}
+                      generated_j = 0, plant_j = 0, brownout = 0, take = args.take, taken = {}, bays_lost = {},
+                      fed = {}, dry = 0}
+    -- feed: the hub feeds the turrets by its own inserters, and what leaves it counts as
+    -- used (fed), counted from here; loaded: each turret filled once from the hub to what
+    -- an inserter fills it to (automated_ammo_count), as its feed would in orbit.
+    local hub_inv = p.hub.get_inventory(defines.inventory.hub_main)
+    if args.feed then
+      storage.flight.feed_start = {}
+      for _, name in pairs(args.feed) do storage.flight.feed_start[name] = hub_inv.get_item_count(name) end
+    end
+    for _, t in pairs(args.loaded and storage.flight.turrets or {}) do
+      local ammo = args.loaded[t.name]
+      local n = ammo and math.min(prototypes.entity[t.name].automated_ammo_count, hub_inv.get_item_count(ammo)) or 0
+      if n > 0 then hub_inv.remove{name = ammo, count = t.insert{name = ammo, count = n}} end
+    end
     -- charged and coolant: a plant readied before leaving, every accumulator and railgun
     -- full and each reactor's fuel slot filled with cells, and cold fluoroketone into
     -- each fusion reactor's line. Railguns take power first, as reactors do: empty,
@@ -1168,7 +1206,7 @@ remote.add_interface("ghostwriter", {
           ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo,
           supplied = fl.supplied, held = fl.held, rebuilt = fl.rebuilt, power_j = fl.power_j, made = fl.made,
           generated_j = fl.generated_j, plant_j = fl.plant_j, brownout = fl.brownout, taken = fl.taken,
-          bays_lost = fl.bays_lost}
+          bays_lost = fl.bays_lost, fed = fl.fed, dry = fl.dry}
   end,
 
   flight_step = function(ticks)

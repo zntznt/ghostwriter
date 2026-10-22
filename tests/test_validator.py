@@ -841,6 +841,39 @@ class Validator(unittest.TestCase):
             else:
                 self.assertEqual(cargo.get(platform.PROMETHIUM), 1, cargo)  # in the hub: one a slot
 
+    def test_the_hub_feeds_every_turret(self):
+        # ammo_feed with no ammo by script: from empty, the hub's filtered inserters, the
+        # belts and an inserter at each turret fill every railgun and gun turret. Nauvis
+        # toward Vulcanus: few asteroids, and none needed; read after 60 s, whatever the
+        # tick. loaded fills each turret from the hub once, to 10 (automated_ammo_count).
+        data = platform.build(railguns=4, guns=6, thrusters=1, ammo_feed=True).to_dict()
+        supplies = {"railgun-ammo": 500, "uranium-rounds-magazine": 500}  # more than the belts hold, in 56 slots
+        ammo = ("/sc local out = {} for _, t in pairs(storage.flight.platform.surface.find_entities_filtered"
+                "{type = 'ammo-turret'}) do out[#out + 1] = t.get_inventory(defines.inventory.turret_ammo)"
+                ".get_item_count() end rcon.print(helpers.table_to_json(out))")
+        hub = ("/sc rcon.print(storage.flight.platform.hub.get_inventory(defines.inventory.hub_main)"
+               ".get_item_count('railgun-ammo'))")
+        for loaded in (None, platform.FED):
+            try:
+                setup = self.server.call("flight_setup", json.dumps({
+                    "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "fuel": True, "power": True,
+                    "supplies": supplies, "feed": sorted(supplies), "loaded": loaded, "speed": 100}))
+                self.assertNotIn("error", setup)
+                start, stocked = json.loads(self.server.command(ammo)), int(self.server.command(hub))
+                _step(self.server, 3600, timeout=120)
+                got = self.server.call("flight_read")
+                counts = json.loads(self.server.command(ammo))
+            finally:
+                self.server.call("flight_teardown")
+            if loaded:
+                self.assertEqual((start, stocked), ([10] * 10, 460))  # 4 railguns' 10 out of the hub
+            else:
+                self.assertEqual(start, [0] * 10)
+            self.assertTrue(all(n > 0 for n in counts), counts)
+            self.assertGreaterEqual(sum(counts), 80, counts)
+            self.assertGreaterEqual(got["fed"]["railgun-ammo"], 40)
+            self.assertGreaterEqual(got["fed"]["uranium-rounds-magazine"], 60)
+
     def test_a_reserve_tank_shares_the_thrusters_fill(self):
         # reserve=True: a storage tank on each thruster input joins its line, which has
         # one fill level, so primed through the thruster the tank fills too, and they

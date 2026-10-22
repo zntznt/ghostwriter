@@ -47,6 +47,7 @@ TARGETS = [signatures.TargetID(index=i + 1, name=name) for i, name in enumerate(
 HUGE_TARGETS = [signatures.TargetID(index=i + 1, name=name) for i, name in enumerate(BIG_TARGETS[:4])]
 ROCKET_TARGETS = [signatures.TargetID(index=i + 1, name=name) for i, name in enumerate(BIG_TARGETS[4:])]
 AMMO = {"railgun-turret": "railgun-ammo", "gun-turret": "uranium-rounds-magazine", "rocket-turret": "rocket"}
+FED = {k: AMMO[k] for k in ("railgun-turret", "gun-turret")}  # ammo_feed: what the hub feeds to which turret
 # fuel=True: two asteroid collectors in the railgun row, a tile clear of the railguns
 # beside them (their front corners then sit 45 degrees off a railgun's axis) and
 # one apart, with the belt leaving from between them.
@@ -67,6 +68,10 @@ REACTOR = (-10, HUB + 3)
 PLANT_STEP = 11  # a tile clear of the last plant's west coolant line: pipes side by side join
 CELLS = 50  # fusion cells into the hub for a flight, unless supplies name some: one hub slot
 COOLANT = 10000  # cold fluoroketone into the reactor at the start, more than its loop holds
+# ammo_feed: the two belts up from the hub's north face to the turrets, west and east. Each
+# takes a belt from either side, so it needs the hub's columns beside it: -4 to 1 for both.
+FEEDERS = (-HUB + 1, -HUB + 4)
+UNDER_BELT = "underground-belt"  # ammo_feed: the feed belt under the chunk belt
 
 
 def _inserter_for(demand: float) -> str:
@@ -126,17 +131,61 @@ def _fuel_module(bp: Blueprint, xb: int, r: int, bottom: int):
     bp.entities.append(void, tile_position=(xb, bottom), direction=Direction.NORTH)
 
 
-def _promethium_path(bp: Blueprint, xb: int):
+def _promethium_path(bp: Blueprint, xb: int, end: int = HUB - 2):
     """Promethium chunks off the chunk belt (column xb, flowing south) into the hub: a
-    filter inserter onto a belt west along the gap above the hub, and an inserter down
-    into its north face. A chunk stacks to 1, so each takes a hub slot (NOTES.md). Fast
-    inserters: a collector catches about 2.7 chunks/s where promethium is."""
+    filter inserter onto a belt west along the gap above the hub to column end, and an
+    inserter down into its north face. A chunk stacks to 1, so each takes a hub slot
+    (NOTES.md). Fast inserters: a collector catches about 2.7 chunks/s where promethium is."""
     y = -HUB - 2  # the gap between the gun turrets and the hub (front_gap 2)
     bp.entities.append("fast-inserter", tile_position=(xb - 1, y), direction=Direction.EAST, use_filters=True)
     bp.entities[-1].set_item_filter(0, PROMETHIUM)
-    for x in range(xb - 2, HUB - 3, -1):
+    for x in range(xb - 2, end - 1, -1):
         bp.entities.append(BELT, tile_position=(x, y), direction=Direction.WEST)
-    bp.entities.append("fast-inserter", tile_position=(HUB - 2, y + 1), direction=Direction.NORTH)
+    bp.entities.append("fast-inserter", tile_position=(end, y + 1), direction=Direction.NORTH)
+
+
+def _ammo_feed(bp: Blueprint, rails: list[int], guns: list[int], xb: int | None, y: int):
+    """ammo_feed: railgun ammo and magazines from the hub to every turret along row y,
+    between the railguns' pole row (y - 1) and the gun turrets' inserters (y + 1).
+
+    At each of FEEDERS two filtered inserters on the hub's north face drop railgun ammo
+    and magazines onto a belt pointing into a start belt, one from each side: the start
+    belt takes each onto a lane of its own (NOTES.md), so a backed-up one doesn't stop
+    the other. It runs north through a gap in the gun turrets and turns along row y, west
+    from the west one and east from the east one, under the chunk belt (column xb) by an
+    underground pair. Under each railgun (x, its west tile: its west or east column, off
+    its pole) an inserter takes railgun ammo from the belt below; over each gun turret
+    (gx) one takes magazines from the belt above: an inserter fills a turret to 10
+    (automated_ammo_count, dump) and takes only what it can use."""
+    row = -HUB - 2  # the gap row above the hub
+    for t in FEEDERS:
+        for side, d, ammo in ((-1, Direction.EAST, AMMO["railgun-turret"]), (1, Direction.WEST, AMMO["gun-turret"])):
+            bp.entities.append("fast-inserter", tile_position=(t + side, row + 1), direction=Direction.SOUTH,
+                               use_filters=True)
+            bp.entities[-1].set_item_filter(0, ammo)
+            bp.entities.append(BELT, tile_position=(t + side, row), direction=d)
+        for yy in range(row, y, -1):
+            bp.entities.append(BELT, tile_position=(t, yy), direction=Direction.NORTH)
+    under = {xb - 1, xb, xb + 1} if xb is not None else set()
+
+    def column(*options):  # the first under the row belt
+        return next(c for c in options if (c <= FEEDERS[0] or c >= FEEDERS[1]) and c not in under)
+
+    picks = ([(column(x, x + 2), y - 1, Direction.SOUTH) for x in rails]
+             + [(column(gx, gx + 1), y + 1, Direction.NORTH) for gx in guns])
+    cols = [c for c, _, _ in picks]
+    bp.entities.append(BELT, tile_position=(FEEDERS[0], y), direction=Direction.WEST)
+    for x in range(FEEDERS[0] - 1, min(cols) - 1, -1):
+        bp.entities.append(BELT, tile_position=(x, y), direction=Direction.WEST)
+    for x in range(FEEDERS[1], max(cols) + 1):
+        if x in under:
+            if x != xb:
+                bp.entities.append(UNDER_BELT, tile_position=(x, y), direction=Direction.EAST,
+                                   io_type="input" if x < xb else "output")
+        else:
+            bp.entities.append(BELT, tile_position=(x, y), direction=Direction.EAST)
+    for c, yy, d in picks:
+        bp.entities.append("inserter", tile_position=(c, yy), direction=d)
 
 
 def _cell_path(bp: Blueprint, plants: int):
@@ -191,7 +240,8 @@ def _power_plant(bp: Blueprint, rx: int, first: bool):
 
 
 def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, layout="rows", cargo_bays=0,
-          margin=0, fuel=False, reserve=False, power=False, side_guns=0, promethium=False, rockets=0) -> Blueprint:
+          margin=0, fuel=False, reserve=False, power=False, side_guns=0, promethium=False, rockets=0,
+          ammo_feed=False) -> Blueprint:
     """layout: "rows" puts the gun turrets in a row behind the railguns; "front"
     spreads them through the railguns' row, front edges flush. A railgun fires
     only in a 72-degree arc ahead of it (turn_range 0.2, NOTES.md), so turrets
@@ -234,7 +284,12 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     rockets stands that many rocket turrets in a row behind the gun turrets (layout
     rows) for the big asteroids, and the railguns keep to the huge ones: 3 rockets
     kill a big asteroid with the flight research, at a hundredth of a hub slot each
-    against a railgun shot's tenth (NOTES.md)."""
+    against a railgun shot's tenth (NOTES.md).
+
+    ammo_feed has the hub feed every turret: railgun ammo and magazines by filtered
+    inserters on its north face, two belts up through a gap in the gun turrets and one
+    along a row added between the railguns' poles and the gun turrets, with an inserter
+    into each turret (_ammo_feed). The railguns stand two rows further forward."""
     if railguns < 1 or thrusters < 1:
         raise ValueError("a platform needs at least one railgun and one thruster")
     if layout not in ("rows", "front"):
@@ -257,6 +312,9 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         raise ValueError("promethium=True needs front_gap 2 or more: its belt runs in the gap above the hub")
     if rockets < 0 or (rockets and layout != "rows"):
         raise ValueError("rockets is a count of rocket turrets behind the gun turrets (layout rows)")
+    if ammo_feed and (layout != "rows" or rockets or side_guns or front_gap != 2):
+        raise ValueError("ammo_feed feeds railguns and gun turrets in rows, with front_gap 2: "
+                         "not rocket turrets, side guns or layout front")
     rw, rh = RAILGUN
     tw, th = THRUSTER
     gw = GUN
@@ -266,14 +324,16 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     widths = [row, thrusters * tw + (thrusters - 1) * spacing,
               0 if front else guns * gw + max(guns - 1, 0) * spacing, 2 * HUB + 2 + 2 * CARGO_BAY * -(-cargo_bays // 4)]
     rocket_row = rockets * ROCKET + max(rockets - 1, 0) * spacing
-    half = max(*widths[:2], widths[2] + (gw if fuel else 0), rocket_row + (ROCKET if fuel else 0),
+    # The belt may push a gun turret on, and the feeders' gap (ammo_feed) up to FEEDERS' span and one.
+    feed_shift = FEEDERS[1] - FEEDERS[0] + gw if ammo_feed else 0
+    half = max(*widths[:2], widths[2] + (gw if fuel else 0) + feed_shift, rocket_row + (ROCKET if fuel else 0),
                widths[3]) // 2 + 1  # the belt may push a turret on
     # North to south: railguns, a row of poles, gun turrets (rows), rocket turrets, the
     # gap, the hub. Railgun shots hit everything along their line, own turrets included,
     # so nothing stands in front.
     rocket_top = -HUB - front_gap - (ROCKET if rockets else 0)
     gun_top = rocket_top - (0 if front or not guns else gw)
-    rail_top = gun_top - 1 - rh
+    rail_top = gun_top - 1 - rh - (2 if ammo_feed else 0)  # ammo_feed: its belt and the gun turrets' inserters
     top = rail_top
     bottom = HUB - 1 + back_gap + th  # last row of the thrusters: the foundation ends here
     full = bottom  # the last row of the full width
@@ -305,24 +365,28 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     where = "between the railguns" if front else "behind them"
     bp.description = ("Railguns across the front for big and huge asteroids only, gun turrets " + where +
                       " for the rest, thrusters at the back, the hub in the middle (the blueprint's origin is the "
-                      "hub's centre). Supply power, railgun ammo" +
-                      (" and magazines; it makes its thruster fuel and oxidizer (research space-platform-thruster)" +
+                      "hub's centre). " + ("The hub feeds the turrets: stock it with railgun ammo and magazines. "
+                                            "Supply power" if ammo_feed else "Supply power, railgun ammo, magazines") +
+                      ("; it makes its thruster fuel and oxidizer (research space-platform-thruster)" +
                        ("; fill its tanks first." if reserve else ".") if fuel
-                       else ", magazines and thruster fuel and oxidizer."))
+                       else " and thruster fuel and oxidizer."))
     if cargo_bays:
         bp.description += (" With construction-robotics researched the hub rebuilds what asteroids destroy from its "
                            "stock: fill the bays with spare turrets, poles and foundation, which goes fastest.")
     if power:
         # The game keeps 500 bytes of a description: with power, a shorter one.
         bp.description = (f"Railguns in front for big and huge asteroids, gun turrets {'among' if front else 'behind'} "
-                          "them, the hub at the origin. Supply railgun ammo" + (", rockets" if rockets else "") +
-                          " and magazines" +
+                          "them, the hub at the origin. " +
+                          ("The hub feeds the turrets railgun ammo and magazines" if ammo_feed else
+                           "Supply railgun ammo" + (", rockets" if rockets else "") + " and magazines") +
                           ("; it makes thruster fuel (research space-platform-thruster)" +
-                           (", fill its tanks first" if reserve else "") if fuel else " and thruster fuel") +
-                          ". Fusion power (research cryogenic-plant): before leaving, fill the reactors with cells (more in the hub) and "
+                           (", fill its tanks first" if reserve else "") if fuel else
+                           ("; supply thruster fuel" if ammo_feed else " and thruster fuel")) +
+                          ". Fusion power (research cryogenic-plant): before leaving, fill the reactors with cells" +
+                          ("" if ammo_feed else " (more in the hub)") + " and "
                           "the loops with cold fluoroketone, charge the accumulator and railguns." +
-                          (" With construction-robotics the hub rebuilds from its stock: fill the bays with spares and "
-                           "foundation." if cargo_bays else ""))
+                          (" With construction-robotics the hub rebuilds from its stock: fill the bays with " +
+                           ("ammo, " if ammo_feed else "") + "spares and foundation." if cargo_bays else ""))
     bp.icons = ["railgun-turret", "thruster"]
     for x in range(-half - margin, half + margin):
         for y in range(top, full + 1):
@@ -339,7 +403,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
                 if (x, y) not in laid:
                     bp.tiles.append("space-platform-foundation", position=(x, y))
 
-    poles = []
+    poles, rail_xs, gun_xs = [], [], []
     x = -(widths[0] // 2)
     if front:
         # Gun turrets spread evenly through the railguns+1 gaps (between and at the ends).
@@ -351,10 +415,14 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         shift = 0
         for k in range(guns):
             gx = left + k * (gw + spacing) + shift
+            if ammo_feed and gx <= FEEDERS[1] and gx + gw > FEEDERS[0]:  # leave the feeders' columns clear
+                shift += FEEDERS[1] + 1 - gx
+                gx = FEEDERS[1] + 1
             if fuel and gx <= xb < gx + gw:  # leave the belt's column clear
                 shift += xb + 1 - gx
                 gx = xb + 1
             bp.entities.append("gun-turret", tile_position=(gx, gun_top))
+            gun_xs.append(gx)
         left, shift = -(rocket_row // 2), 0
         for k in range(rockets):
             rx = left + k * (ROCKET + spacing) + shift
@@ -383,6 +451,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
             x += FUEL_SLOT + spacing
         if i < railguns:
             cx = x + rw / 2
+            rail_xs.append(x)
             bp.entities.append("railgun-turret", position=(cx, rail_top + rh / 2),
                                priority_list=HUGE_TARGETS if rockets else TARGETS)
             bp.entities[-1].extra_keys = {"ignore-unprioritised": True}  # the game's key; Draftsman's is dropped
@@ -402,7 +471,9 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
     if fuel:
         _fuel_module(bp, xb, HUB, bottom)
     if promethium:
-        _promethium_path(bp, xb)
+        _promethium_path(bp, xb, HUB - 1 if ammo_feed else HUB - 2)  # ammo_feed: its feeders need column 2
+    if ammo_feed:
+        _ammo_feed(bp, rail_xs, gun_xs, xb if fuel else None, gun_top - 2)
     for k in range(power):
         _power_plant(bp, REACTOR[0] - PLANT_STEP * k, k == 0)
     if power:
@@ -432,7 +503,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
 
 def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=False, reserve=False, script_fuel=False,
-                 power=False, magazine=AMMO["gun-turret"], reverse=False, take=None, **params):
+                 power=False, magazine=AMMO["gun-turret"], reverse=False, take=None, ammo_feed=False, **params):
     """research: technology series -> levels researched; start: share of the route
     to begin at; supplies: items into the hub, which rebuilds from them (with
     construction-robotics researched) and repairs with repair packs
@@ -449,9 +520,13 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     turrets with; uranium rounds can't be made in space, piercing rounds can.
     reverse flies the same stretch back toward the solar system edge (start is
     still the share from the edge). take: items the script empties from the hub
-    each second and counts, so a full hub doesn't cap what is measured."""
+    each second and counts, so a full hub doesn't cap what is measured. With ammo_feed the
+    script stocks no turret: each is loaded once from the hub at the start, as its feed
+    would in orbit, and what leaves the hub counts as used (Flight.feed)."""
     from validator.flight import PRIME, Flight
 
+    if ammo_feed and magazine != AMMO["gun-turret"]:
+        raise ValueError(f"ammo_feed's hub inserters take {AMMO['gun-turret']}, not {magazine}")
     if reverse and not 0 < start < 1:
         raise ValueError(f"a flight back starts partway along the route, not at {start} of it")
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
@@ -464,5 +539,6 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     route = {"origin": "shattered-planet", "destination": "solar-system-edge", "start": 1 - start} if reverse else {
         "start": start}
     return [Flight(shape, seconds=seconds, **route, supplies=supplies, fuel=not on_board, power=not power,
-                   ammo={**AMMO, "gun-turret": magazine}, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
-                   charged=power, coolant=COOLANT if power else 0, take=list(take or []))]
+                   ammo={} if ammo_feed else {**AMMO, "gun-turret": magazine}, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
+                   charged=power, coolant=COOLANT if power else 0, take=list(take or []),
+                   loaded=dict(FED) if ammo_feed else {}, feed=sorted(set(FED.values())) if ammo_feed else [])]
