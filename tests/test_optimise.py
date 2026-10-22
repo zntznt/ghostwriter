@@ -631,6 +631,17 @@ class Plan(unittest.TestCase):
             self.assertEqual(n % items.raw[name]["stack_size"], 0, name)
         self.assertEqual((spares["railgun-turret"], spares["cargo-bay"], spares["fusion-reactor"]), (20, 30, 2))
 
+    def test_the_margin_scales_each_kind_of_use_by_the_spread_whole_trips_showed(self):
+        # NOTES.md, whole trips: ammo ran out in the last 3 to 10% of most trips at the mean; a bad
+        # trip used about twice the mean of foundation and two to three times of the parts the hub
+        # rebuilt. Ammo a tenth over, foundation twice, parts three times; anything else as used.
+        from tools import plan
+
+        scale = plan.margin({"railgun-ammo", "uranium-rounds-magazine", "space-platform-foundation", "crusher",
+                             "fusion-power-cell"}, parts={"crusher"})
+        self.assertEqual(scale, {"railgun-ammo": 1.1, "uranium-rounds-magazine": 1.1,
+                                 "space-platform-foundation": 2.0, "crusher": 3.0})
+
     def test_a_plan_carries_its_spares_and_says_what_rule_sized_them(self):
         from tools import plan
 

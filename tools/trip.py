@@ -101,7 +101,8 @@ def at(rates: dict[float, dict[str, float]], share: float) -> dict[str, float]:
 
 
 def trip(rates: dict, turn: float, slots: int, stock: dict | None = None, stay: float = 0.0, step: float = 1000.0,
-         length: float = LENGTH, aboard=(), before=(), after=(), least: dict | None = None) -> dict:
+         length: float = LENGTH, aboard=(), before=(), after=(), least: dict | None = None,
+         scale: dict | None = None) -> dict:
     """Out to `turn`, `stay` km flown there, and back, in steps of `step` km; first the legs
     `before` it and last those `after` it ((km, rates row) each, in order: getting to the edge
     and home again). Returns what it flew, used and loaded (nothing of what's made `aboard`);
@@ -109,7 +110,8 @@ def trip(rates: dict, turn: float, slots: int, stock: dict | None = None, stay: 
     the chance it comes back at the measured deaths per 1,000 km; and, with a given stock, the
     first item to run out (item, km into the trip, share of the route: 0 on a leg) or None.
     least: a floor under the load (spares for a bad trip the rates don't show), each item loaded
-    at least that many, in its slots the whole way unless used."""
+    at least that many, in its slots the whole way unless used; scale: each item loaded at what's
+    used times its factor, for a trip that uses more than the average."""
     out = [(k + 0.5) * step / length for k in range(round(turn * length / step))]
     route = out + [turn] * round(stay / step) + out[::-1]
 
@@ -123,7 +125,8 @@ def trip(rates: dict, turn: float, slots: int, stock: dict | None = None, stay: 
         for k, v in r.items():
             if k not in (CHUNK, SPEED, DEATHS) and k not in aboard:
                 need[k] = need.get(k, 0.0) + v * step / 1000
-    loaded = dict(stock) if stock is not None else {k: math.ceil(v - 1e-9) for k, v in need.items()}
+    loaded = dict(stock) if stock is not None else {k: math.ceil(v * (scale or {}).get(k, 1.0) - 1e-9)
+                                                    for k, v in need.items()}
     for k, n in (least or {}).items():
         loaded[k] = max(loaded.get(k, 0), n)
     stacks = {k: items.raw[k]["stack_size"] for k in set(need) | set(loaded)}

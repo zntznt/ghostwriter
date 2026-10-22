@@ -171,17 +171,34 @@ def slots(stock: dict) -> int:
     return sum(math.ceil(n / items.raw[k]["stack_size"] - 1e-9) for k, n in stock.items() if n > 0)
 
 
-# The spares a plan carries, whatever its flights' rates say: 600 s flights lose little, and over a
-# whole trip losses compound (NOTES.md). The trips lost ran out of spare railguns first and then huge
-# asteroids took the cargo bays (9 to 24 railguns died on them, of 16); with 20 spare railguns, 20
-# bays and 2 reactors every whole trip came back, 8 under a shock that killed 8 railguns at the turn.
-MARGIN_RULE = ("enough to rebuild the platform once: at least as many of each part as it has, in whole "
-               "stacks, so a bad trip doesn't run out of railguns and then lose its cargo bays (NOTES.md)")
+# The margin a plan loads over its flights' mean rates: 600 s flights lose little, and over a whole
+# trip losses compound (NOTES.md). The trips lost ran out of something (spare railguns, crushers,
+# ammo, foundation), and then huge asteroids took the cargo bays. Over 88 whole trips of the promethium
+# platform: ammo at the mean rate ran out in the last 3 to 10% of most trips; a bad trip (the 90th
+# percentile) used about twice the mean of foundation and two to three times of each part the hub
+# rebuilt. So ammo a tenth over, foundation twice, parts three times and at least the platform's own
+# count of each (enough to rebuild it once), in whole stacks.
+MARGIN = {"ammo": 1.1, "tile": 2.0, "part": 3.0}
+MARGIN_RULE = ("ammo a tenth over the mean use, foundation twice, each part the hub rebuilds three times and at "
+               "least as many as the platform has (enough to rebuild it once), in whole stacks: a bad whole trip "
+               "uses that much, and running out of any of it starts the cascade that loses trips (NOTES.md)")
 
 
 def spares(data: dict) -> dict:
-    """The margin's spares (MARGIN_RULE) for a blueprint: its own count of each part, in whole stacks."""
+    """The margin's floor (MARGIN_RULE) for a blueprint: its own count of each part, in whole stacks."""
     return full_stacks(Counter(e["name"] for e in data["blueprint"]["entities"] if e["name"] in items.raw))
+
+
+def margin(used, parts) -> dict:
+    """The margin's factor (MARGIN) for each item a trip uses: ammo, tiles (foundation), and the
+    platform's parts; anything else (fusion cells) as used."""
+    out = {}
+    for k in used:
+        kind = ("part" if k in parts else "ammo" if items.raw[k].get("type") == "ammo"
+                else "tile" if "place_as_tile" in items.raw[k] else None)
+        if kind:
+            out[k] = MARGIN[kind]
+    return out
 
 
 def capacity(design: dict) -> int:
@@ -296,7 +313,7 @@ def assemble(design: dict, origin: str, research: dict, runs: int, rows: list[di
     keep = ("part", "from", "to", "km", "finished", "flights", "stranded", "destroyed", "short of")
     plan = {"design": design, "from": origin, "research": research, "runs": runs, "measured": measured,
             "legs": legs and [{k: leg.get(k) for k in keep} for leg in legs],
-            "margin": {"rule": MARGIN_RULE, "spares": dict(spares)} if spares else None,
+            "margin": None,
             "trip": None, "limit": None, "stock": [], "readying": readying(design), "caveats": caveats(design, origin),
             "error": None}
     failed = [r for r in rows if not r["passed"]]
@@ -319,16 +336,23 @@ def assemble(design: dict, origin: str, research: dict, runs: int, rows: list[di
         plan["caveats"] += [f"Some flights stranded getting there: {stranding(leg)}." for leg in out if leg.get("stranded")]
         before, after = trip.legs({"leg rates": legs_home(legs)})
     room = capacity(design)
+    scale = None
+    if spares is not None:
+        used = {k for row in rates.values() for k in row if k not in (trip.CHUNK, trip.SPEED, trip.DEATHS)}
+        for _, row in (*before, *after):
+            used |= {k for k in row if k not in (trip.CHUNK, trip.SPEED, trip.DEATHS)}
+        scale = margin(used, set(spares))
+        plan["margin"] = {"rule": MARGIN_RULE, "spares": dict(spares), "scale": scale}
     top, tried = trip.best(rates, room, trip.turns(max(rates)), stays=trip.STAYS, before=before, after=after,
-                           least=spares)
+                           least=spares, scale=scale)
     if top is None:
         shortest = min(tried, key=lambda r: (r["turn"], r["stay"]))
-        spare = f", {slots(spares)} of them spares to rebuild the platform once" if spares else ""
-        plan["error"] = (f"no trip fits in the hub's {room} slots: the shortest loads {shortest['loaded slots']:,}"
-                         f"{spare} ({shortest['largest']} the most)")
+        spare = " with its margin" if spares is not None else ""
+        plan["error"] = (f"no trip fits in the hub's {room} slots{spare}: the shortest loads "
+                         f"{shortest['loaded slots']:,} ({shortest['largest']} the most)")
         return plan
-    turn, load = planned_trip(top)
-    stock = full_stacks({k: max(load.get(k, 0), (spares or {}).get(k, 0)) for k in {*load, *(spares or {})}})
+    turn, _ = planned_trip(top)
+    stock = full_stacks({k: n for k, n in top["loaded"].items() if n > 0})
     plan["stock"] = sorted(({"item": k, "count": n, "slots": slots({k: n})} for k, n in stock.items()),
                            key=lambda s: (-s["slots"], s["item"]))
     plan["trip"] = {"turn": top["turn"], "stay": top["stay"], "flown turn": turn, "km": top["km"], "hours": top["hours"],
@@ -368,7 +392,7 @@ def text(plan: dict) -> str:
                   "Load the hub:"]
         lines += [f"  {s['item']:<32} {s['count']:>7,}  {s['slots']:>3} slots" for s in plan["stock"]]
     if plan.get("margin"):
-        lines.append(f"Spares: {plan['margin']['rule']}; {slots(plan['margin']['spares'])} slots of the load.")
+        lines.append(f"Margin: {plan['margin']['rule']}.")
     lines.append("Research: " + ", ".join(f"{k} {v}" for k, v in plan["research"].items()))
     lines.append("Before leaving:")
     lines += [f"  - {s}" for s in plan["readying"]]

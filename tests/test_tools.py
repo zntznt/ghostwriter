@@ -1846,6 +1846,11 @@ class Trip(unittest.TestCase):
         # A floor under what's used too: the larger of the two is loaded.
         floor = trip.trip(self.flat(), 0.1, slots=1000, length=1e6, least={self.FOUNDATION: 100})
         self.assertEqual(floor["loaded"][self.FOUNDATION], 20000)
+        # scale: what's used times a margin, for a trip that uses more than the average.
+        scaled = trip.trip(self.flat(), 0.1, slots=1000, length=1e6, scale={self.FOUNDATION: 1.5})
+        self.assertEqual(scaled["loaded"][self.FOUNDATION], 30000)
+        self.assertAlmostEqual(scaled["used"][self.FOUNDATION], 20000.0)
+        self.assertEqual(scaled["loaded slots"], 300)
 
     def test_legs_to_and_from_the_route_use_stock_before_and_after_it(self):
         # before and after: legs flown at their own rates, in order, before the route and after it
