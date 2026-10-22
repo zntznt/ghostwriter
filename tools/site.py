@@ -89,6 +89,10 @@ def _node(path: Path, library: Path) -> dict:
                 node["tests"] = [case.name for case in loaded.cases]
             if loaded.flows:
                 node["flows"] = [flow.name for flow in loaded.flows]
+        plan = plan_path(path)
+        if plan.is_file():
+            # A platform's trip plan (bp plan --save); CI checks it still holds (tools.plan.problems).
+            node["plan"] = json.loads(plan.read_text())
     return node
 
 
