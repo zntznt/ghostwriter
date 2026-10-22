@@ -49,31 +49,95 @@ def belt_fill(server) -> dict:
     return result
 
 
+# The research most platform studies fly with: platform-research's best (HIGH_RESEARCH), with the hub
+# rebuilding what dies (construction-robotics); the trip studies' (MIX_RESEARCH) the same way.
+REBUILD = {**HIGH_RESEARCH, "construction-robotics": 1}
+TRIP_RESEARCH = {**MIX_RESEARCH, "construction-robotics": 1}
+ROW = ("passed", "rates", "counts", "ended", "error")  # a trial's row, after the fields that name it
+
+
+def flights(server, runs: int, trials, show=(), keys=ROW) -> list[dict]:
+    """Each of trials, (fields, params), flown `runs` times through the optimise cache: a row of the
+    fields and the trial's keys each, printed as it comes with show's extras (each row -> text)."""
+    from tools.optimise import FlightEvaluator
+
+    evaluate = FlightEvaluator(server, "platform", runs=runs)
+    rows = []
+    for fields, params in trials:
+        t = evaluate(params)
+        whole = {"passed": t.passed, "rates": t.rates, "counts": t.counts, "ended": t.stalled, "error": t.error}
+        rows.append({**fields, **{k: whole[k] for k in keys}})
+        print(", ".join(f"{k} {v}" for k, v in fields.items()) + ": "
+              + (summary({**whole, **fields}, show) if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return rows
+
+
+def summary(row: dict, show=()) -> str:
+    """A trial in a line: how long it lived and how far, then each of show's extras."""
+    r = row["rates"]
+    return "; ".join([f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
+                      f"({r['km_min']:,.0f} to {r['km_max']:,.0f})"] + [s(row) for s in show])
+
+
+def descent(server, space: dict, start: dict, score: str, fixed: dict | None = None, runs: int = 4):
+    """Coordinate descent (tools.optimise.descend) over space from start, each shape flown `runs` times
+    with fixed's parameters and scored by the rate named score, moving only on a 5% gain (flights
+    differ run to run): the best trial and every one tried, their params the shape alone."""
+    from tools.optimise import FlightEvaluator, descend
+
+    evaluate, fixed = FlightEvaluator(server, "platform", runs=runs), fixed or {}
+
+    def logged(params):
+        t = evaluate({**params, **fixed})
+        t.params = {k: v for k, v in t.params.items() if k not in fixed}
+        print(f"{t.params}: " + (summary({"rates": t.rates, "counts": t.counts}, [killed]) if t.passed
+                                 else f"FAIL {t.error}"), file=sys.stderr, flush=True)
+        return t
+
+    best, trials = descend(logged, space, start, score=lambda t: t.rates[score], margin=0.05)
+    print(f"best: {best and best.params}; trials run: {evaluate.ran}", file=sys.stderr)
+    return best, trials
+
+
+def descended(best, trials, keys=ROW) -> dict:
+    """A descent's result: the best shape and its rates, and every trial."""
+    return {"best": best and best.params, "best_rates": best and best.rates,
+            "trials": [{"params": t.params, **{k: {"passed": t.passed, "rates": t.rates, "counts": t.counts,
+                                                   "ended": t.stalled, "error": t.error}[k] for k in keys}}
+                       for t in trials]}
+
+
+def killed(row: dict) -> str:
+    """Ours lost to asteroids, and what killed the hub."""
+    lost, hub = Counter(), {}
+    for k, n in row["counts"].items():
+        if k.endswith(" asteroid"):  # ours are the deaths an asteroid caused; asteroids' own start with their size
+            lost[k.split(" <- ")[0]] += n
+        if k.startswith("space-platform-hub <- "):
+            hub[k.split(" <- ")[1]] = n
+    return f"lost {dict(lost)}; hub killed by {hub or 'nothing'}"
+
+
+def lost(*names):
+    """An extra: how many of these entities asteroids destroyed."""
+    return lambda row: f"lost {({k: n for k, n in row['counts'].items() if k.split(' <- ')[0] in names}) or 'nothing'}"
+
+
+def made(row: dict) -> str:
+    r = row["rates"]
+    return (f"made {r.get('made thruster-fuel/s', 0):.1f} fuel/s and {r.get('made thruster-oxidizer/s', 0):.1f} "
+            f"oxidizer/s, held at the end {r.get('held thruster-fuel', 0):,.0f} and {r.get('held thruster-oxidizer', 0):,.0f}")
+
+
 PLATFORM_SPACE = {"railguns": [2, 4, 6, 8, 10, 12], "guns": [0, 3, 6, 9, 12], "thrusters": [1, 2, 3, 4]}
 PLATFORM_START = {"railguns": 4, "guns": 6, "thrusters": 2}
 
 
 def platform_shape(server) -> dict:
-    """How many railguns, gun turrets and thrusters fly a platform furthest toward
-    the shattered planet in 300 s (power, ammo and fuel by script)? Coordinate
-    descent from 4/6/2, each design flown 4 times, moving only on a 5% gain in
-    mean km (flights differ run to run)."""
-    from tools.optimise import FlightEvaluator, descend
-
-    evaluate = FlightEvaluator(server, "platform", runs=4)
-
-    def logged(params):
-        t = evaluate(params)
-        r = t.rates
-        print(f"{params}: " + (f"mean {r['km_mean']:,.0f} km (min {r['km_min']:,.0f}, max {r['km_max']:,.0f}), "
-                               f"{r['seconds_mean']:.0f}s, survived {r['survived']:.0%}" if t.passed else f"FAIL {t.error}"),
-              file=sys.stderr, flush=True)
-        return t
-
-    best, trials = descend(logged, PLATFORM_SPACE, PLATFORM_START, score=lambda t: t.rates["km_mean"], margin=0.05)
-    print(f"best: {best.params if best else None}; trials run: {evaluate.ran}", file=sys.stderr)
-    return {"best": best.params if best else None, "best_rates": best.rates if best else None,
-            "trials": [{"params": t.params, "passed": t.passed, "rates": t.rates, "error": t.error} for t in trials]}
+    """How many railguns, gun turrets and thrusters fly a platform furthest toward the shattered planet
+    in 300 s (power, ammo and fuel by script)? Descent from 4/6/2 on mean km, 4 flights a shape."""
+    return descended(*descent(server, PLATFORM_SPACE, PLATFORM_START, "km_mean"), keys=("passed", "rates", "error"))
 
 
 PLATFORM_BEST = {"railguns": 6, "guns": 9, "thrusters": 1}  # platform-shape's best (NOTES.md)
@@ -85,29 +149,16 @@ RESEARCH_AXES = {
     "railgun damage": [{}, {"railgun-damage": 2}],
     "bullets": [{}, {"physical-projectile-damage": 10, "weapon-shooting-speed": 6}],
 }
+NO_COUNTS = ("passed", "rates", "ended", "error")
 
 
 def platform_research(server) -> dict:
-    """How much of a platform's survival is research? The best design from
-    platform-shape (6 railguns, 9 gun turrets, 1 thruster) flown 4 times at
-    every combination of the RESEARCH_AXES levels, 300 s each (power, ammo and
-    fuel by script)."""
+    """How much of a platform's survival is research? PLATFORM_BEST flown 4 times for 300 s at every
+    combination of the RESEARCH_AXES levels (power, ammo and fuel by script)."""
     import itertools
 
-    from tools.optimise import FlightEvaluator
-
-    evaluate = FlightEvaluator(server, "platform", runs=4)
-    rows = []
-    for combo in itertools.product(*RESEARCH_AXES.values()):
-        research = {k: v for levels in combo for k, v in levels.items()}
-        t = evaluate({**PLATFORM_BEST, "research": research})
-        r = t.rates
-        label = ", ".join(f"{k} {v}" for k, v in research.items()) or "no research"
-        print(f"{label}: " + (f"mean {r['km_mean']:,.0f} km (min {r['km_min']:,.0f}, max {r['km_max']:,.0f}), "
-                              f"{r['seconds_mean']:.0f}s, survived {r['survived']:.0%}; ended {t.stalled}"
-                              if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-        rows.append({"research": research, "passed": t.passed, "rates": r, "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    combos = [{k: v for levels in combo for k, v in levels.items()} for combo in itertools.product(*RESEARCH_AXES.values())]
+    rows = flights(server, 4, [({"research": r}, {**PLATFORM_BEST, "research": r}) for r in combos], keys=NO_COUNTS)
     return {"design": PLATFORM_BEST, "trials": rows}
 
 
@@ -116,22 +167,10 @@ PROMETHIUM_STARTS = [0.0, 0.2, 0.3, 0.4]  # huge promethium asteroids are rare b
 
 
 def platform_promethium(server) -> dict:
-    """Does the best platform so far live where promethium is? The platform-shape
-    best with HIGH_RESEARCH, flown 4 times for 300 s from each of PROMETHIUM_STARTS
-    (shares of the route; power, ammo and fuel by script)."""
-    from tools.optimise import FlightEvaluator
-
-    evaluate = FlightEvaluator(server, "platform", runs=4)
-    rows = []
-    for start in PROMETHIUM_STARTS:
-        t = evaluate({**PLATFORM_BEST, "research": HIGH_RESEARCH, "start": start})
-        r = t.rates
-        print(f"from {start:.0%} of the route: " + (
-            f"mean {r['km_mean']:,.0f} km flown (min {r['km_min']:,.0f}, max {r['km_max']:,.0f}), "
-            f"{r['seconds_mean']:.0f}s, survived {r['survived']:.0%}; ended {t.stalled}"
-            if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-        rows.append({"start": start, "passed": t.passed, "rates": r, "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    """Does PLATFORM_BEST live where promethium is? With HIGH_RESEARCH, 4 flights of 300 s from each
+    of PROMETHIUM_STARTS (shares of the route; power, ammo and fuel by script)."""
+    rows = flights(server, 4, [({"start": s}, {**PLATFORM_BEST, "research": HIGH_RESEARCH, "start": s})
+                               for s in PROMETHIUM_STARTS], keys=NO_COUNTS)
     return {"design": PLATFORM_BEST, "research": HIGH_RESEARCH, "trials": rows}
 
 
@@ -144,67 +183,32 @@ WIDE_START = {"railguns": 20, "guns": 24, "thrusters": 1}
 
 
 def platform_belt(server, space=BELT_SPACE, start=PLATFORM_BEST, seconds=300) -> dict:
-    """Which railgun, gun turret and thruster counts live longest where promethium
-    is? Coordinate descent over space from start (the platform-shape best), each
-    design flown 4 times from BELT_START with HIGH_RESEARCH for up to seconds,
-    scored by mean seconds lived, moving only on a 5% gain (flights differ run to
-    run). Each trial also counts what killed what, asteroids by size."""
-    from tools.optimise import FlightEvaluator, descend
-
-    evaluate = FlightEvaluator(server, "platform", runs=4)
-    fixed = {"research": HIGH_RESEARCH, "start": BELT_START, "seconds": seconds}
-
-    def logged(params):
-        t = evaluate({**params, **fixed})
-        t.params = {k: v for k, v in t.params.items() if k not in fixed}  # descend moves on the shape alone
-        if t.passed:
-            # Ours are the deaths an asteroid caused; asteroids' own deaths start with their size.
-            lost = Counter()
-            for k, n in t.counts.items():
-                if k.endswith(" asteroid"):
-                    lost[k.split(" <- ")[0]] += n
-            hub = {k.split(" <- ")[1]: n for k, n in t.counts.items() if k.startswith("space-platform-hub <- ")}
-            print(f"{t.params}: {t.rates['seconds_mean']:.0f}s mean, survived {t.rates['survived']:.0%}; "
-                  f"lost {dict(lost)}; hub killed by {hub or 'nothing'}", file=sys.stderr, flush=True)
-        else:
-            print(f"{t.params}: FAIL {t.error}", file=sys.stderr, flush=True)
-        return t
-
-    best, trials = descend(logged, space, start, score=lambda t: t.rates["seconds_mean"], margin=0.05)
-    print(f"best: {best.params if best else None}; trials run: {evaluate.ran}", file=sys.stderr)
-    return {"start": BELT_START, "research": HIGH_RESEARCH, "best": best.params if best else None,
-            "best_rates": best.rates if best else None,
-            "trials": [{"params": t.params, "passed": t.passed, "rates": t.rates, "counts": t.counts,
-                        "ended": t.stalled, "error": t.error} for t in trials]}
+    """Which railgun, gun turret and thruster counts live longest where promethium is? Descent over
+    space from start on mean seconds lived, 4 flights a shape from BELT_START with HIGH_RESEARCH for up
+    to seconds, counting what killed what."""
+    found = descent(server, space, start, "seconds_mean", {"research": HIGH_RESEARCH, "start": BELT_START,
+                                                            "seconds": seconds})
+    return {"start": BELT_START, "research": HIGH_RESEARCH, **descended(*found)}
 
 
 FRONT_SHAPES = [(8, 12), (12, 16), (16, 20), (20, 24)]  # railguns, gun turrets: platform-belt's path
 
 
-def platform_front(server) -> dict:
-    """Do gun turrets do better in the railguns' row than behind it? Each of
-    FRONT_SHAPES (1 thruster) in both layouts, flown 4 times from BELT_START
-    with HIGH_RESEARCH for up to 300 s. Counts show friendly fire: a gun turret
-    killed by a railgun stood in its line."""
-    from tools.optimise import FlightEvaluator
+def friendly(row: dict) -> str:
+    """Railguns and gun turrets lost, and gun turrets a railgun killed (they stood in its line)."""
+    c = row["counts"]
+    fire = {k: n for k, n in c.items() if k.endswith("<- railgun-turret") and not k.split(" <- ")[0].endswith("asteroid")}
+    return (f"railguns lost {sum(n for k, n in c.items() if k.startswith('railgun-turret <-'))}, gun turrets lost "
+            f"{sum(n for k, n in c.items() if k.startswith('gun-turret <-'))}; friendly fire {fire or 'none'}")
 
-    evaluate = FlightEvaluator(server, "platform", runs=4)
-    rows = []
-    for railguns, guns in FRONT_SHAPES:
-        for layout in ("rows", "front"):
-            t = evaluate({"railguns": railguns, "guns": guns, "thrusters": 1, "layout": layout,
-                          "research": HIGH_RESEARCH, "start": BELT_START})
-            friendly = {k: n for k, n in t.counts.items() if k.endswith("<- railgun-turret")
-                        and not k.split(" <- ")[0].endswith("asteroid")}
-            print(f"{railguns} railguns, {guns} gun turrets, {layout}: " + (
-                f"{t.rates['seconds_mean']:.0f}s mean, survived {t.rates['survived']:.0%}; "
-                f"railguns lost {sum(n for k, n in t.counts.items() if k.startswith('railgun-turret <-'))}, "
-                f"gun turrets lost {sum(n for k, n in t.counts.items() if k.startswith('gun-turret <-'))}; "
-                f"friendly fire {friendly or 'none'}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-            rows.append({"railguns": railguns, "guns": guns, "layout": layout, "passed": t.passed, "rates": t.rates,
-                         "counts": t.counts, "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"start": BELT_START, "research": HIGH_RESEARCH, "trials": rows}
+
+def platform_front(server) -> dict:
+    """Do gun turrets do better in the railguns' row than behind it? Each of FRONT_SHAPES (1 thruster)
+    in both layouts, 4 flights of up to 300 s from BELT_START with HIGH_RESEARCH."""
+    trials = [({"railguns": rg, "guns": g, "layout": layout},
+               {"railguns": rg, "guns": g, "thrusters": 1, "layout": layout, "research": HIGH_RESEARCH, "start": BELT_START})
+              for rg, g in FRONT_SHAPES for layout in ("rows", "front")]
+    return {"start": BELT_START, "research": HIGH_RESEARCH, "trials": flights(server, 4, trials, [friendly])}
 
 
 REPAIR_SHAPES = [{"railguns": 32, "guns": 32, "thrusters": 1}, {"railguns": 20, "guns": 24, "thrusters": 1}]
@@ -224,30 +228,15 @@ REPAIR_MODES = {
 
 
 def platform_repair(server) -> dict:
-    """Does keeping the platform up change how long it lives where promethium is?
-    Each of REPAIR_SHAPES flown 4 times from BELT_START with HIGH_RESEARCH for up
-    to 600 s, with nothing, with repair packs in the hub (it repairs with them, no
-    research needed), with spares and construction-robotics (destroyed entities
-    and tiles leave ghosts the hub rebuilds), and with both."""
-    from tools.optimise import FlightEvaluator
-
-    evaluate = FlightEvaluator(server, "platform", runs=4)
-    rows = []
-    for shape in REPAIR_SHAPES:
-        for mode, (research, supplies) in REPAIR_MODES.items():
-            t = evaluate({**shape, "research": {**HIGH_RESEARCH, **research}, "start": BELT_START, "seconds": 600,
-                          "supplies": supplies})
-            lost = sum(n for k, n in t.counts.items() if not k.split(" <- ")[0].endswith("asteroid"))
-            print(f"{shape['railguns']} railguns, {shape['guns']} gun turrets, {mode}: " + (
-                f"{t.rates['seconds_mean']:.0f}s mean, {t.rates['km_mean']:,.0f} km, survived "
-                f"{t.rates['survived']:.0%}; entities lost {lost}" if t.passed else f"FAIL {t.error}"),
-                file=sys.stderr, flush=True)
-            rows.append({**shape, "mode": mode, "passed": t.passed, "rates": t.rates, "counts": t.counts,
-                         "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"start": BELT_START, "research": HIGH_RESEARCH, "modes": {k: {"research": r, "supplies": s}
-                                                                     for k, (r, s) in REPAIR_MODES.items()},
-            "trials": rows}
+    """Does keeping the platform up change how long it lives where promethium is? Each of REPAIR_SHAPES,
+    4 flights of up to 600 s from BELT_START with HIGH_RESEARCH, in each of REPAIR_MODES: nothing, repair
+    packs in the hub (no research needed), spares with construction-robotics (the hub rebuilds), both."""
+    trials = [({**shape, "mode": mode}, {**shape, "research": {**HIGH_RESEARCH, **research}, "start": BELT_START,
+                                          "seconds": 600, "supplies": supplies})
+              for shape in REPAIR_SHAPES for mode, (research, supplies) in REPAIR_MODES.items()]
+    return {"start": BELT_START, "research": HIGH_RESEARCH,
+            "modes": {k: {"research": r, "supplies": s} for k, (r, s) in REPAIR_MODES.items()},
+            "trials": flights(server, 4, trials, [killed])}
 
 
 # Rebuilding ran out of foundation first in platform-repair. Each cargo bay adds 20
@@ -269,86 +258,45 @@ FOUNDATION_MODES = {
 
 
 def platform_foundation(server) -> dict:
-    """Does more foundation help a platform that rebuilds? Each of REPAIR_SHAPES
-    flown 8 times from BELT_START with HIGH_RESEARCH and construction-robotics for
-    up to 600 s, rebuilding from the platform-repair spares, from 8 cargo bays
-    full of foundation, with a margin of 16 spare columns each side, and with both.
-    8 flights, not 4: at 4, the cargo bays' 4 of 4 survivors stood against 2 of the
-    same flights in a probe, both lost."""
-    from tools.optimise import FlightEvaluator
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for shape in REPAIR_SHAPES:
-        for mode, (extra, supplies) in FOUNDATION_MODES.items():
-            t = evaluate({**shape, **extra, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
-                          "start": BELT_START, "seconds": 600, "supplies": supplies})
-            r = t.rates
-            print(f"{shape['railguns']} railguns, {shape['guns']} gun turrets, {mode}: " + (
-                f"{r['seconds_mean']:.0f}s mean, {r['km_mean']:,.0f} km ({r['km_mean'] / r['seconds_mean']:.0f} km/s), "
-                f"survived {r['survived']:.0%}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-            rows.append({**shape, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
-                         "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"start": BELT_START, "research": HIGH_RESEARCH, "modes": {k: {"shape": e, "supplies": s}
-                                                                     for k, (e, s) in FOUNDATION_MODES.items()},
-            "trials": rows}
+    """Does more foundation help a platform that rebuilds? Each of REPAIR_SHAPES in each of
+    FOUNDATION_MODES, 8 flights of up to 600 s from BELT_START with REBUILD's research. 8 flights, not
+    4: at 4, the cargo bays' 4 of 4 survivors stood against 2 of the same flights in a probe, both lost."""
+    trials = [({**shape, "mode": mode}, {**shape, **extra, "research": REBUILD, "start": BELT_START, "seconds": 600,
+                                          "supplies": supplies})
+              for shape in REPAIR_SHAPES for mode, (extra, supplies) in FOUNDATION_MODES.items()]
+    return {"start": BELT_START, "research": HIGH_RESEARCH,
+            "modes": {k: {"shape": e, "supplies": s} for k, (e, s) in FOUNDATION_MODES.items()},
+            "trials": flights(server, 8, trials)}
 
 
 BUDGET_STARTS = [0.0, BELT_START]  # where the route begins, and where promethium is
+MODULE = ("asteroid-collector", "crusher", "chemical-plant", "transport-belt")  # the fuel module's parts
+
+
+def use(row: dict) -> str:
+    """What a flight used a second, as the script supplied it (power, fuel and oxidizer, ammo)."""
+    return f"a second: {({k: round(v, 3) for k, v in row['rates'].items() if k.endswith(('/s', 'MW', ' lived'))})}"
 
 
 def platform_budget(server) -> dict:
-    """What does the filed platform use a second, to make on board instead? It flies
-    8 times from each of BUDGET_STARTS for up to 600 s with platform-foundation's
-    winning stock and research, and the flight counts what the script supplies
-    (power, thruster fuel and oxidizer, ammo) and what the hub rebuilds."""
-    from tools.optimise import FlightEvaluator
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for start in BUDGET_STARTS:
-        t = evaluate({**FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "start": start,
-                      "seconds": 600, "supplies": BAY_SPARES})
-        r = t.rates
-        use = {k: round(v, 3) for k, v in r.items() if k.endswith("/s") or k.endswith("MW")
-               or k.endswith(" lived")}
-        print(f"from {start:.0%} of the route: " + (
-            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}; a second: {use}" if t.passed
-            else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-        rows.append({"start": start, "passed": t.passed, "rates": r, "counts": t.counts, "ended": t.stalled,
-                     "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
-            "supplies": BAY_SPARES, "trials": rows}
+    """What does the filed platform use a second, to make on board instead? 8 flights of up to 600 s
+    from each of BUDGET_STARTS with platform-foundation's winning stock (BAY_SPARES) and research;
+    the flight counts what the script supplies and what the hub rebuilds."""
+    trials = [({"start": s}, {**FILED_PLATFORM, "research": REBUILD, "start": s, "seconds": 600, "supplies": BAY_SPARES})
+              for s in BUDGET_STARTS]
+    return {"design": FILED_PLATFORM, "research": REBUILD, "supplies": BAY_SPARES,
+            "trials": flights(server, 8, trials, [use])}
 
 
 def platform_fuel(server) -> dict:
-    """Does the filed platform fly on fuel it makes itself (fuel=True), and what does
-    that cost it? Both designs fly 8 times from each of BUDGET_STARTS for up to 600 s
-    with platform-budget's stock and research: the filed one with fuel by script, the
-    fuelled one with none after its start (thrusters primed, moving at CRUISE)."""
-    from tools.optimise import FlightEvaluator
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for start in BUDGET_STARTS:
-        for fuel in (False, True):
-            t = evaluate({**FILED_PLATFORM, **({"fuel": True} if fuel else {}), "start": start, "seconds": 600,
-                          "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": BAY_SPARES})
-            r = t.rates
-            module = {k: n for k, n in t.counts.items()
-                      if k.split(" <- ")[0] in ("asteroid-collector", "crusher", "chemical-plant", "transport-belt")}
-            print(f"from {start:.0%}, {'fuel made on board' if fuel else 'fuel by script'}: " + (
-                f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean; "
-                f"made {r.get('made thruster-fuel/s', 0):.1f} fuel/s, {r.get('made thruster-oxidizer/s', 0):.1f} "
-                f"oxidizer/s; module lost {module or 'nothing'}" if t.passed else f"FAIL {t.error}"),
-                file=sys.stderr, flush=True)
-            rows.append({"start": start, "fuel": fuel, "passed": t.passed, "rates": r, "counts": t.counts,
-                         "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
-            "supplies": BAY_SPARES, "trials": rows}
+    """Does the filed platform fly on fuel it makes itself (fuel=True), and what does that cost it?
+    The filed one with fuel by script and the fuelled one with none after its start (primed, moving
+    at CRUISE), 8 flights of up to 600 s from each of BUDGET_STARTS, as platform-budget flies."""
+    trials = [({"start": s, "fuel": fuel}, {**FILED_PLATFORM, **({"fuel": True} if fuel else {}), "start": s,
+                                             "seconds": 600, "research": REBUILD, "supplies": BAY_SPARES})
+              for s in BUDGET_STARTS for fuel in (False, True)]
+    return {"design": FILED_PLATFORM, "research": REBUILD, "supplies": BAY_SPARES,
+            "trials": flights(server, 8, trials, [made, lost(*MODULE)])}
 
 
 # The fuel module's own parts, for the hub to rebuild (platform-fuel lost belts, collectors and
