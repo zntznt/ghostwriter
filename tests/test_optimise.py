@@ -205,6 +205,51 @@ class Cache(unittest.TestCase):
         self.assertEqual(trial.rates["railgun-ammo/s lived"], 1.0)
         self.assertEqual(trial.rates["power MW lived"], 50.0)
 
+    def test_the_whole_trip_flies_the_planned_load_and_path(self):
+        import math
+
+        from draftsman.data import items
+
+        from tools import studies, trip
+
+        slots = sum(math.ceil(n / items.raw[k]["stack_size"]) for k, n in studies.WHOLE_TRIP_STOCK.items())
+        self.assertEqual(slots, 530)  # of the 539 that 24 bays give (NOTES.md)
+        corrected = sum(math.ceil(n / items.raw[k]["stack_size"]) for k, n in studies.CORRECTED_TRIP_STOCK.items())
+        self.assertEqual(corrected, 537)  # with the whole trip folded in
+        self.assertAlmostEqual(2 * studies.WHOLE_TRIP_TURN * trip.LENGTH, 162_000)  # out, the stay, and back
+
+    def test_a_whole_trip_flight_in_numbers(self):
+        from tools import studies
+        from validator.flight import Flown
+
+        turn_km = studies.WHOLE_TRIP_TURN * 4_000_000
+        back = Flown("trip", odometer=162_000, seconds=3_000, survived=True, turned=1_620, back=3_000, dry=5,
+                     cargo={"promethium-asteroid-chunk": 300, "railgun-ammo": 10}, low_fuel=2, brownout=1,
+                     ran_out={"space-platform-foundation": 150_000.0, "pipe": 160_000.0},
+                     at_turn={"km": turn_km, "cargo": {"promethium-asteroid-chunk": 120, "railgun-ammo": 2005,
+                                                       "space-platform-foundation": 1000}})
+        died = Flown("trip", odometer=70_000, seconds=1_400, ended="hub destroyed by big asteroid",
+                     cargo={"promethium-asteroid-chunk": 200}, position=0.0175)
+        stock = {"railgun-ammo": 4305, "space-platform-foundation": 2329}
+        rows = [studies.whole_trip_flown(f, stock) for f in (back, died)]
+        self.assertEqual([r["chunks back"] for r in rows], [300, 0])  # it died with 200 aboard
+        self.assertEqual([r["died at"] for r in rows], [None, 0.0175])
+        self.assertEqual(rows[0]["left"], {"railgun-ammo": 10, "space-platform-foundation": 0})
+        self.assertEqual(rows[0]["first out"], {"item": "space-platform-foundation", "km": 150_000.0})
+        self.assertAlmostEqual(rows[0]["out km/s"], turn_km / 1_620)
+        self.assertAlmostEqual(rows[0]["back km/s"], (162_000 - turn_km) / 1_380)
+        # The two legs apart: chunks in, and stock used, out and back.
+        self.assertEqual((rows[0]["chunks out"], rows[0]["chunks on the way back"]), (120, 180))
+        self.assertEqual(rows[0]["used out"], {"railgun-ammo": 2300, "space-platform-foundation": 1329})
+        self.assertEqual(rows[0]["used back"], {"railgun-ammo": 1995, "space-platform-foundation": 1000})
+        self.assertEqual((rows[1]["chunks out"], rows[1]["used back"]), (None, None))  # it never turned
+        means = studies.whole_trip_means(rows)
+        self.assertEqual(means["came back"], 0.5)
+        self.assertEqual(means["chunks back"], 150)  # over every flight: a lost one brings back none
+        self.assertEqual(means["left, came back"], {"railgun-ammo": 10, "space-platform-foundation": 0})
+        self.assertEqual(means["first out"], {"space-platform-foundation": 1})
+        self.assertEqual((means["km"], means["dry turret s"]), (116_000, 2.5))
+
     def test_fingerprint_changes_with_the_code(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
