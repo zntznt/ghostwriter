@@ -63,13 +63,14 @@ def measured(result: dict) -> tuple[float, dict[str, float]]:
     """A whole trip flown (platform-whole-trip) as one more row of rates. Out to its turn and back,
     it flew as many km at each share of the route up to the turn, so the row stands at turn / 2:
     per 1,000 km what the hub gave (its stock less what was left), the chunks brought in, its
-    speed (km over seconds), and hubs lost, over every flight."""
+    speed (km over seconds), and trips lost (didn't come back: destroyed, or stranded with its
+    fuel gone), over every flight."""
     flights, stock = result["flights"], result["supplies"]
     km = sum(f["km"] for f in flights)
     row = {k: sum(n - f["left"][k] for f in flights) / km * 1000 for k, n in stock.items()}
     row[CHUNK] = sum(f["chunks aboard"] for f in flights) / km * 1000
     row[SPEED] = km / sum(f["seconds"] for f in flights)
-    row[DEATHS] = sum(f["died at"] is not None for f in flights) / km * 1000
+    row[DEATHS] = sum(not f["back"] for f in flights) / km * 1000
     return result["turn"] / 2, row
 
 

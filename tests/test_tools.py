@@ -1766,18 +1766,18 @@ class Trip(unittest.TestCase):
         self.assertIn("best: turn", out.getvalue())
 
     def whole_trip(self):
-        # platform-whole-trip: two flights out to 0.02 and back; one came back with 300 chunks,
-        # one died with 100 aboard. 200,000 km and 4,000 s in all.
+        # platform-whole-trip: two flights out to 0.02 and back; one came back with 300 chunks, one
+        # never did (stranded, its hub alive) with 100 aboard. 200,000 km and 4,000 s in all.
         flight = {"back": True, "died at": None, "km": 160_000, "seconds": 3_000, "chunks aboard": 300,
                   "left": {self.FOUNDATION: 1_400, "railgun-ammo": 0}}
-        died = {"back": False, "died at": 0.013, "km": 40_000, "seconds": 1_000, "chunks aboard": 100,
+        died = {"back": False, "died at": None, "km": 40_000, "seconds": 1_000, "chunks aboard": 100,
                 "left": {self.FOUNDATION: 1_800, "railgun-ammo": 3_000}}
         return {"turn": 0.02, "supplies": {self.FOUNDATION: 2_000, "railgun-ammo": 4_000}, "flights": [flight, died]}
 
     def test_a_whole_trip_flown_is_one_more_measured_row(self):
         # Out to turn and back, it flew as many km at each share of the route up to the turn, so
         # its rates stand at turn / 2: what the hub gave per 1,000 km over every flight, the chunks
-        # brought in, km over seconds, and hubs lost per 1,000 km.
+        # brought in, km over seconds, and trips that didn't come back per 1,000 km.
         from tools import trip
 
         share, row = trip.measured(self.whole_trip())
