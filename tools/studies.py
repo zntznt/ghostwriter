@@ -5,17 +5,17 @@ table as it goes. Its books and values are fixed in code before it runs. A
 platform study is its trials as data on one of three runners: flights() for
 trials through the optimise cache, descent() for a coordinate descent over
 shapes, one_flights() for whole trips flown one flight at a time. The trip
-model's pieces (tools.plan, tools.trip) and the filed designs
-(generators.platform) live where bp plan uses them. tests/test_studies.py
+model's pieces and the filed designs live in tools.plan, where bp plan
+and the library use them. tests/test_studies.py
 holds every study to the trials it ran when NOTES.md recorded it.
 """
 
 import sys
 from collections import Counter
 
-from generators.platform import FEED_RESEARCH, FILED_PLATFORM, PROMETHIUM, PROMETHIUM_PLATFORM
+from generators.platform import FEED_RESEARCH, PROMETHIUM
 from tools.optimise import GameEvaluator, grid
-from tools.plan import (HIGH_RESEARCH, MIX_RESEARCH, full_stacks, leg_rates, legs_home, planned_trip,
+from tools.plan import (FILED_PLATFORM, HIGH_RESEARCH, MIX_RESEARCH, PROMETHIUM_PLATFORM, full_stacks, leg_rates, legs_home, planned_trip,
                         slots, trip_flown, trip_means as whole_trip_means)
 
 SHARES = [0.8, 0.825, 0.85, 0.875, 0.9, 0.925, 0.95, 0.975, 1.0]

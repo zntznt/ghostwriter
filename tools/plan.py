@@ -27,6 +27,13 @@ from tools.library import PLAN_SUFFIX, is_entry, plan_path
 HIGH_RESEARCH = {"railgun-shooting-speed": 6, "railgun-damage": 2, "physical-projectile-damage": 10,
                  "weapon-shooting-speed": 6}
 MIX_RESEARCH = {**HIGH_RESEARCH, "stronger-explosives": 10, "laser-weapons-damage": 10, "laser-shooting-speed": 7}
+# The platform designs library/platforms/ holds, as the generator builds them (tests hold the library
+# to them; NOTES.md has how each was chosen): the 32-railgun platform of platform-foundation, and the
+# promethium platform of platform-bays with the hub feeding its turrets (platform-feed). Here, not in
+# generators/, which the optimise cache fingerprints.
+FILED_PLATFORM = {"railguns": 32, "guns": 32, "thrusters": 1, "cargo_bays": 8}
+PROMETHIUM_PLATFORM = {"railguns": 16, "guns": 16, "thrusters": 1, "cargo_bays": 24, "fuel": True, "reserve": True,
+                       "power": 2, "promethium": True, "ammo_feed": True}
 
 
 def full_stacks(stock: dict) -> dict:
