@@ -361,7 +361,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
                 f"{count(thrusters, 'thruster')}" + (f", {count(cargo_bays, 'cargo bay')}" if cargo_bays else "")
                 + (", makes its fuel" if fuel else "") + (" with a reserve" if reserve else "")
                 + (", powers itself" if power else "") + (", keeps promethium" if promethium else "")
-                + (f", {count(rockets, 'rocket turret')}" if rockets else ""))
+                + (f", {count(rockets, 'rocket turret')}" if rockets else "") + (", feeds its turrets" if ammo_feed else ""))
     where = "between the railguns" if front else "behind them"
     bp.description = ("Railguns across the front for big and huge asteroids only, gun turrets " + where +
                       " for the rest, thrusters at the back, the hub in the middle (the blueprint's origin is the "
