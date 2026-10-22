@@ -477,6 +477,12 @@ local function held_by(thrusters, turrets, tanks)
   return held
 end
 
+-- Thruster fuel and oxidizer in the thrusters and any reserve tank, for a stop (Flight.home).
+local function fluids_held(p, thrusters)
+  local all = held_by(thrusters, {}, p.surface.find_entities_filtered{type = "storage-tank"})
+  return {["thruster-fuel"] = all["thruster-fuel"] or 0, ["thruster-oxidizer"] = all["thruster-oxidizer"] or 0}
+end
+
 -- What of the hub-fed ammo (Flight.feed) is on the platform's belts: it left the hub but
 -- hasn't been used.
 local function on_belts(surface, names)
@@ -543,8 +549,11 @@ local function flight_tick()
     if here and here ~= fl.at and (here ~= fl.last_stop or fl.turned_since) then
       local deaths = {}
       for k, n in pairs(fl.deaths) do deaths[k] = n end
+      local made = {}
+      for k, n in pairs(fl.made or {}) do made[k] = n end  -- the fuel module's, as of the last second
       fl.stops[#fl.stops + 1] = {at = here, seconds = (game.tick - fl.start) / 60, km = fl.trip_km, deaths = deaths,
-                                 cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()}
+                                 cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents(),
+                                 made = made, held = fluids_held(p, fl.thrusters)}
       fl.last_stop, fl.turned_since = here, false
     end
     fl.at = here
@@ -792,7 +801,8 @@ local function leave(fl)
     -- Home is the first stop: by the next tick it has left orbit.
     fl.trip_km, fl.at, fl.last_stop = 0, fl.home, fl.home
     fl.stops = {{at = fl.home, seconds = 0, km = 0, deaths = {},
-                 cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()}}
+                 cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents(),
+                 made = {}, held = fluids_held(p, fl.thrusters)}}
   end
   local power = p.surface.global_electric_network_statistics
   fl.power_base = power and {generated = power.output_counts["fusion-generator"] or 0,
