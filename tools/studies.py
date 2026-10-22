@@ -795,6 +795,141 @@ FAST_FEED_MODES = {"script ammo": {"research": FEED_RESEARCH}, "hub feeds": {"am
 FAST_FEED_STARTS = [0.0, 0.1, 0.2]
 
 
+# The best 24-bay trip platform-feed-fast's rates plan (NOTES.md): out to 0.019, a 10,000 km
+# stay, and back, 162,000 km. A platform can't hold still on a connection (unthrusted it drifts
+# back), so the whole trip flies the stay as 5,000 km further out and as many back: the same
+# km, but at 0.019 to 0.02025 of the route rather than at 0.019.
+WHOLE_TRIP_TURN = 0.019 + 10_000 / 2 / 4_000_000
+# Its load as the trip model plans it, 530 of the hub's 539 slots (NOTES.md); the feed fills
+# its belts and turrets from the hub in orbit besides (Flight.fill).
+WHOLE_TRIP_STOCK = {"uranium-rounds-magazine": 5450, "railgun-ammo": 4305, "space-platform-foundation": 2329,
+                    "transport-belt": 82, "pipe": 71, "inserter": 30, "fast-inserter": 17, "chemical-plant": 16,
+                    "crusher": 12, "pipe-to-ground": 11, "medium-electric-pole": 9, "railgun-turret": 6,
+                    "asteroid-collector": 5, "cargo-bay": 4, "fusion-generator": 3, "cryogenic-plant": 2,
+                    "underground-belt": 2, "gun-turret": 2, "fusion-power-cell": 2, "fusion-reactor": 1,
+                    "express-underground-belt": 1}
+# The same trip's load as the trip model plans it with platform-whole-trip folded in (tools.trip
+# --whole-trip): the whole trip used half the foundation and fewer spares than the model said
+# near the edge, and a little more ammo (NOTES.md). The same trip stays best. 537 of 539 slots.
+CORRECTED_TRIP_STOCK = {"uranium-rounds-magazine": 5672, "railgun-ammo": 4450, "space-platform-foundation": 1534,
+                        "pipe": 53, "transport-belt": 44, "inserter": 17, "chemical-plant": 11, "fast-inserter": 10,
+                        "crusher": 7, "pipe-to-ground": 7, "medium-electric-pole": 5, "railgun-turret": 5,
+                        "cargo-bay": 3, "asteroid-collector": 3, "fusion-power-cell": 2, "fusion-generator": 2,
+                        "cryogenic-plant": 2, "underground-belt": 1, "gun-turret": 1, "fusion-reactor": 1,
+                        "express-underground-belt": 1}
+WHOLE_TRIP_RESEARCH = {**MIX_RESEARCH, "construction-robotics": 1, **FEED_RESEARCH}
+WHOLE_TRIP_SECONDS = 9000  # at most: the plan's 162,000 km at its 50 km/s take 3,240
+WHOLE_TRIP_RATES = ("platform-feed-fast.result.json", "hub feeds, inserter capacity 7")  # what the plan came from
+
+
+def whole_trip_flown(flown, stock: dict) -> dict:
+    """One whole-trip flight in numbers. A flight that didn't come back brings back no chunks."""
+    turn_km = WHOLE_TRIP_TURN * 4_000_000
+    first = min(flown.ran_out.items(), key=lambda kv: kv[1]) if flown.ran_out else None
+    chunks = flown.cargo.get("promethium-asteroid-chunk", 0)
+    # The two legs apart, from the hub's cargo as it turned (None if it never did, or didn't come back).
+    turned = flown.at_turn.get("cargo") if flown.at_turn else None
+    legs = {"chunks out": None, "chunks on the way back": None, "used out": None, "used back": None}
+    if turned is not None:
+        legs["chunks out"] = turned.get("promethium-asteroid-chunk", 0)
+        legs["used out"] = {k: stock[k] - turned.get(k, 0) for k in stock if stock[k] != turned.get(k, 0)}
+        if flown.back:
+            legs["chunks on the way back"] = chunks - legs["chunks out"]
+            legs["used back"] = {k: turned.get(k, 0) - flown.cargo.get(k, 0) for k in stock
+                                 if turned.get(k, 0) != flown.cargo.get(k, 0)}
+    return {**legs, "back": bool(flown.back), "ended": flown.ended or ("back" if flown.back else "out of time"),
+            "died at": None if flown.back or not flown.ended else flown.position, "km": flown.odometer,
+            "seconds": flown.seconds, "chunks back": chunks if flown.back else 0, "chunks aboard": chunks,
+            "left": {k: flown.cargo.get(k, 0) for k in stock}, "first out": first and {"item": first[0], "km": first[1]},
+            "ran out": flown.ran_out, "filled": flown.filled,
+            "dry turret s": flown.dry, "low fuel s": flown.low_fuel, "brownout s": flown.brownout,
+            "out km/s": turn_km / flown.turned if flown.turned else None,
+            "back km/s": (flown.odometer - turn_km) / (flown.back - flown.turned) if flown.back else None,
+            "deaths": flown.deaths, "rebuilt": flown.rebuilt}
+
+
+def whole_trip_means(rows: list[dict]) -> dict:
+    """The means over whole-trip flights: chunks over every flight (a lost one brings back none),
+    what was left over the ones that came back, and which item ran out first how often."""
+    from collections import Counter
+
+    def mean(xs):
+        xs = [x for x in xs if x is not None]
+        return sum(xs) / len(xs) if xs else None
+
+    back = [r for r in rows if r["back"]]
+    return {"flights": len(rows), "came back": len(back) / len(rows), "chunks back": mean(r["chunks back"] for r in rows),
+            "km": mean(r["km"] for r in rows), "seconds": mean(r["seconds"] for r in rows),
+            "out km/s": mean(r["out km/s"] for r in rows), "back km/s": mean(r["back km/s"] for r in rows),
+            "left, came back": {k: mean(r["left"][k] for r in back) for k in (back[0]["left"] if back else {})},
+            "first out": dict(Counter(r["first out"]["item"] for r in rows if r["first out"])),
+            "dry turret s": mean(r["dry turret s"] for r in rows), "low fuel s": mean(r["low fuel s"] for r in rows),
+            "brownout s": mean(r["brownout s"] for r in rows)}
+
+
+def platform_whole_trip(server, runs: int = 8, stock=None, fold: str = "") -> dict:
+    """Does the planned trip hold when flown in one go? PROMETHIUM_PLATFORM, readied in Nauvis
+    orbit (Flight.fill) with stock (WHOLE_TRIP_STOCK), flies from the solar system edge out to
+    WHOLE_TRIP_TURN and back home, `runs` times, with nothing topped up and every chunk kept in
+    the hub: per flight whether it came back, the km and time, the chunks it brought, the stock
+    left, the first item to run out, turrets dry and thrusters and reactors short. Then the
+    trip model's prediction for the same trip, from the rates it was planned on, with the whole
+    trip of `fold` (a result file, tools.trip.measured) folded in if given."""
+    import inspect
+    import json
+    import warnings
+
+    from generators import platform
+    from tools import trip
+    from tools.optimise import CACHE
+    from validator.flight import run_flight
+    from validator.validate import Report
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        data = platform.build(**{k: v for k, v in PROMETHIUM_PLATFORM.items()
+                                 if k in inspect.signature(platform.build).parameters}).to_dict()
+        [flight] = platform.flight_tests(**PROMETHIUM_PLATFORM, start=0.0, turn=WHOLE_TRIP_TURN, fill=True,
+                                         seconds=WHOLE_TRIP_SECONDS, supplies=stock or WHOLE_TRIP_STOCK,
+                                         research=WHOLE_TRIP_RESEARCH)
+    stock = stock or WHOLE_TRIP_STOCK
+    rows = []
+    for run in range(runs):
+        report = Report(server.version)
+        flown = run_flight(server, data, flight, report)
+        if flown.error:
+            raise RuntimeError(flown.error)
+        row = whole_trip_flown(flown, stock)
+        rows.append(row)
+        out = row["first out"]
+        print(f"flight {run + 1}: {row['ended']} after {row['seconds']:,.0f} s and {row['km']:,.0f} km"
+              + (f" (died at {row['died at']:.4f} of the route)" if row["died at"] is not None else "")
+              + f"; {row['chunks aboard']} chunks aboard ({row['chunks out']} out, {row['chunks on the way back']} back)"
+              f"; first out "
+              + (f"{out['item']} at {out['km']:,.0f} km" if out else "nothing")
+              + f"; dry {row['dry turret s']} turret-s, low fuel {row['low fuel s']} s, brownout {row['brownout s']} s; "
+              f"out {row['out km/s'] or 0:.1f} km/s, back {row['back km/s'] or 0:.1f} km/s", file=sys.stderr, flush=True)
+    means = whole_trip_means(rows)
+    print(f"means: {json.dumps(means)}", file=sys.stderr)
+    model = None
+    rates_file = CACHE / WHOLE_TRIP_RATES[0]
+    if rates_file.exists():
+        rates = trip.table(json.loads(rates_file.read_text()), WHOLE_TRIP_RATES[1])
+        if fold and (CACHE / fold).exists():
+            share, row = trip.measured(json.loads((CACHE / fold).read_text()))
+            rates[share] = row
+        slots = trip.HUB_SLOTS + trip.BAY_SLOTS * PROMETHIUM_PLATFORM["cargo_bays"]
+        planned = trip.trip(rates, 0.019, slots, stock=stock, stay=10_000)
+        same = trip.trip(rates, WHOLE_TRIP_TURN, slots, stock=stock)
+        model = {name: {"chunks": p["chunks"], "comes back": p["comes back"], "km": p["km"], "hours": p["hours"],
+                        "ran out": p["ran out"],
+                        "left": {k: stock[k] - p["used"].get(k, 0) for k in stock}}
+                 for name, p in (("planned", planned), ("same path", same))}
+        print(f"model: {json.dumps(model)}", file=sys.stderr)
+    return {"design": PROMETHIUM_PLATFORM, "turn": WHOLE_TRIP_TURN, "supplies": stock,
+            "research": WHOLE_TRIP_RESEARCH, "flights": rows, "means": means, "model": model}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
@@ -804,4 +939,7 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
            "platform-sides": platform_sides, "platform-route": platform_route,
            "platform-mix": platform_mix, "platform-bays": platform_bays, "platform-feed": platform_feed,
            "platform-feed-fast": lambda server: platform_feed(server, FAST_FEED_MODES, FAST_FEED_STARTS,
-                                                              fast_feed_stock())}
+                                                              fast_feed_stock()),
+           "platform-whole-trip": platform_whole_trip,
+           "platform-whole-trip-corrected": lambda server: platform_whole_trip(
+               server, stock=CORRECTED_TRIP_STOCK, fold="platform-whole-trip.result.json")}
