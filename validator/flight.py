@@ -73,6 +73,13 @@ class Flight:
     # leave the hub (Flown.fed). With no ammo kept stocked by script, the hub is all they get.
     loaded: dict[str, str] = field(default_factory=dict)
     feed: list[str] = field(default_factory=list)
+    # A round trip: at `turn` (a share of the route from origin) the schedule goes back to the
+    # origin, and the flight ends when the platform is back there (Flown.back).
+    turn: float = 0.0
+    # Readied in orbit before leaving: in Nauvis orbit (chunks, no asteroids) the hub's feed
+    # fills its belts and turrets while the script holds the hub's feed items at their stock,
+    # as a player would top it up; then it leaves with the hub holding exactly that stock.
+    fill: bool = False
 
 
 @dataclass
@@ -106,6 +113,15 @@ class Flown:
     bays_lost: dict[str, int] = field(default_factory=dict)  # cargo bays that died, by |x| from the hub's centre
     fed: dict[str, float] = field(default_factory=dict)  # Flight.feed: what left the hub, the turrets' loading included
     dry: int = 0  # turret-seconds with no ammo
+    odometer: float = 0.0  # km flown, out and back
+    position: float = 0.0  # where it is, as a share of the route from origin
+    turned: float = 0.0  # Flight.turn: seconds in when it turned round (0: it didn't)
+    back: float = 0.0  # and when it was back at the origin
+    # item -> km flown since when the hub has held none: a dead cargo bay's spill that comes back isn't it
+    ran_out: dict[str, float] = field(default_factory=dict)
+    low_fuel: int = 0  # seconds a thruster held under a tenth of its box of either fluid
+    filled: dict[str, int] = field(default_factory=dict)  # Flight.fill: what readying drew from the hub
+    at_turn: dict = field(default_factory=dict)  # Flight.turn: km flown and the hub's cargo as it turned
 
     def chunks(self, kind: str = "promethium") -> int:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
@@ -160,24 +176,47 @@ def _step(server: Server, ticks: int, timeout: float):
         time.sleep(0.02)
 
 
-def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Flown:
-    """Fly it; append an error to report if it couldn't be built or flown."""
-    flown = Flown(flight.name)
+FILL_SECONDS = 300  # readying in orbit (Flight.fill) stops once nothing is drawn for 3 s, or by then
+LOW_FUEL = 0.1  # of a thruster's box: least thrust (NOTES.md)
+
+
+def start_flight(server: Server, data: dict, flight: Flight) -> tuple[dict, dict[str, int]]:
+    """Set the flight up, ready it in orbit if it fills (Flight.fill), and leave. Returns the
+    setup's reply and what readying drew from the hub (and the script put back)."""
     setup = server.call("flight_setup", json.dumps({
         "blueprint": encode(data), "from": flight.origin, "to": flight.destination, "start": flight.start,
         "supplies": flight.supplies or None, "fuel": flight.fuel, "power": flight.power,
         "ammo": flight.ammo or None, "research": flight.research or None, "speed": SPEED,
         "primed": flight.primed or None, "start_speed": flight.start_speed or None,
         "charged": flight.charged, "coolant": flight.coolant or None, "take": flight.take or None,
-        "loaded": flight.loaded or None, "feed": flight.feed or None}))
-    if "error" in setup:
-        flown.error = f"flight: {setup['error']}"
-        report.errors.append(flown.error)
-        return flown
-    flown.built, flown.entities = setup["built"], setup["entities"]
-    if flown.built < flown.entities:
-        report.warnings.append(f"flight '{flight.name}': built {flown.built} of {flown.entities} entities")
+        "loaded": flight.loaded or None, "feed": flight.feed or None, "turn": flight.turn or None,
+        "fill": flight.fill, "low_fuel": LOW_FUEL * PRIME}))
+    if "error" in setup or not flight.fill:
+        return setup, {}
+    idle, got = 0, {}
+    for _ in range(FILL_SECONDS):
+        _step(server, 60, timeout=60)
+        got = server.call("flight_read")
+        _ok(got)
+        idle = idle + 1 if got["ticks"] >= 300 and not got["drawn"] else 0
+        if idle >= 3:
+            break
+    _ok(server.call("flight_leave"))
+    return setup, got["filled"] if isinstance(got.get("filled"), dict) else {}
+
+
+def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Flown:
+    """Fly it; append an error to report if it couldn't be built or flown."""
+    flown = Flown(flight.name)
     try:
+        setup, flown.filled = start_flight(server, data, flight)
+        if "error" in setup:
+            flown.error = f"flight: {setup['error']}"
+            report.errors.append(flown.error)
+            return flown
+        flown.built, flown.entities = setup["built"], setup["entities"]
+        if flown.built < flown.entities:
+            report.warnings.append(f"flight '{flight.name}': built {flown.built} of {flown.entities} entities")
         elapsed = 0.0
         while elapsed < flight.seconds:
             step = min(POLL, flight.seconds - elapsed)
@@ -196,11 +235,21 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.power_j = got.get("power_j") or 0.0
             flown.generated_j, flown.plant_j = got.get("generated_j") or 0.0, got.get("plant_j") or 0.0
             flown.brownout = got.get("brownout") or 0
+            flown.odometer, flown.position = got.get("odometer") or 0.0, got.get("position") or 0.0
+            flown.turned, flown.back = got.get("turned") or 0.0, got.get("back") or 0.0
+            flown.ran_out = got["ran_out"] if isinstance(got.get("ran_out"), dict) else {}
+            flown.low_fuel = got.get("low_fuel") or 0
+            if isinstance(got.get("at_turn"), dict):
+                flown.at_turn = {"km": got["at_turn"]["km"], "cargo": {
+                    c["name"]: c["count"] for c in got["at_turn"].get("cargo") or [] if isinstance(c, dict)}}
             flown.log.append({"seconds": round(elapsed, 1), "km": round(got["km"]), "speed": got["speed"],
-                              "hub": got["hub_health"]})
+                              "hub": got["hub_health"], "position": flown.position, "odometer": round(flown.odometer)})
             if not got["alive"]:
                 flown.ended = (got.get("ended") or {}).get("reason", "platform gone")
                 flown.seconds = got.get("ended_after") or elapsed
+                return flown
+            if flown.back:
+                flown.seconds, flown.survived = flown.back, True
                 return flown
         flown.seconds, flown.survived = elapsed, True
         return flown

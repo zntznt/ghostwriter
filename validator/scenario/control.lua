@@ -499,10 +499,44 @@ local function flight_tick()
     fl.ended = fl.ended or {tick = game.tick, reason = "platform gone"}
     return
   end
+  if fl.filling then
+    -- Readied in orbit before leaving (fill): the hub's feed items held at their stock while
+    -- its feed fills the belts and turrets, as a player would top it up. Nothing else counts
+    -- until it leaves.
+    if game.tick % 60 == 0 then
+      local hub = p.hub.get_inventory(defines.inventory.hub_main)
+      fl.drawn = 0
+      for name, n in pairs(fl.filling) do
+        local short = n - hub.get_item_count(name)
+        if short > 0 then
+          local got = hub.insert{name = name, count = short}
+          fl.filled[name], fl.drawn = (fl.filled[name] or 0) + got, fl.drawn + got
+        end
+      end
+    end
+    return
+  end
   if p.space_connection and p.space_connection.name == fl.connection and p.distance then
     fl.furthest = math.max(fl.furthest, fl.reversed and 1 - p.distance or p.distance)
   end
   fl.speed_max = math.max(fl.speed_max, p.speed or 0)
+  -- Where it is, as a share of the route from the flight's origin, and how far it has flown.
+  local pos = fl.pos
+  if p.space_connection and p.space_connection.name == fl.connection and p.distance then
+    pos = fl.reversed and 1 - p.distance or p.distance
+  elseif p.space_location then
+    pos = p.space_location.name == fl.origin and 0 or p.space_location.name == fl.destination and 1 or pos
+  end
+  fl.odometer, fl.pos = fl.odometer + math.abs(pos - fl.pos) * fl.length, pos
+  -- turn: there the schedule goes back to the origin, which turns a platform round at once
+  -- and keeps its speed (NOTES.md); back: when it arrives there again.
+  if fl.turn and not fl.turned and pos >= fl.turn then
+    p.schedule = {current = 1, records = {{station = fl.origin}}}
+    fl.turned = game.tick
+    -- What it had then: the two legs apart.
+    fl.at_turn = {km = fl.odometer, cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()}
+  end
+  if fl.turned and not fl.back and p.space_location and p.space_location.name == fl.origin then fl.back = game.tick end
   if game.tick % 60 == 0 then
     -- The hub rebuilds what dies as new entities, which need stocking too.
     fl.thrusters = p.surface.find_entities_filtered{type = "thruster"}
@@ -537,8 +571,8 @@ local function flight_tick()
       local n = hub.get_item_count(name)
       if n > 0 then fl.taken[name] = (fl.taken[name] or 0) + hub.remove{name = name, count = n} end
     end
-    -- feed: what left the hub of the ammo its inserters feed the turrets.
-    for name, n in pairs(fl.feed_start or {}) do fl.fed[name] = n - hub.get_item_count(name) end
+    -- feed: what left the hub of the ammo its inserters feed the turrets (what fill gave back included).
+    for name, n in pairs(fl.feed_start or {}) do fl.fed[name] = n - hub.get_item_count(name) + (fl.filled[name] or 0) end
     -- A turret with no ammo, each second.
     for _, t in pairs(fl.turrets) do
       local inv = t.valid and t.get_inventory(defines.inventory.turret_ammo)
@@ -547,12 +581,29 @@ local function flight_tick()
     -- Kept each second: the cargo and the source go with the hub.
     fl.cargo = hub.get_contents()
     fl.hub_health = p.hub.health
+    -- ran_out: km flown since when the hub has held none of an item it left with. A cargo bay
+    -- that dies spills its slots' items, which come back when the hub rebuilds it (NOTES.md):
+    -- an item that comes back hasn't run out.
+    for name in pairs(fl.watch) do
+      if hub.get_item_count(name) == 0 then fl.ran_out[name] = fl.ran_out[name] or fl.odometer
+      else fl.ran_out[name] = nil end
+    end
+    -- low: seconds a thruster held under low_fuel of either fluid (thrust follows the line's fill).
+    for _, t in pairs(fl.low_fuel and fl.thrusters or {}) do
+      local c = t.valid and t.get_fluid_contents() or {}
+      if t.valid and ((c["thruster-fuel"] or 0) < fl.low_fuel or (c["thruster-oxidizer"] or 0) < fl.low_fuel) then
+        fl.low = fl.low + 1
+        break
+      end
+    end
     if fl.source and fl.source.valid then fl.power_j = BUDGET - fl.source.energy end
     -- Power made on board: the surface's own network statistics (a fresh surface starts at 0).
     local power = p.surface.global_electric_network_statistics
     if power then
-      fl.generated_j = power.output_counts["fusion-generator"] or 0
+      local base = fl.power_base or {}
+      fl.generated_j = (power.output_counts["fusion-generator"] or 0) - (base.generated or 0)
       fl.plant_j = (power.input_counts["fusion-reactor"] or 0) + (power.input_counts["cryogenic-plant"] or 0)
+        - (base.plant or 0)
     end
     -- Short of power: a fusion reactor that takes power first (as railguns do) and still
     -- gets less than it asks. A railgun reads low_power whenever it refills after a shot,
@@ -572,7 +623,7 @@ local function flight_tick()
     local stats = p.force.get_fluid_production_statistics(p.surface)
     fl.made = {}
     for _, f in pairs{"thruster-fuel", "thruster-oxidizer"} do
-      local n = stats.get_input_count(f)
+      local n = stats.get_input_count(f) - (fl.made_base[f] or 0)
       if n > 0 then fl.made[f] = n end
     end
   end
@@ -666,6 +717,31 @@ local function flight_teardown()
   if fl.platform and fl.platform.valid then fl.platform.destroy() end
   restore_research(game.forces.player, fl.research)
   storage.flight = nil
+end
+
+-- The flight leaves: onto the route at from_start (or at the origin), scheduled to the
+-- destination, moving at start_speed if given. Its clock and counts start here; what it
+-- made and generated while readied (fill) is left out.
+local function leave(fl)
+  local p = fl.platform
+  if fl.from_start > 0 then
+    p.space_connection = fl.connection
+    p.distance = fl.reversed and 1 - fl.from_start or fl.from_start
+  else
+    p.space_location = fl.origin
+  end
+  p.schedule = {current = 1, records = {{station = fl.destination}}}
+  p.paused = false
+  if fl.start_speed then p.speed = fl.start_speed end
+  fl.filling, fl.start, fl.pos, fl.odometer, fl.furthest = nil, game.tick, fl.from_start, 0, fl.from_start
+  fl.deaths, fl.rebuilt, fl.dry, fl.brownout, fl.speed_max, fl.low = {}, {}, 0, 0, 0, 0
+  for _, c in pairs(p.hub.get_inventory(defines.inventory.hub_main).get_contents()) do fl.watch[c.name] = true end
+  local power = p.surface.global_electric_network_statistics
+  fl.power_base = power and {generated = power.output_counts["fusion-generator"] or 0,
+                             plant = (power.input_counts["fusion-reactor"] or 0)
+                               + (power.input_counts["cryogenic-plant"] or 0)} or {}
+  local stats = p.force.get_fluid_production_statistics(p.surface)
+  for _, f in pairs{"thruster-fuel", "thruster-oxidizer"} do fl.made_base[f] = stats.get_input_count(f) end
 end
 
 local function connection_between(from, to)
@@ -1102,14 +1178,6 @@ remote.add_interface("ghostwriter", {
     -- A connection's distance runs from its own `from`, which may be our `to`.
     local reversed = proto.from.name ~= args.from
     local start = args.start or 0
-    if start > 0 then
-      p.space_connection = connection
-      p.distance = reversed and 1 - start or start
-    else
-      p.space_location = args.from
-    end
-    p.schedule = {current = 1, records = {{station = args.to}}}
-    p.paused = false
     local helpers_ = {}
     if args.power then
       -- An unlimited source on every separate pole network, like flow tests.
@@ -1146,7 +1214,9 @@ remote.add_interface("ghostwriter", {
                       cargo = {}, hub_health = p.hub.health, start = game.tick, research = research,
                       supplied = {}, held = {}, rebuilt = {}, source = helpers_[2], power_j = 0, made = {},
                       generated_j = 0, plant_j = 0, brownout = 0, take = args.take, taken = {}, bays_lost = {},
-                      fed = {}, dry = 0}
+                      fed = {}, dry = 0, origin = args.from, destination = args.to, start_speed = args.start_speed,
+                      turn = args.turn, low_fuel = args.low_fuel, low = 0, pos = start, odometer = 0, watch = {},
+                      ran_out = {}, filled = {}, made_base = {}}
     -- feed: the hub feeds the turrets by its own inserters, and what leaves it counts as
     -- used (fed), counted from here; loaded: each turret filled once from the hub to what
     -- an inserter fills it to (automated_ammo_count), as its feed would in orbit.
@@ -1187,7 +1257,15 @@ remote.add_interface("ghostwriter", {
         end
       end
     end
-    if args.start_speed then p.speed = args.start_speed end
+    -- fill: readied in orbit first (flight_tick), the hub's feed items held at their stock,
+    -- until flight_leave; otherwise it leaves now.
+    if args.fill then
+      storage.flight.filling = {}
+      for _, name in pairs(args.feed or {}) do storage.flight.filling[name] = (args.supplies or {})[name] or 0 end
+      p.paused = true
+    else
+      leave(storage.flight)
+    end
     game.speed = args.speed or 1
     reply{entities = wanted, built = built, weight = p.weight, connection = connection, length = proto.length,
           distance = p.distance}
@@ -1206,7 +1284,17 @@ remote.add_interface("ghostwriter", {
           ended = fl.ended, ended_after = fl.ended and (fl.ended.tick - fl.start) / 60, cargo = fl.cargo,
           supplied = fl.supplied, held = fl.held, rebuilt = fl.rebuilt, power_j = fl.power_j, made = fl.made,
           generated_j = fl.generated_j, plant_j = fl.plant_j, brownout = fl.brownout, taken = fl.taken,
-          bays_lost = fl.bays_lost, fed = fl.fed, dry = fl.dry}
+          bays_lost = fl.bays_lost, fed = fl.fed, dry = fl.dry, position = fl.pos, odometer = fl.odometer,
+          turned = fl.turned and (fl.turned - fl.start) / 60 or 0, back = fl.back and (fl.back - fl.start) / 60 or 0,
+          ran_out = fl.ran_out, low_fuel = fl.low, filling = fl.filling ~= nil, drawn = fl.drawn or 0,
+          filled = fl.filled, at_turn = fl.at_turn or false}
+  end,
+
+  flight_leave = function()
+    local fl = storage.flight
+    if not (fl and fl.filling) then return reply{error = "no flight readying to leave"} end
+    leave(fl)
+    reply{ok = true, distance = fl.platform.distance}
   end,
 
   flight_step = function(ticks)

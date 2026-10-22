@@ -17,7 +17,8 @@
       [--fuel]            report each flight: how far, what killed it, chunks in the
       [--supply k=n,...]  hub (--fuel keeps thrusters full; --supply loads the hub;
       [--research k=n,...]  --research sets levels researched, e.g. railgun-damage=4;
-      [--start F]           --start begins F of the way along the route, e.g. 0.4)
+      [--start F]           --start begins F of the way along the route, e.g. 0.4;
+      [--turn F]            --turn turns back home at F of the way: a round trip)
 
 SRC is a blueprint string, a path to a file holding one (or JSON), or - for
 stdin; `validate` also takes library folders (validated as books).
@@ -208,7 +209,7 @@ def cmd_fly(args):
     supplies = dict(_param(kv) for kv in args.supply.split(",")) if args.supply else {}
     research = dict(_param(kv) for kv in args.research.split(",")) if args.research else {}
     flight = Flight("flight", origin=args.origin, destination=args.destination, seconds=args.seconds,
-                    start=args.start, supplies=supplies, fuel=args.fuel, research=research)
+                    start=args.start, supplies=supplies, fuel=args.fuel, research=research, turn=args.turn)
     flights = []
     with Server(args.factorio) as server:
         print(f"flying in Factorio {server.version}", file=sys.stderr)
@@ -220,6 +221,8 @@ def cmd_fly(args):
             if flown.error:
                 sys.exit(1)
             end = f"survived {flown.seconds:.0f}s" if flown.survived else f"{flown.ended} after {flown.seconds:.0f}s"
+            if flown.back:
+                end = f"back after {flown.seconds:.0f}s, {flown.odometer:,.0f} km flown"
             losses = ", ".join(f"{k} x{v}" for k, v in sorted(flown.deaths.items())) or "nothing"
             chunks = ", ".join(f"{v} {k}" for k, v in sorted(flown.cargo.items()) if k.endswith("asteroid-chunk"))
             print(f"run {run + 1}: {flown.km:,.0f} km, {end}; lost: {losses}; chunks in hub: {chunks or 'none'}",
@@ -282,6 +285,8 @@ def main(argv=None):
                                       "railgun-damage=4,railgun-shooting-speed=3 (default none)")
     p.add_argument("--start", type=float, default=0.0,
                    help="where on the route to start, as a share of it (0.4: 40%% of the way)")
+    p.add_argument("--turn", type=float, default=0.0,
+                   help="a round trip: turn back toward the origin at this share of the route")
     p.add_argument("--origin", default="solar-system-edge")
     p.add_argument("--destination", default="shattered-planet")
     p.add_argument("--factorio", help="Factorio executable (headless server or game)")

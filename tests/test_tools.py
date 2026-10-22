@@ -728,6 +728,17 @@ class Platform(unittest.TestCase):
         self.assertEqual(flight.supplies, {"repair-pack": 100})
         self.assertEqual(platform.flight_tests()[0].supplies, {})
 
+    def test_a_round_trip_turns_and_a_fed_platform_can_ready_in_orbit(self):
+        [flight] = platform.flight_tests(turn=0.02, fill=True, ammo_feed=True)
+        self.assertEqual((flight.turn, flight.fill), (0.02, True))
+        self.assertEqual((platform.flight_tests()[0].turn, platform.flight_tests()[0].fill), (0.0, False))
+        with self.assertRaises(ValueError):
+            platform.flight_tests(fill=True)  # nothing for the hub to fill without its feed
+        with self.assertRaises(ValueError):
+            platform.flight_tests(start=0.1, turn=0.05)  # turns before it starts
+        with self.assertRaises(ValueError):
+            platform.flight_tests(start=0.1, reverse=True, turn=0.2)  # a flight back has nowhere to turn
+
     def test_side_guns_stand_at_both_side_ends(self):
         # Asteroids eat foundation from the side ends inward, past the gun row's reach
         # (NOTES.md): side_guns stands that many gun turrets in a column at each outer
@@ -1752,6 +1763,45 @@ class Trip(unittest.TestCase):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 self.assertEqual(trip.main([str(path), "--mode", "narrow"]), 0)
+        self.assertIn("best: turn", out.getvalue())
+
+    def whole_trip(self):
+        # platform-whole-trip: two flights out to 0.02 and back; one came back with 300 chunks,
+        # one died with 100 aboard. 200,000 km and 4,000 s in all.
+        flight = {"back": True, "died at": None, "km": 160_000, "seconds": 3_000, "chunks aboard": 300,
+                  "left": {self.FOUNDATION: 1_400, "railgun-ammo": 0}}
+        died = {"back": False, "died at": 0.013, "km": 40_000, "seconds": 1_000, "chunks aboard": 100,
+                "left": {self.FOUNDATION: 1_800, "railgun-ammo": 3_000}}
+        return {"turn": 0.02, "supplies": {self.FOUNDATION: 2_000, "railgun-ammo": 4_000}, "flights": [flight, died]}
+
+    def test_a_whole_trip_flown_is_one_more_measured_row(self):
+        # Out to turn and back, it flew as many km at each share of the route up to the turn, so
+        # its rates stand at turn / 2: what the hub gave per 1,000 km over every flight, the chunks
+        # brought in, km over seconds, and hubs lost per 1,000 km.
+        from tools import trip
+
+        share, row = trip.measured(self.whole_trip())
+        self.assertEqual(share, 0.01)
+        self.assertEqual(row, {self.FOUNDATION: 4.0, "railgun-ammo": 25.0, self.CHUNK: 2.0, "km/s": 50.0,
+                               "deaths": 0.005})  # (600 + 200), (4,000 + 1,000), 400 chunks, 1 hub per 200,000 km
+
+    def test_the_command_folds_in_a_whole_trip(self):
+        import contextlib
+        import io
+
+        from tools import trip
+
+        rates = {"rebuilt space-platform-foundation/1000 km": 100.0, "taken promethium-asteroid-chunk/1000 km": 5.0,
+                 "cruise km/s": 40.0, "km_mean": 20000.0, "survived": 1.0}
+        result = {"trials": [{"start": s, "mode": "out", "passed": True, "rates": rates} for s in (0.0, 0.1)]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path, whole = Path(tmp) / "route.json", Path(tmp) / "whole.json"
+            path.write_text(json.dumps(result))
+            whole.write_text(json.dumps(self.whole_trip()))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(trip.main([str(path), "--whole-trip", str(whole)]), 0)
+        self.assertIn("with a whole trip measured at 0.01", out.getvalue())
         self.assertIn("best: turn", out.getvalue())
 
 
