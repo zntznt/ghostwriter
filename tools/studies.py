@@ -648,7 +648,7 @@ def platform_mix(server) -> dict:
 NARROW = {**TRIP_PLATFORM, "railguns": 16, "guns": 16}
 BAY_COUNTS = [8, 16, 24]
 BAY_STARTS = [0.0, 0.1, 0.2]
-PROMETHIUM_PLATFORM = {**NARROW, "cargo_bays": 24}  # library/platforms/: the best trip that comes back (NOTES.md)
+BAYS_PLATFORM = {**NARROW, "cargo_bays": 24}  # platform-bays' best trip that comes back (NOTES.md)
 # Bays past 8 push the fuel module east toward the side end, where asteroids eat inward; with
 # none of its parts in the hub it went unrebuilt, and fuel and promethium collapsed (NOTES.md).
 # Enough for the worst 600 s measured, in 14 slots, for as much foundation.
@@ -719,6 +719,7 @@ def platform_bays(server) -> dict:
 # spares for the feed's underground belts, in place of as much foundation.
 FEED_STARTS = [0.0, 0.1]
 FEED_MODES = {"script ammo": {}, "hub feeds": {"ammo_feed": True}}
+PROMETHIUM_PLATFORM = {**BAYS_PLATFORM, "ammo_feed": True}  # library/platforms/: as flown, the hub feeding (NOTES.md)
 
 
 def feed_stock() -> dict:
@@ -736,7 +737,7 @@ def feed_stock() -> dict:
 
 
 def platform_feed(server) -> dict:
-    """Does the hub keep the turrets fed? PROMETHIUM_PLATFORM in each of FEED_MODES flies 8
+    """Does the hub keep the turrets fed? BAYS_PLATFORM in each of FEED_MODES flies 8
     times from each of FEED_STARTS for up to 600 s with feed_stock and MIX_RESEARCH (with
     construction-robotics): what it lives and flies, the turret-seconds with no ammo, and per
     1,000 km what it used (from the hub, or by script), rebuilt and brought in, and its hub
@@ -752,7 +753,7 @@ def platform_feed(server) -> dict:
     rows = []
     for mode, extra in FEED_MODES.items():
         for start in FEED_STARTS:
-            t = evaluate({**PROMETHIUM_PLATFORM, **extra, "start": start, "seconds": 600, "supplies": stock,
+            t = evaluate({**BAYS_PLATFORM, **extra, "start": start, "seconds": 600, "supplies": stock,
                           "research": {**MIX_RESEARCH, "construction-robotics": 1}, "take": [PROMETHIUM]})
             r = t.rates
             row = {"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
@@ -771,7 +772,7 @@ def platform_feed(server) -> dict:
                 print(f"{mode}, from {start:.0%}: FAIL {t.error}", file=sys.stderr, flush=True)
             rows.append(row)
     print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": PROMETHIUM_PLATFORM, "modes": FEED_MODES, "research": {**MIX_RESEARCH, "construction-robotics": 1},
+    return {"design": BAYS_PLATFORM, "modes": FEED_MODES, "research": {**MIX_RESEARCH, "construction-robotics": 1},
             "supplies": stock, "trials": rows}
 
 

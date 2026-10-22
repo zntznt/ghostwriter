@@ -669,7 +669,8 @@ class Platform(unittest.TestCase):
 
     def test_filed_platforms_are_what_the_generator_builds(self):
         # library/platforms/ holds the generator's output for these parameters: the 32-railgun
-        # platform of platform-foundation, and the promethium platform of platform-bays.
+        # platform of platform-foundation, and the promethium platform of platform-bays with
+        # the hub feeding its turrets (platform-feed).
         from tools.studies import FILED_PLATFORM, PROMETHIUM_PLATFORM
 
         filed = {}
@@ -1134,12 +1135,12 @@ class PlatformFeed(unittest.TestCase):
     """ammo_feed=True: the hub feeds every railgun and gun turret by belt and inserter."""
 
     def setUp(self):
-        from tools.studies import PROMETHIUM_PLATFORM
+        from tools.studies import BAYS_PLATFORM
 
-        self.params = PROMETHIUM_PLATFORM
+        self.params = BAYS_PLATFORM
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            self.bp = platform.build(**PROMETHIUM_PLATFORM, ammo_feed=True).to_dict()["blueprint"]
+            self.bp = platform.build(**BAYS_PLATFORM, ammo_feed=True).to_dict()["blueprint"]
         self.ents = self.bp["entities"]
 
     def test_check_clean_and_nothing_overlaps(self):
@@ -1212,6 +1213,7 @@ class PlatformFeed(unittest.TestCase):
 
     def test_description_says_to_stock_the_hub(self):
         self.assertIn("feeds the turrets", self.bp["description"])
+        self.assertTrue(self.bp["label"].endswith(", feeds its turrets"), self.bp["label"])
         self.assertNotIn("Supply railgun ammo", self.bp["description"])
         self.assertLessEqual(len(self.bp["description"].encode()), 500)
         self.assertLessEqual(len(self.bp["label"].encode()), 200)
