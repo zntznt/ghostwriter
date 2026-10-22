@@ -23,6 +23,7 @@ python -m tools.bp gen NAME [key=value ...] --validate   # generator -> checked,
 python -m tools.bp validate SRC...                      # in-game validation (headless server)
 python -m tools.bp fly SRC --runs 3 [--fuel] [--supply item=n,...] [--research railgun-damage=4,...] [--start 0.4] [--turn 0.02]  # fly a space platform toward the shattered planet (and back, with --turn)
 python -m tools.bp check SRC                          # static checks, exit 1 on error
+python -m tools.bp density SRC [--rate R] [--json]    # how a blueprint spends its tiles: box, covered, empty, by role
 python -m tools.bp decode SRC                         # string -> pretty JSON
 python -m tools.bp encode SRC                         # JSON -> string
 python -m tools.bp add SRC [--to library/BOOK]        # file into library/
