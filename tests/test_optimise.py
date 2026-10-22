@@ -246,9 +246,40 @@ class Cache(unittest.TestCase):
         means = studies.whole_trip_means(rows)
         self.assertEqual(means["came back"], 0.5)
         self.assertEqual(means["chunks back"], 150)  # over every flight: a lost one brings back none
+        self.assertEqual(means["chunks per trip back"], 300)  # over the ones that came back
         self.assertEqual(means["left, came back"], {"railgun-ammo": 10, "space-platform-foundation": 0})
         self.assertEqual(means["first out"], {"space-platform-foundation": 1})
         self.assertEqual((means["km"], means["dry turret s"]), (116_000, 2.5))
+
+    def test_lost_trips_count_the_bays_and_railguns_that_died(self):
+        # What starts the cascade (NOTES.md): railguns die, huge asteroids get through to the bays.
+        from tools import studies
+        from validator.flight import Flown
+
+        died = Flown("trip", odometer=70_000, seconds=1_400, ended="hub destroyed by huge asteroid",
+                     deaths={"cargo-bay <- huge-oxide-asteroid": 10, "cargo-bay <- big-oxide-asteroid": 2,
+                             "railgun-turret <- huge-carbonic-asteroid": 7, "gun-turret <- small-oxide-asteroid": 3})
+        back = Flown("trip", odometer=162_000, seconds=3_000, survived=True, back=3_000,
+                     deaths={"cargo-bay <- big-carbonic-asteroid": 1})
+        means = studies.whole_trip_means([studies.whole_trip_flown(f, {}) for f in (died, back)])
+        self.assertEqual((means["cargo bays died"], means["railgun turrets died"]), (6.5, 3.5))
+        self.assertEqual(means["killed by huge asteroids"], 8.5)  # 17 of ours, over 2 flights
+
+    def test_spares_round_up_to_whole_stacks_for_free(self):
+        # A hub slot holds a whole stack, so a spare short of one costs nothing to fill (NOTES.md).
+        import math
+
+        from draftsman.data import items
+
+        from tools import studies
+
+        self.assertEqual(studies.full_stacks({"railgun-turret": 6, "fusion-reactor": 1, "uranium-rounds-magazine": 5450}),
+                         {"railgun-turret": 10, "fusion-reactor": 1, "uranium-rounds-magazine": 5500})
+
+        def slots(stock):
+            return sum(math.ceil(n / items.raw[k]["stack_size"]) for k, n in stock.items())
+
+        self.assertEqual([slots(s) for s in studies.CASCADE_STOCKS.values()], [530, 530, 533, 536])  # of 539
 
     def test_fingerprint_changes_with_the_code(self):
         with tempfile.TemporaryDirectory() as tmp:

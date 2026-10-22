@@ -817,6 +817,28 @@ CORRECTED_TRIP_STOCK = {"uranium-rounds-magazine": 5672, "railgun-ammo": 4450, "
                         "cargo-bay": 3, "asteroid-collector": 3, "fusion-power-cell": 2, "fusion-generator": 2,
                         "cryogenic-plant": 2, "underground-belt": 1, "gun-turret": 1, "fusion-reactor": 1,
                         "express-underground-belt": 1}
+
+
+def full_stacks(stock: dict) -> dict:
+    """Every item rounded up to whole stacks: a hub slot holds a stack, so it costs no slots."""
+    from draftsman.data import items
+
+    return {k: -(-n // items.raw[k]["stack_size"]) * items.raw[k]["stack_size"] for k, n in stock.items()}
+
+
+# Lost whole trips lost 9 to 21 railguns, against 0 to 6 in the ones that came back, most to huge
+# asteroids, and then 14 to 25 cargo bays to the huge asteroids that got through (NOTES.md): the
+# 6 spare railguns, 4 bays and 1 fusion reactor ran out. The loads platform-whole-trip-cascade
+# tries, cheapest first, with their hub slots (of 539).
+CASCADE_STOCKS = {
+    "NOTES stock": WHOLE_TRIP_STOCK,  # 530
+    "full stacks": full_stacks(WHOLE_TRIP_STOCK),  # 530: 10 railguns, 10 bays, 20 crushers, 5 generators
+    "full stacks, 20 railguns, 20 bays, 2 reactors": {**full_stacks(WHOLE_TRIP_STOCK), "railgun-turret": 20,
+                                                      "cargo-bay": 20, "fusion-reactor": 2},  # 533
+    "full stacks, 30 railguns, 30 bays, 2 reactors, 10 generators": {
+        **full_stacks(WHOLE_TRIP_STOCK), "railgun-turret": 30, "cargo-bay": 30, "fusion-reactor": 2,
+        "fusion-generator": 10},  # 536
+}
 WHOLE_TRIP_RESEARCH = {**MIX_RESEARCH, "construction-robotics": 1, **FEED_RESEARCH}
 WHOLE_TRIP_SECONDS = 9000  # at most: the plan's 162,000 km at its 50 km/s take 3,240
 WHOLE_TRIP_RATES = ("platform-feed-fast.result.json", "hub feeds, inserter capacity 7")  # what the plan came from
@@ -857,8 +879,17 @@ def whole_trip_means(rows: list[dict]) -> dict:
         xs = [x for x in xs if x is not None]
         return sum(xs) / len(xs) if xs else None
 
+    def died(row, kind=None, cause=""):
+        # Ours, not asteroids' own deaths: "cargo-bay <- huge-oxide-asteroid".
+        return sum(n for k, n in row["deaths"].items() if not k.split(" <- ")[0].endswith("asteroid")
+                   and (kind is None or k.split(" <- ")[0] == kind) and k.split(" <- ")[1].startswith(cause))
+
     back = [r for r in rows if r["back"]]
     return {"flights": len(rows), "came back": len(back) / len(rows), "chunks back": mean(r["chunks back"] for r in rows),
+            "chunks per trip back": mean(r["chunks back"] for r in back),
+            "cargo bays died": mean(died(r, "cargo-bay") for r in rows),
+            "railgun turrets died": mean(died(r, "railgun-turret") for r in rows),
+            "killed by huge asteroids": mean(died(r, cause="huge-") for r in rows),
             "km": mean(r["km"] for r in rows), "seconds": mean(r["seconds"] for r in rows),
             "out km/s": mean(r["out km/s"] for r in rows), "back km/s": mean(r["back km/s"] for r in rows),
             "left, came back": {k: mean(r["left"][k] for r in back) for k in (back[0]["left"] if back else {})},
@@ -930,6 +961,23 @@ def platform_whole_trip(server, runs: int = 8, stock=None, fold: str = "") -> di
             "research": WHOLE_TRIP_RESEARCH, "flights": rows, "means": means, "model": model}
 
 
+def platform_whole_trip_cascade(server, runs: int = 8) -> dict:
+    """Do more spares stop the cascade that loses whole trips? Each of CASCADE_STOCKS flown as
+    platform-whole-trip, `runs` times in the same run: how many came back, the chunks per trip
+    that came back and per trip counting losses, and the bays and railguns that died."""
+    out = {}
+    for name, stock in CASCADE_STOCKS.items():
+        print(f"== {name}", file=sys.stderr, flush=True)
+        r = platform_whole_trip(server, runs, stock=stock)
+        m = r["means"]
+        print(f"{name}: back {sum(f['back'] for f in r['flights'])}/{runs}, {m['chunks per trip back'] or 0:.0f} chunks "
+              f"a trip back, {m['chunks back']:.0f} a trip counting losses; {m['cargo bays died']:.1f} bays and "
+              f"{m['railgun turrets died']:.1f} railguns died, {m['killed by huge asteroids']:.1f} of ours to huge "
+              "asteroids, a flight", file=sys.stderr, flush=True)
+        out[name] = r
+    return {"stocks": out}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
@@ -942,4 +990,5 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
                                                               fast_feed_stock()),
            "platform-whole-trip": platform_whole_trip,
            "platform-whole-trip-corrected": lambda server: platform_whole_trip(
-               server, stock=CORRECTED_TRIP_STOCK, fold="platform-whole-trip.result.json")}
+               server, stock=CORRECTED_TRIP_STOCK, fold="platform-whole-trip.result.json"),
+           "platform-whole-trip-cascade": platform_whole_trip_cascade}
