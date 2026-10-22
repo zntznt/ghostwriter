@@ -735,6 +735,17 @@ class Platform(unittest.TestCase):
         with self.assertRaises(ValueError):
             platform.flight_tests(shock=8)  # no turn to take it at
 
+    def test_a_trip_can_set_out_from_home_by_way_of_stops(self):
+        # home and via: it sets out from Nauvis orbit, flies the stops to the route's origin, makes
+        # its trip, and comes home the same way (validator.flight.Flight).
+        [flight] = platform.flight_tests(turn=0.02, home="nauvis", via=["fulgora", "aquilo"])
+        self.assertEqual((flight.home, flight.via), ("nauvis", ["fulgora", "aquilo"]))
+        self.assertEqual((platform.flight_tests()[0].home, platform.flight_tests()[0].via), ("", []))
+        with self.assertRaises(ValueError):
+            platform.flight_tests(via=["aquilo"])  # stops on the way from nowhere
+        with self.assertRaises(ValueError):
+            platform.flight_tests(start=0.1, turn=0.2, home="nauvis")  # from home it flies the whole route
+
     def test_a_round_trip_turns_and_a_fed_platform_can_ready_in_orbit(self):
         [flight] = platform.flight_tests(turn=0.02, fill=True, ammo_feed=True)
         self.assertEqual((flight.turn, flight.fill), (0.02, True))

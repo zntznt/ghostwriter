@@ -83,6 +83,11 @@ class Flight:
     # As it turns, that many railguns nearest the platform's middle die (a gap in the line where
     # asteroids are thickest), for the hub to rebuild from its spares.
     shock: int = 0
+    # Getting there: it sets out from `home` (a planet's orbit, where it readies), flies the `via`
+    # stops to the origin and makes its trip, and comes home the same way; the flight ends when it
+    # is home. Each place it reaches is a stop (Flown.stops), and what lies between two is a leg.
+    home: str = ""
+    via: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -125,9 +130,29 @@ class Flown:
     low_fuel: int = 0  # seconds a thruster held under a tenth of its box of either fluid
     filled: dict[str, int] = field(default_factory=dict)  # Flight.fill: what readying drew from the hub
     at_turn: dict = field(default_factory=dict)  # Flight.turn: km flown and the hub's cargo as it turned
+    # Flight.home: each place reached (at, seconds, km flown on every connection, the hub's cargo,
+    # deaths so far), and the km flown on every connection, legs included.
+    stops: list[dict] = field(default_factory=list)
+    trip_km: float = 0.0
 
     def chunks(self, kind: str = "promethium") -> int:
         return self.cargo.get(f"{kind}-asteroid-chunk", 0)
+
+    def legs(self) -> list[dict]:
+        """What happened between each two stops (Flight.home): km, seconds, what the hub lost (a gain
+        is negative) and what died. The last runs on to the end of the flight if it ended between
+        stops (to: None)."""
+        ends = list(self.stops)
+        if ends and not self.back:
+            ends.append({"at": None, "seconds": self.seconds, "km": self.trip_km, "cargo": self.cargo,
+                         "deaths": self.deaths})
+        out = []
+        for a, b in zip(ends, ends[1:]):
+            used = {k: a["cargo"].get(k, 0) - b["cargo"].get(k, 0) for k in {**a["cargo"], **b["cargo"]}}
+            died = {k: n - a["deaths"].get(k, 0) for k, n in b["deaths"].items()}
+            out.append({"from": a["at"], "to": b["at"], "km": b["km"] - a["km"], "seconds": b["seconds"] - a["seconds"],
+                        "used": {k: n for k, n in used.items() if n}, "died": {k: n for k, n in died.items() if n}})
+        return out
 
     def budget(self) -> dict[str, float]:
         """What the flight used a second: each supply (given less held), power, and each thing rebuilt;
@@ -193,7 +218,8 @@ def start_flight(server: Server, data: dict, flight: Flight) -> tuple[dict, dict
         "primed": flight.primed or None, "start_speed": flight.start_speed or None,
         "charged": flight.charged, "coolant": flight.coolant or None, "take": flight.take or None,
         "loaded": flight.loaded or None, "feed": flight.feed or None, "turn": flight.turn or None,
-        "fill": flight.fill, "shock": flight.shock or None, "low_fuel": LOW_FUEL * PRIME}))
+        "fill": flight.fill, "shock": flight.shock or None, "low_fuel": LOW_FUEL * PRIME,
+        "home": flight.home or None, "via": flight.via or None}))
     if "error" in setup or not flight.fill:
         return setup, {}
     idle, got = 0, {}
@@ -242,6 +268,10 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.turned, flown.back = got.get("turned") or 0.0, got.get("back") or 0.0
             flown.ran_out = got["ran_out"] if isinstance(got.get("ran_out"), dict) else {}
             flown.low_fuel = got.get("low_fuel") or 0
+            flown.trip_km = got.get("trip_km") or 0.0
+            flown.stops = [{**s, "cargo": {c["name"]: c["count"] for c in s.get("cargo") or [] if isinstance(c, dict)},
+                            "deaths": s["deaths"] if isinstance(s.get("deaths"), dict) else {}}
+                           for s in got.get("stops") or []]
             if isinstance(got.get("at_turn"), dict):
                 flown.at_turn = {"km": got["at_turn"]["km"], "cargo": {
                     c["name"]: c["count"] for c in got["at_turn"].get("cargo") or [] if isinstance(c, dict)}}
