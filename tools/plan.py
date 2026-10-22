@@ -386,7 +386,7 @@ def text(plan: dict) -> str:
     else:
         lines += [f"Best trip: turn at {t['turn']:g} of the route, stay {t['stay']:,.0f} km: {t['km']:,.0f} km, "
                   f"{t['hours']:.1f} h; {t['chunks']:,.0f} chunks back ({t['packs']:,.0f} packs), comes back "
-                  f"{t['comes back']:.0%}",
+                  f"{t['comes back']:.0%} by its 600 s flights' losses (whole trips: --verify)",
                   f"Limit: {plan['limit']['by']} ({t['loaded slots']} of {t['slots']} loaded); "
                   f"{plan['limit']['largest']} fills the most ({plan['limit']['slots']} slots)",
                   "Load the hub:"]
