@@ -50,6 +50,27 @@ class Validator(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.__exit__(None, None, None)
 
+    def test_a_server_whose_port_is_taken_starts_on_another(self):
+        # A port found free is released before the game binds it (about 2 s later),
+        # so another process can take it in between; the game then quits with
+        # "Host address is already in use". Hold the first port it's given.
+        import socket
+        from unittest import mock
+
+        import validator.server as server_module
+
+        held = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        held.bind(("", 0))
+        real, given = server_module._free_port, [held.getsockname()[1]]
+        try:
+            with mock.patch.object(server_module, "_free_port",
+                                   lambda kind: given.pop() if kind == socket.SOCK_DGRAM and given else real(kind)):
+                with Server() as other:
+                    self.assertTrue(other.version)
+                    self.assertNotIn(f":{held.getsockname()[1]}}})", other.log_path.read_text())
+        finally:
+            held.close()
+
     def run_validate(self, data):
         return validate(self.server, data)
 
