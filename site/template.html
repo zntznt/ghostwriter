@@ -75,6 +75,11 @@ main > details { margin-top: 16px; }
 .tests { max-width: 640px; margin: 16px 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .tests h3 { margin: 0 0 6px; font-size: 15px; }
 .tests ul { margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+.plan h4 { margin: 12px 0 4px; font-size: 14px; }
+.plan p { margin: 6px 0; font-size: 14px; }
+.plan p.note { color: var(--muted); }
+.plan table { margin: 8px 0; }
+.plan ul.steps { color: var(--text); }
 .contents { max-width: 520px; }
 textarea { width: 100%; max-width: 640px; height: 90px; font: 12px var(--mono); padding: 8px; border: 1px solid var(--line);
   border-radius: 6px; background: var(--panel); color: var(--text); resize: vertical; }
@@ -192,6 +197,29 @@ async function copy(text, status) {
   setTimeout(() => status.textContent = "", 4000);
 }
 
+// A platform's trip plan (bp plan --save): what to load and do, from flights measured in game.
+function planSection(p) {
+  const t = p.trip, num = x => Math.round(x).toLocaleString("en");
+  const from = p.from === "nauvis" ? "From Nauvis and home" : "From the solar system edge and back";
+  return $("div", { class: "tests plan" },
+    $("h3", {}, `Promethium trip, planned from flights in game (${p.runs} a start, Factorio ${p.game})`),
+    $("p", {}, `${from}: turn at ${t.turn} of the route${t.stay ? `, stay ${num(t.stay)} km` : ""}; ` +
+      `${num(t.km)} km, ${t.hours.toFixed(1)} h; ${num(t.chunks)} chunks back (${num(t.packs)} packs), ` +
+      `comes back ${Math.round(t["comes back"] * 100)}%.`),
+    $("p", { class: "note" }, `What limits it: ${p.limit.by}, ${t["loaded slots"]} of ${t.slots} hub slots loaded ` +
+      `(${p.limit.largest} fills the most).`),
+    $("table", {},
+      $("tr", {}, $("th", {}, "Load the hub"), $("th", {}, "Count"), $("th", {}, "Slots")),
+      p.stock.map(s => $("tr", {}, $("td", {}, s.item), $("td", { class: "n" }, num(s.count)),
+                         $("td", { class: "n" }, String(s.slots))))),
+    $("h4", {}, "Research"),
+    $("p", {}, Object.entries(p.research).map(([k, v]) => `${k} ${v}`).join(", ")),
+    $("h4", {}, "Before leaving"),
+    $("ul", { class: "steps" }, p.readying.map(s => $("li", {}, s))),
+    $("h4", {}, "Caveats"),
+    $("ul", {}, p.caveats.map(s => $("li", {}, s))));
+}
+
 function select(path) {
   if (location.hash.slice(1) !== encodeURIComponent(path)) location.hash = encodeURIComponent(path);
   else render();
@@ -228,6 +256,7 @@ function render() {
       $("h3", {}, `Throughput measured in game (${n.flows.length} case${n.flows.length === 1 ? "" : "s"})`),
       $("ul", {}, n.flows.map(t => $("li", {}, t)))));
   }
+  if (n.plan) parts.push(planSection(n.plan));
   if (n.entities) {
     parts.push($("table", {},
       $("tr", {}, $("th", {}, "Entity"), $("th", {}, "Count")),

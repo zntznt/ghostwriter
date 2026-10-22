@@ -9,13 +9,16 @@ a stock (validator.flight.Flight.hold), so each flight measures what it uses and
 back the most chunks in the hub's slots: where to turn, what to load, what to do before leaving.
 """
 
+import json
 import math
 import sys
 from collections import Counter
+from pathlib import Path
 
 from draftsman.data import entities, items
 
 from tools import trip
+from tools.library import PLAN_SUFFIX, is_entry, plan_path
 
 # What the flights assume a player has researched: platform-research's best row for railguns
 # and bullets (NOTES.md), and the same for rockets and lasers: their damage series to 10, as
@@ -429,26 +432,71 @@ def verify(server, generator: str, plan: dict, runs: int) -> dict:
     return compare(plan, trip_means(flights.rates["flights"]))
 
 
+def build(generator: str, design: dict) -> dict:
+    """The design's blueprint, from the generator's build (flight-only keys left out)."""
+    import importlib
+    import inspect
+    import warnings
+
+    module = importlib.import_module(f"generators.{generator}")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return module.build(**{k: v for k, v in design.items()
+                               if k in inspect.signature(module.build).parameters}).to_dict()
+
+
 def plan(server, generator: str, design: dict, origin: str = "edge", runs: int = 8, research: dict | None = None,
          starts=None, seconds: float | None = None, data: dict | None = None) -> dict:
     """Measure the design and plan its trip (assemble); data is its blueprint, built if not given.
-    starts and seconds default to STARTS and SECONDS."""
-    import inspect
-    import importlib
-    import warnings
-
+    starts and seconds default to STARTS and SECONDS. The plan names its generator and the game
+    it was measured on, for filing it (save)."""
     reason = cannot_plan(design)
     if reason:
         raise ValueError(f"no promethium trip: {reason}")
-    module = importlib.import_module(f"generators.{generator}")
     if data is None:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            data = module.build(**{k: v for k, v in design.items()
-                                   if k in inspect.signature(module.build).parameters}).to_dict()
+        data = build(generator, design)
     research = research_for(design, research)
     stock = measure_stock(data, design)
     rows = measure(server, generator, design, research, stock, runs, STARTS if starts is None else starts,
                    SECONDS if seconds is None else seconds)
     legs = measure_legs(server, generator, design, research, stock, runs) if origin == "nauvis" else None
-    return assemble(design, origin, research, runs, rows, legs)
+    return {**assemble(design, origin, research, runs, rows, legs), "generator": generator, "game": server.version}
+
+
+def _filed(path: Path) -> dict:
+    data = json.loads(path.read_text())
+    data.pop("index", None)  # a book's child keeps its place
+    return data
+
+
+def save(plan: dict, data: dict, library: Path, target: str) -> Path:
+    """File a plan beside the library entry that is its design's blueprint (data), as NAME.plan.json:
+    only a plan with a trip, measured on the game the library targets."""
+    if plan.get("error") or not plan.get("trip"):
+        raise ValueError(f"no trip to file: {plan.get('error') or 'none planned'}")
+    if plan.get("game") != target:
+        raise ValueError(f"planned on Factorio {plan.get('game')}, but the library targets {target}")
+    for path in sorted(filter(is_entry, library.rglob("*.json"))):
+        if _filed(path) == data:
+            out = plan_path(path)
+            out.write_text(json.dumps(plan, indent=1) + "\n")
+            return out
+    raise ValueError("no library entry is this design's blueprint: file it first (bp gen ... | bp add -)")
+
+
+def problems(library: Path, target: str) -> list[str]:
+    """Every filed plan that no longer holds: no blueprint beside it, a design that no longer builds
+    that blueprint, or measured on another game than the library targets."""
+    out = []
+    for path in sorted(library.rglob("*" + PLAN_SUFFIX)):
+        name = path.relative_to(library).as_posix()
+        p = json.loads(path.read_text())
+        blueprint = path.with_name(path.name[: -len(PLAN_SUFFIX)] + ".json")
+        if not blueprint.is_file():
+            out.append(f"{name}: no {blueprint.name} beside it")
+            continue
+        if p.get("game") != target:
+            out.append(f"{name}: measured on Factorio {p.get('game')}, but the library targets {target}: plan it again")
+        if build(p["generator"], p["design"]) != _filed(blueprint):
+            out.append(f"{name}: its design no longer builds {blueprint.name}: plan it again (bp plan ... --save)")
+    return out

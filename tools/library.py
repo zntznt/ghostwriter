@@ -3,7 +3,8 @@
 Layout: a folder is a book. Its optional `_book.json` holds the book's own
 fields ({"index": n, "blueprint_book": {...}} minus "blueprints"; index only
 for child books). Every other `*.json` is one child ({"index": n,
-"<kind>": {...}}); subfolders are child books.
+"<kind>": {...}}); subfolders are child books. `NAME.plan.json` beside a
+platform's `NAME.json` is its trip plan (tools.plan), not a child.
 Children sort by stored index, then name; children without one are numbered
 after the highest index.
 
@@ -18,6 +19,16 @@ from pathlib import Path
 from tools.codec import dump_json, root_key
 
 BOOK_META = "_book.json"
+PLAN_SUFFIX = ".plan.json"  # NAME.plan.json: NAME.json's trip plan (tools.plan), not a child
+
+
+def is_entry(path: Path) -> bool:
+    """A blueprintable's file: *.json that isn't a book's own fields or a plan."""
+    return path.suffix == ".json" and path.name != BOOK_META and not path.name.endswith(PLAN_SUFFIX)
+
+
+def plan_path(blueprint_file: Path) -> Path:
+    return blueprint_file.with_name(blueprint_file.stem + PLAN_SUFFIX)
 
 
 def entries(library: Path) -> list[tuple[str, dict]]:
@@ -27,7 +38,7 @@ def entries(library: Path) -> list[tuple[str, dict]]:
     for path in sorted(library.iterdir()):
         if path.is_dir():
             out.append((path.name, load_book(path)))
-        elif path.suffix == ".json":
+        elif is_entry(path):
             data = json.loads(path.read_text())
             data.pop("index", None)
             root_key(data)
@@ -48,7 +59,7 @@ def load_book(folder: Path) -> dict:
             sub_meta = path / BOOK_META
             index = json.loads(sub_meta.read_text()).get("index") if sub_meta.exists() else None
             children.append((index, path.name, load_book(path)))
-        elif path.suffix == ".json" and path.name != BOOK_META:
+        elif is_entry(path):
             child = json.loads(path.read_text())
             root_key(child)
             children.append((child.pop("index", None), path.name, child))

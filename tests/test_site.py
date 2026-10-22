@@ -7,7 +7,7 @@ from pathlib import Path
 from tests.test_tools import GAME_21, generated, make_book
 from tools import site
 from tools.codec import decode
-from tools.library import load_book, save
+from tools.library import load_book, plan_path, save
 
 
 class Site(unittest.TestCase):
@@ -58,6 +58,35 @@ class Site(unittest.TestCase):
         leaf = next(n for n in self.nodes(data) if n["path"].startswith("smelting/"))
         self.assertEqual(leaf["flows"], ["48 furnaces: 15 iron-plate/s"])
         self.assertNotIn("tests", leaf)
+
+    def test_an_entry_with_a_plan_carries_it_and_others_dont(self):
+        # NAME.plan.json beside NAME.json (bp plan --save): the page shows its trip, load, research,
+        # steps before leaving and caveats; an entry without one is as it was.
+        path = "outer/00-gated-requester.json"
+        leaf = next(n for n in self.nodes(site.build(self.lib)) if n["path"] == path)
+        self.assertNotIn("plan", leaf)
+        plan = {"from": "edge", "runs": 8, "game": "2.1.23", "research": {"construction-robotics": 1},
+                "trip": {"turn": 0.021, "stay": 0, "km": 168000, "hours": 0.9, "chunks": 353, "packs": 141.2,
+                         "comes back": 1.0, "loaded slots": 534, "slots": 539},
+                "limit": {"by": "hub slots", "largest": "railgun-ammo", "slots": 440},
+                "stock": [{"item": "railgun-ammo", "count": 4400, "slots": 440}],
+                "readying": ["Load the hub."], "caveats": ["A caveat."]}
+        plan_path(self.lib / path).write_text(json.dumps(plan))
+        data = site.build(self.lib)
+        leaf = next(n for n in self.nodes(data) if n["path"] == path)
+        self.assertEqual(leaf["plan"], plan)
+        self.assertEqual(sum(1 for _ in self.nodes(data)), sum(1 for _ in self.nodes(site.build(self.lib))))
+        self.assertFalse(any("plan" in n for n in self.nodes(data) if n["path"] != path))
+
+    def test_the_promethium_platform_shows_its_plan(self):
+        data = site.build(Path(__file__).parent.parent / "library")
+        platforms = {n["path"]: n for n in self.nodes(data) if n["path"].startswith("platforms/")}
+        promethium = next(n for p, n in platforms.items() if p.endswith("keeps-promethium-feeds-its-turrets.json"))
+        self.assertGreater(promethium["plan"]["trip"]["chunks"], 0)
+        self.assertTrue(promethium["plan"]["stock"] and promethium["plan"]["readying"])
+        # The 32-railgun platform keeps no promethium: bp plan refuses it, so it has no plan.
+        self.assertEqual([p for p, n in platforms.items() if "plan" not in n],
+                         ["platforms/platform-32-railguns-32-gun-turrets-1-thruster-8-cargo-bays.json"])
 
     def test_page_embeds_data_safely(self):
         data = generated()

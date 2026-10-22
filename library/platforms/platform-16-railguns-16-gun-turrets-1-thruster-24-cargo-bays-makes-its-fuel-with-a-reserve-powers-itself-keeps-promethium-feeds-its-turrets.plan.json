@@ -1,0 +1,183 @@
+{
+ "design": {
+  "railguns": 16,
+  "guns": 16,
+  "thrusters": 1,
+  "cargo_bays": 24,
+  "fuel": 1,
+  "reserve": 1,
+  "power": 2,
+  "promethium": 1,
+  "ammo_feed": 1
+ },
+ "from": "edge",
+ "research": {
+  "railgun-shooting-speed": 6,
+  "railgun-damage": 2,
+  "physical-projectile-damage": 10,
+  "weapon-shooting-speed": 6,
+  "stronger-explosives": 10,
+  "laser-weapons-damage": 10,
+  "laser-shooting-speed": 7,
+  "construction-robotics": 1,
+  "inserter-capacity-bonus": 7
+ },
+ "runs": 8,
+ "measured": {
+  "0.0": {
+   "lived": 1.0,
+   "cruise km/s": 50.58958333333334,
+   "hub slots per 1,000 km": 2.3986328647871322,
+   "chunks per 1,000 km": 1.546269984135875
+  },
+  "0.1": {
+   "lived": 1.0,
+   "cruise km/s": 46.5875,
+   "hub slots per 1,000 km": 9.106294862195417,
+   "chunks per 1,000 km": 6.813579929331612
+  },
+  "0.2": {
+   "lived": 0.875,
+   "cruise km/s": 39.66083333333333,
+   "hub slots per 1,000 km": 13.317269390954044,
+   "chunks per 1,000 km": 6.439105071857838
+  }
+ },
+ "legs": null,
+ "trip": {
+  "turn": 0.021,
+  "stay": 0.0,
+  "flown turn": 0.021,
+  "km": 168000.0,
+  "hours": 0.9302042846915525,
+  "chunks": 352.6887047680799,
+  "packs": 141.07548190723196,
+  "comes back": 1.0,
+  "lost for room": 0.0,
+  "loaded slots": 534,
+  "slots": 539
+ },
+ "limit": {
+  "by": "hub slots",
+  "largest": "railgun-ammo",
+  "slots": 440
+ },
+ "stock": [
+  {
+   "item": "railgun-ammo",
+   "count": 4400,
+   "slots": 440
+  },
+  {
+   "item": "uranium-rounds-magazine",
+   "count": 5800,
+   "slots": 58
+  },
+  {
+   "item": "space-platform-foundation",
+   "count": 1800,
+   "slots": 18
+  },
+  {
+   "item": "chemical-plant",
+   "count": 20,
+   "slots": 2
+  },
+  {
+   "item": "asteroid-collector",
+   "count": 10,
+   "slots": 1
+  },
+  {
+   "item": "cargo-bay",
+   "count": 10,
+   "slots": 1
+  },
+  {
+   "item": "crusher",
+   "count": 10,
+   "slots": 1
+  },
+  {
+   "item": "cryogenic-plant",
+   "count": 20,
+   "slots": 1
+  },
+  {
+   "item": "fast-inserter",
+   "count": 50,
+   "slots": 1
+  },
+  {
+   "item": "fusion-generator",
+   "count": 5,
+   "slots": 1
+  },
+  {
+   "item": "fusion-power-cell",
+   "count": 50,
+   "slots": 1
+  },
+  {
+   "item": "fusion-reactor",
+   "count": 1,
+   "slots": 1
+  },
+  {
+   "item": "gun-turret",
+   "count": 50,
+   "slots": 1
+  },
+  {
+   "item": "inserter",
+   "count": 50,
+   "slots": 1
+  },
+  {
+   "item": "medium-electric-pole",
+   "count": 50,
+   "slots": 1
+  },
+  {
+   "item": "pipe",
+   "count": 100,
+   "slots": 1
+  },
+  {
+   "item": "pipe-to-ground",
+   "count": 50,
+   "slots": 1
+  },
+  {
+   "item": "railgun-turret",
+   "count": 10,
+   "slots": 1
+  },
+  {
+   "item": "transport-belt",
+   "count": 100,
+   "slots": 1
+  },
+  {
+   "item": "underground-belt",
+   "count": 50,
+   "slots": 1
+  }
+ ],
+ "readying": [
+  "Research construction-robotics: the hub rebuilds what asteroids destroy from its stock.",
+  "Load the hub and its 24 cargo bays with the stock listed.",
+  "The fuel module makes thruster fuel and oxidizer from chunks (research space-platform-thruster); standing still it meets too few to start, so leave with the thruster's line full.",
+  "Fill the reserve tanks with thruster fuel and oxidizer before leaving: in orbit the module fills them slowly (NOTES.md).",
+  "Fill each fusion reactor with fusion power cells and its loop with cold fluoroketone, and charge the accumulator and the railguns: a reactor needs power to start (research cryogenic-plant).",
+  "Ready it in orbit with the hub stocked: its feed fills the belts and turrets from the hub, so top the hub back up before leaving."
+ ],
+ "caveats": [
+  "The trip model reads its rates in straight lines between the starts measured; flown whole, a planned trip brought back more chunks and used less foundation near the edge than planned (NOTES.md).",
+  "Flights of 600 s lose little; over a whole trip losses compound, and a load sized to average use did worse flown whole (NOTES.md). Check it with --verify, and carry spares in whole stacks.",
+  "The trip starts and ends at the solar system edge: getting there from Nauvis and home again isn't in it (--from nauvis)."
+ ],
+ "error": null,
+ "generator": "platform",
+ "game": "2.1.23"
+}

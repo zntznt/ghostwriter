@@ -110,6 +110,14 @@ SRC is a string, a file path, or `-` (stdin).
   `add` refuses strings with check errors
   (`--force` for modded exports with names neither Draftsman nor `data/`
   knows). Expect "doesn't model" warnings on 2.1 exports; they are harmless.
+- A filed platform that keeps promethium gets its trip plan next to it: file
+  the blueprint first (`gen platform ... --validate | add - --to library/platforms`), then `bp plan platform`
+  with the same parameters and `--save`, which writes `NAME.plan.json` beside
+  it. It refuses a plan with no trip, one measured on another game than the
+  library targets, or one whose blueprint isn't filed. CI fails a plan that
+  goes stale (its design no longer builds the blueprint, or the target game
+  moved on): plan it again. The site shows the trip, the load, the research,
+  the steps before leaving and the caveats.
 - Give every filed blueprint a `label` and a `description` saying what it
   does and how to hook it up. The browser and the in-game tooltip show both.
 - After filing, rebuild the browser with `python -m tools.site`.
