@@ -1,6 +1,7 @@
 """A promethium trip from measured rates: where the platform should turn round.
 
     python -m tools.trip [RESULT] [--bays N ...] [--mode M]   # RESULT: .optimise-cache/platform-route.result.json
+        [--whole-trip WHOLE]                                  # a platform-whole-trip result, folded in as a row
 
 The platform flies from the solar system edge out to `turn` (a share of the route)
 and back, using foundation, ammo, fusion cells and spares at the rates the
@@ -56,6 +57,20 @@ def table(result: dict, mode: str = "out") -> dict[float, dict[str, float]]:
         row[DEATHS] = (1 - t["rates"]["survived"]) / t["rates"]["km_mean"] * 1000
         out[t["start"]] = row
     return out
+
+
+def measured(result: dict) -> tuple[float, dict[str, float]]:
+    """A whole trip flown (platform-whole-trip) as one more row of rates. Out to its turn and back,
+    it flew as many km at each share of the route up to the turn, so the row stands at turn / 2:
+    per 1,000 km what the hub gave (its stock less what was left), the chunks brought in, its
+    speed (km over seconds), and hubs lost, over every flight."""
+    flights, stock = result["flights"], result["supplies"]
+    km = sum(f["km"] for f in flights)
+    row = {k: sum(n - f["left"][k] for f in flights) / km * 1000 for k, n in stock.items()}
+    row[CHUNK] = sum(f["chunks aboard"] for f in flights) / km * 1000
+    row[SPEED] = km / sum(f["seconds"] for f in flights)
+    row[DEATHS] = sum(f["died at"] is not None for f in flights) / km * 1000
+    return result["turn"] / 2, row
 
 
 def slots(row: dict[str, float]) -> dict[str, float]:
@@ -130,8 +145,13 @@ def main(argv=None):
     ap.add_argument("--bays", type=int, nargs="+", default=[8], help="cargo bays (20 hub slots each)")
     ap.add_argument("--aboard", default="", help="items made on board, not loaded: a,b")
     ap.add_argument("--mode", default="out", help="the study's rows to plan from (platform-mix: a design)")
+    ap.add_argument("--whole-trip", help="a platform-whole-trip result, folded in as one more measured row")
     args = ap.parse_args(argv)
     rates = table(json.loads(Path(args.result).read_text()), args.mode)
+    if args.whole_trip:
+        share, row = measured(json.loads(Path(args.whole_trip).read_text()))
+        rates[share] = row
+        print(f"with a whole trip measured at {share:g} of the route")
     aboard = {a for a in args.aboard.split(",") if a}
     # Fine near the edge, where short trips are all that fit; coarser out to the furthest start measured.
     turns = [t / 1000 for t in range(1, 51)] + [t / 100 for t in range(6, round(max(rates) * 100) + 1)]
