@@ -445,6 +445,28 @@ class Validator(unittest.TestCase):
         self.assertAlmostEqual(flown.at_turn["km"], 0.15 * 15000, delta=0.02 * 15000)  # the two legs apart
         self.assertIsInstance(flown.at_turn["cargo"], dict)
 
+    def test_an_item_runs_out_for_good_not_while_a_bay_has_spilled_it(self):
+        # A cargo bay that dies spills its slots' items, and they come back when the hub rebuilds
+        # it (NOTES.md): ran_out keeps only an item the hub has held none of since, here one taken
+        # out by script and one taken out and put back.
+        data = platform.build(railguns=1, guns=2, thrusters=1).to_dict()
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "start": 0.3, "fuel": True,
+                "power": True, "supplies": {"iron-plate": 10, "copper-plate": 10}, "speed": 100}))
+            self.assertNotIn("error", setup)
+            hub = "storage.flight.platform.hub.get_inventory(defines.inventory.hub_main)"
+            _step(self.server, 120, timeout=60)
+            self.server.command(f"/sc {hub}.remove{{name = 'iron-plate', count = 10}} "
+                                f"{hub}.remove{{name = 'copper-plate', count = 10}}")
+            _step(self.server, 120, timeout=60)
+            self.server.command(f"/sc {hub}.insert{{name = 'iron-plate', count = 10}}")
+            _step(self.server, 120, timeout=60)
+            got = self.server.call("flight_read")
+        finally:
+            self.server.call("flight_teardown")
+        self.assertEqual(sorted(got["ran_out"]), ["copper-plate"])
+
     def test_a_platform_readied_in_orbit_fills_its_feed_first(self):
         # fill: before leaving, in Nauvis orbit (chunks only, no asteroids), the hub feed fills its
         # belts and turrets while the script holds the hub's feed items at their stock, as a player

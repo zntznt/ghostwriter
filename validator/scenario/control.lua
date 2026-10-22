@@ -581,9 +581,12 @@ local function flight_tick()
     -- Kept each second: the cargo and the source go with the hub.
     fl.cargo = hub.get_contents()
     fl.hub_health = p.hub.health
-    -- ran_out: km flown when the hub first held none of an item it left with.
+    -- ran_out: km flown since when the hub has held none of an item it left with. A cargo bay
+    -- that dies spills its slots' items, which come back when the hub rebuilds it (NOTES.md):
+    -- an item that comes back hasn't run out.
     for name in pairs(fl.watch) do
-      if not fl.ran_out[name] and hub.get_item_count(name) == 0 then fl.ran_out[name] = fl.odometer end
+      if hub.get_item_count(name) == 0 then fl.ran_out[name] = fl.ran_out[name] or fl.odometer
+      else fl.ran_out[name] = nil end
     end
     -- low: seconds a thruster held under low_fuel of either fluid (thrust follows the line's fill).
     for _, t in pairs(fl.low_fuel and fl.thrusters or {}) do

@@ -117,7 +117,8 @@ class Flown:
     position: float = 0.0  # where it is, as a share of the route from origin
     turned: float = 0.0  # Flight.turn: seconds in when it turned round (0: it didn't)
     back: float = 0.0  # and when it was back at the origin
-    ran_out: dict[str, float] = field(default_factory=dict)  # item -> km flown when the hub first held none
+    # item -> km flown since when the hub has held none: a dead cargo bay's spill that comes back isn't it
+    ran_out: dict[str, float] = field(default_factory=dict)
     low_fuel: int = 0  # seconds a thruster held under a tenth of its box of either fluid
     filled: dict[str, int] = field(default_factory=dict)  # Flight.fill: what readying drew from the hub
     at_turn: dict = field(default_factory=dict)  # Flight.turn: km flown and the hub's cargo as it turned
