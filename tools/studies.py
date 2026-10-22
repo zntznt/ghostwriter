@@ -7,10 +7,10 @@ table as it goes. Its books and values are fixed in code before it runs.
 import sys
 from collections import Counter
 
-from generators.platform import FEED_RESEARCH, FILED_PLATFORM, PROMETHIUM_PLATFORM
+from generators.platform import FEED_RESEARCH, FILED_PLATFORM, PROMETHIUM, PROMETHIUM_PLATFORM
 from tools.optimise import GameEvaluator, grid
 from tools.plan import (HIGH_RESEARCH, MIX_RESEARCH, full_stacks, leg_rates, legs_home, planned_trip,  # noqa: F401
-                        trip_flown, trip_means as whole_trip_means)
+                        slots, trip_flown, trip_means as whole_trip_means)
 
 SHARES = [0.8, 0.825, 0.85, 0.875, 0.9, 0.925, 0.95, 0.975, 1.0]
 # Each book makes one line run at a chosen share of a yellow belt (15/s), with
@@ -320,35 +320,16 @@ MODULE_CONTROLS = {
 
 
 def platform_reserve(server) -> dict:
-    """Does a fuel reserve filled before leaving (reserve=True) get the fuelled platform
-    going from the solar system edge, and do the module's spares keep it alive? Each of
-    RESERVE_MODES flies 8 times from each of BUDGET_STARTS, and each of MODULE_CONTROLS
-    8 times from BELT_START, for up to 600 s with platform-budget's research."""
-    from tools.optimise import FlightEvaluator
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    runs = [(start, mode, how) for start in BUDGET_STARTS for mode, how in RESERVE_MODES.items()]
+    """Does a fuel reserve filled before leaving (reserve=True) get the fuelled platform going from the
+    solar system edge, and do the module's spares keep it alive? Each of RESERVE_MODES from each of
+    BUDGET_STARTS, and each of MODULE_CONTROLS from BELT_START, 8 flights of up to 600 s."""
+    runs = [(s, mode, how) for s in BUDGET_STARTS for mode, how in RESERVE_MODES.items()]
     runs += [(BELT_START, mode, how) for mode, how in MODULE_CONTROLS.items()]
-    rows = []
-    for start, mode, (extra, supplies) in runs:
-        t = evaluate({**FILED_PLATFORM, **extra, "start": start, "seconds": 600,
-                      "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": supplies})
-        r = t.rates
-        module = {k: n for k, n in t.counts.items()
-                  if k.split(" <- ")[0] in ("asteroid-collector", "crusher", "chemical-plant", "transport-belt",
-                                            "storage-tank")}
-        print(f"from {start:.0%}, {mode}: " + (
-            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
-            f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); made {r.get('made thruster-fuel/s', 0):.1f} fuel/s and "
-            f"{r.get('made thruster-oxidizer/s', 0):.1f} oxidizer/s, held at the end "
-            f"{r.get('held thruster-fuel', 0):,.0f} and {r.get('held thruster-oxidizer', 0):,.0f}; "
-            f"module lost {module or 'nothing'}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-        rows.append({"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
-                     "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
+    trials = [({"start": s, "mode": mode}, {**FILED_PLATFORM, **extra, "start": s, "seconds": 600, "research": REBUILD,
+                                             "supplies": supplies}) for s, mode, (extra, supplies) in runs]
+    return {"design": FILED_PLATFORM, "research": REBUILD,
             "modes": {k: {"extra": e, "supplies": s} for k, (e, s) in {**RESERVE_MODES, **MODULE_CONTROLS}.items()},
-            "trials": rows}
+            "trials": flights(server, 8, trials, [made, lost(*MODULE, "storage-tank")])}
 
 
 POWER_MODES = {  # mode -> build and flight parameters; the hub's stock is BAY_SPARES (and cells with power)
@@ -359,33 +340,22 @@ POWER_MODES = {  # mode -> build and flight parameters; the hub's stock is BAY_S
 PLANT = ("fusion-reactor", "fusion-generator", "cryogenic-plant", "accumulator")
 
 
-def platform_power(server) -> dict:
-    """Does the fuelled platform with its reserve run on its own fusion plants (power=N)
-    as it does on the stand-in source? Each of POWER_MODES flies 8 times from each of
-    BUDGET_STARTS, for up to 600 s with platform-budget's research: what it lives and
-    flies, the power it uses and makes, fusion cells an hour, seconds any reactor was
-    short of power, and what of the plant asteroids destroyed."""
-    from tools.optimise import FlightEvaluator
+def power(row: dict) -> str:
+    """The power a flight used and its plants made, fusion cells an hour, and seconds a reactor was short."""
+    r = row["rates"]
+    return f"uses {r.get('power MW', 0):.1f} MW" + (
+        f", makes {r['generated MW']:.1f} MW gross on {r['fusion cells/h']:.2f} cells/h, reactors short of power "
+        f"{r['brownout s']:.1f} s a flight" if "generated MW" in r else "")
 
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for start in BUDGET_STARTS:
-        for mode, extra in POWER_MODES.items():
-            t = evaluate({**FILED_PLATFORM, **extra, "start": start, "seconds": 600,
-                          "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": BAY_SPARES})
-            r = t.rates
-            plant = {k: n for k, n in t.counts.items() if k.split(" <- ")[0] in PLANT}
-            print(f"from {start:.0%}, {mode}: " + (
-                f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
-                f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); uses {r.get('power MW', 0):.1f} MW"
-                + (f", makes {r['generated MW']:.1f} MW gross on {r['fusion cells/h']:.2f} cells/h, reactors short "
-                   f"of power {r['brownout s']:.1f} s a flight; plant lost {plant or 'nothing'}"
-                   if "generated MW" in r else "") if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-            rows.append({"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
-                         "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": FILED_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
-            "supplies": BAY_SPARES, "modes": POWER_MODES, "trials": rows}
+
+def platform_power(server) -> dict:
+    """Does the fuelled platform with its reserve run on its own fusion plants (power=N) as on the
+    stand-in source? Each of POWER_MODES, 8 flights of up to 600 s from each of BUDGET_STARTS."""
+    trials = [({"start": s, "mode": mode}, {**FILED_PLATFORM, **extra, "start": s, "seconds": 600, "research": REBUILD,
+                                             "supplies": BAY_SPARES})
+              for s in BUDGET_STARTS for mode, extra in POWER_MODES.items()]
+    return {"design": FILED_PLATFORM, "research": REBUILD, "supplies": BAY_SPARES, "modes": POWER_MODES,
+            "trials": flights(server, 8, trials, [power, lost(*PLANT)])}
 
 
 # What the hub rebuilds a fusion plant from: 9 of its 219 slots with 8 bays (a reactor
@@ -397,42 +367,21 @@ PLANT_MODES = {  # mode -> the hub's stock, for the fuelled platform with its re
     "no plant spares": BAY_SPARES,
     "plant spares": {**BAY_SPARES, **PLANT_SPARES, "space-platform-foundation": 19800},
 }
-
-
-def platform_plant(server) -> dict:
-    """Does the hub keep the fusion plants going where promethium is when it holds their
-    parts? The fuelled platform with its reserve and power=2 flies 8 times from BELT_START
-    for up to 600 s with each of PLANT_MODES' stock and platform-budget's research: what
-    it lives and flies, seconds a reactor was short of power, fusion cells an hour, and
-    what of the plant asteroids destroyed and the hub rebuilt."""
-    from tools.optimise import FlightEvaluator
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for mode, supplies in PLANT_MODES.items():
-        t = evaluate({**FILED_PLATFORM, "fuel": True, "reserve": True, "power": 2, "start": BELT_START,
-                      "seconds": 600, "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": supplies})
-        r = t.rates
-        lost = {k: n for k, n in t.counts.items() if k.split(" <- ")[0] in PLANT}
-        rebuilt = {k[len("rebuilt "):-2]: round(v * r["seconds_mean"], 2) for k, v in r.items()
-                   if k.startswith("rebuilt ") and k[len("rebuilt "):-2] in PLANT}
-        print(f"{mode}: " + (
-            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
-            f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); makes {r['generated MW']:.1f} MW gross on "
-            f"{r['fusion cells/h']:.2f} cells/h, reactors short of power {r['brownout s']:.1f} s a flight; plant lost "
-            f"{lost or 'nothing'} (8 flights), rebuilt {rebuilt or 'nothing'} a flight"
-            if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-        rows.append({"mode": mode, "passed": t.passed, "rates": r, "counts": t.counts, "ended": t.stalled,
-                     "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": {**FILED_PLATFORM, "fuel": True, "reserve": True, "power": 2}, "start": BELT_START,
-            "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "modes": PLANT_MODES, "trials": rows}
-
-
 # The whole platform so far: its own fuel (with the reserve) and its own power, and the
 # hub's stock with plant spares. Only ammo is still supplied by script.
 FULL_PLATFORM = {**FILED_PLATFORM, "fuel": True, "reserve": True, "power": 2}
 FULL_STOCK = PLANT_MODES["plant spares"]
+
+
+def platform_plant(server) -> dict:
+    """Does the hub keep the fusion plants going where promethium is when it holds their parts?
+    FULL_PLATFORM with each of PLANT_MODES' stock, 8 flights of up to 600 s from BELT_START."""
+    trials = [({"mode": mode}, {**FULL_PLATFORM, "start": BELT_START, "seconds": 600, "research": REBUILD,
+                                "supplies": supplies}) for mode, supplies in PLANT_MODES.items()]
+    return {"design": FULL_PLATFORM, "start": BELT_START, "research": REBUILD, "modes": PLANT_MODES,
+            "trials": flights(server, 8, trials, [power, lost(*PLANT)])}
+
+
 # Uranium rounds can't be made in space (no uranium); piercing and firearm rounds can.
 MAGAZINES = ["uranium-rounds-magazine", "piercing-rounds-magazine", "firearm-magazine"]
 
@@ -444,58 +393,30 @@ def per_1000_km(rates: dict) -> str:
     return ", ".join(f"{label} {rates[k]:,.1f}" for k, label in names.items() if k in rates)
 
 
-def platform_ammo(server) -> dict:
-    """What can the gun turrets fire that the platform could make? FULL_PLATFORM with
-    FULL_STOCK flies 8 times from each of BUDGET_STARTS for up to 600 s with
-    platform-budget's research, its gun turrets stocked with each of MAGAZINES: what it
-    lives and flies, and what it uses a second and per 1,000 km flown."""
-    from tools.optimise import FlightEvaluator
+def per_km(row: dict) -> str:
+    return f"per 1,000 km: {per_1000_km(row['rates'])}"
 
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for start in BUDGET_STARTS:
-        for magazine in MAGAZINES:
-            t = evaluate({**FULL_PLATFORM, "start": start, "seconds": 600, "magazine": magazine,
-                          "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": FULL_STOCK})
-            r = t.rates
-            print(f"from {start:.0%}, {magazine}: " + (
-                f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
-                f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); {r.get(magazine + '/s', 0):.2f} magazines/s; "
-                f"per 1,000 km: {per_1000_km(r)}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-            rows.append({"start": start, "magazine": magazine, "passed": t.passed, "rates": r, "counts": t.counts,
-                         "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": FULL_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
-            "supplies": FULL_STOCK, "trials": rows}
+
+def platform_ammo(server) -> dict:
+    """What can the gun turrets fire that the platform could make? FULL_PLATFORM with FULL_STOCK, its
+    gun turrets stocked with each of MAGAZINES, 8 flights of up to 600 s from each of BUDGET_STARTS."""
+    trials = [({"start": s, "magazine": m}, {**FULL_PLATFORM, "start": s, "seconds": 600, "magazine": m,
+                                             "research": REBUILD, "supplies": FULL_STOCK})
+              for s in BUDGET_STARTS for m in MAGAZINES]
+    return {"design": FULL_PLATFORM, "research": REBUILD, "supplies": FULL_STOCK,
+            "trials": flights(server, 8, trials, [per_km])}
 
 
 SIDE_MODES = {"no side guns": {}, "5 side guns a side": {"side_guns": 5}}  # 5: as many as the ends hold
 
 
 def platform_sides(server) -> dict:
-    """Do gun turrets at the side ends, where asteroids eat foundation first, save what
-    the hub rebuilds? FULL_PLATFORM with each of SIDE_MODES flies 8 times from BELT_START
-    for up to 600 s with FULL_STOCK and platform-budget's research: what it lives and
-    flies, and what it used and rebuilt per 1,000 km flown."""
-    from tools.optimise import FlightEvaluator
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for mode, extra in SIDE_MODES.items():
-        t = evaluate({**FULL_PLATFORM, **extra, "start": BELT_START, "seconds": 600,
-                      "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": FULL_STOCK})
-        r = t.rates
-        rebuilt = {k[len("rebuilt "):-len("/1000 km")]: round(v, 2) for k, v in r.items()
-                   if k.startswith("rebuilt ") and k.endswith("/1000 km")}
-        print(f"{mode}: " + (
-            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean "
-            f"({r['km_min']:,.0f} to {r['km_max']:,.0f}); per 1,000 km: {per_1000_km(r)}; rebuilt per 1,000 km "
-            f"{rebuilt}" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-        rows.append({"mode": mode, "passed": t.passed, "rates": r, "counts": t.counts, "ended": t.stalled,
-                     "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": FULL_PLATFORM, "start": BELT_START, "modes": SIDE_MODES,
-            "research": {**HIGH_RESEARCH, "construction-robotics": 1}, "supplies": FULL_STOCK, "trials": rows}
+    """Do gun turrets at the side ends, where asteroids eat foundation first, save what the hub
+    rebuilds? FULL_PLATFORM with each of SIDE_MODES, 8 flights of up to 600 s from BELT_START."""
+    trials = [({"mode": mode}, {**FULL_PLATFORM, **extra, "start": BELT_START, "seconds": 600, "research": REBUILD,
+                                "supplies": FULL_STOCK}) for mode, extra in SIDE_MODES.items()]
+    return {"design": FULL_PLATFORM, "start": BELT_START, "modes": SIDE_MODES, "research": REBUILD,
+            "supplies": FULL_STOCK, "trials": flights(server, 8, trials, [per_km])}
 
 
 # The trip model's inputs (tools.trip): the whole platform, keeping promethium, along the
@@ -510,32 +431,26 @@ ROUTE_RUNS = [(start, "out", {}) for start in ROUTE_STARTS] + [
     (BELT_START, "back", {"reverse": True}), (BELT_START, "out, no promethium", {"promethium": False})]
 
 
+def hub(row: dict) -> str:
+    """Hub slots a trial filled per 1,000 km (tools.trip), most first, and the promethium brought in."""
+    from tools import trip
+
+    used = trip.slots(trip.table({"trials": [row]}, row["mode"])[row["start"]])
+    top = ", ".join(f"{k} {v:.2f}" for k, v in sorted(used.items(), key=lambda kv: -kv[1])[:5])
+    return (f"cruise {row['rates'].get('cruise km/s', 0):.1f} km/s; hub slots per 1,000 km {sum(used.values()):.2f} "
+            f"({top}); promethium {row['rates'].get(f'taken {PROMETHIUM}/1000 km', 0):.2f}")
+
+
 def platform_route(server) -> dict:
-    """What does the whole platform use, and collect, along the route? TRIP_PLATFORM flies
-    8 times from each of ROUTE_STARTS (and each other run of ROUTE_RUNS) for up to 600 s
-    with TRIP_STOCK and platform-budget's research: what it lives and flies, its cruise,
-    and per 1,000 km what it used and rebuilt and the promethium chunks it brought in."""
-    from tools.optimise import FlightEvaluator
-
-    from generators.platform import PROMETHIUM
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for start, mode, extra in ROUTE_RUNS:
-        keeps = extra.get("promethium", True)
-        t = evaluate({**TRIP_PLATFORM, **extra, "start": start, "seconds": 600, "supplies": TRIP_STOCK,
-                      "research": {**HIGH_RESEARCH, "construction-robotics": 1}, **({"take": [PROMETHIUM]} if keeps else {})})
-        r = t.rates
-        print(f"from {start:.0%}, {mode}: " + (
-            f"{r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, {r['km_mean']:,.0f} km mean, cruise "
-            f"{r.get('cruise km/s', 0):.1f} km/s; per 1,000 km: {per_1000_km(r)}, fusion cells "
-            f"{r.get('fusion cells/1000 km', 0):.3f}, promethium {r.get(f'taken {PROMETHIUM}/1000 km', 0):.2f}; made "
-            f"{r.get('made thruster-fuel/s', 0):.1f} fuel/s" if t.passed else f"FAIL {t.error}"), file=sys.stderr, flush=True)
-        rows.append({"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
-                     "ended": t.stalled, "error": t.error})
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": TRIP_PLATFORM, "research": {**HIGH_RESEARCH, "construction-robotics": 1},
-            "supplies": TRIP_STOCK, "trials": rows}
+    """What does the whole platform use, and collect, along the route? TRIP_PLATFORM with TRIP_STOCK,
+    8 flights of up to 600 s from each start of ROUTE_RUNS: per 1,000 km what it used and rebuilt and
+    the promethium chunks it brought in."""
+    trials = [({"start": s, "mode": mode}, {**TRIP_PLATFORM, **extra, "start": s, "seconds": 600, "supplies": TRIP_STOCK,
+                                             "research": REBUILD,
+                                             **({"take": [PROMETHIUM]} if extra.get("promethium", True) else {})})
+              for s, mode, extra in ROUTE_RUNS]
+    return {"design": TRIP_PLATFORM, "research": REBUILD, "supplies": TRIP_STOCK,
+            "trials": flights(server, 8, trials, [per_km, made])}
 
 
 # What the platform fills the hub with per 1,000 km comes from how it fights (tools.trip):
@@ -552,38 +467,14 @@ MIX_STOCK = {**TRIP_STOCK, "rocket-turret": 10, "space-platform-foundation": TRI
 
 
 def platform_mix(server) -> dict:
-    """Which turret mix and shape fill the fewest hub slots per 1,000 km? TRIP_PLATFORM with
-    each of MIX_MODES flies 8 times from each of MIX_STARTS for up to 600 s with MIX_STOCK and
-    MIX_RESEARCH (with construction-robotics): what it lives and flies, its cruise and power,
-    and per 1,000 km what it used, rebuilt and brought in, scored in hub slots (tools.trip).
-    Rows are named by mode, so `python -m tools.trip RESULT --mode M` plans a trip from one."""
-    from tools import trip
-    from tools.optimise import FlightEvaluator
-
-    from generators.platform import PROMETHIUM
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for mode, extra in MIX_MODES.items():
-        for start in MIX_STARTS:
-            t = evaluate({**TRIP_PLATFORM, **extra, "start": start, "seconds": 600, "supplies": MIX_STOCK,
-                          "research": {**MIX_RESEARCH, "construction-robotics": 1}, "take": [PROMETHIUM]})
-            r = t.rates
-            row = {"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
-                   "ended": t.stalled, "error": t.error}
-            if t.passed:
-                used = trip.slots(trip.table({"trials": [row]}, mode)[start])
-                top = ", ".join(f"{k} {v:.2f}" for k, v in sorted(used.items(), key=lambda kv: -kv[1])[:5])
-                print(f"{mode}, from {start:.0%}: {r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, "
-                      f"{r['km_mean']:,.0f} km mean, cruise {r.get('cruise km/s', 0):.1f} km/s, "
-                      f"{r.get('generated MW', 0):.1f} MW; hub slots per 1,000 km {sum(used.values()):.2f} ({top}); "
-                      f"promethium {r.get(f'taken {PROMETHIUM}/1000 km', 0):.2f}", file=sys.stderr, flush=True)
-            else:
-                print(f"{mode}, from {start:.0%}: FAIL {t.error}", file=sys.stderr, flush=True)
-            rows.append(row)
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": TRIP_PLATFORM, "modes": MIX_MODES, "research": {**MIX_RESEARCH, "construction-robotics": 1},
-            "supplies": MIX_STOCK, "trials": rows}
+    """Which turret mix and shape fill the fewest hub slots per 1,000 km? TRIP_PLATFORM in each of
+    MIX_MODES with MIX_STOCK and TRIP_RESEARCH, 8 flights of up to 600 s from each of MIX_STARTS. Rows
+    are named by mode, so `python -m tools.trip RESULT --mode M` plans a trip from one."""
+    trials = [({"start": s, "mode": mode}, {**TRIP_PLATFORM, **extra, "start": s, "seconds": 600, "supplies": MIX_STOCK,
+                                             "research": TRIP_RESEARCH, "take": [PROMETHIUM]})
+              for mode, extra in MIX_MODES.items() for s in MIX_STARTS]
+    return {"design": TRIP_PLATFORM, "modes": MIX_MODES, "research": TRIP_RESEARCH, "supplies": MIX_STOCK,
+            "trials": flights(server, 8, trials, [hub])}
 
 
 # platform-mix's 16-railgun platform with more cargo bays: up to 24 fit inside its width
@@ -604,13 +495,6 @@ BAY_MODULE_SPARES = {"transport-belt": 200, "inserter": 100, "fast-inserter": 50
 def bay_stock(bays: int, module_spares: bool = True) -> dict:
     """MIX_STOCK for 8 bays, each bay past 8 full of railgun ammo (20 slots of 10), and the fuel
     module's spares in place of foundation, so every count leaves the same slots free."""
-    import math
-
-    from draftsman.data import items
-
-    def slots(stock):
-        return sum(math.ceil(n / items.raw[k]["stack_size"]) for k, n in stock.items())
-
     extra = 200 * (bays - 8)  # the hub refuses an insert of none
     stock = {**MIX_STOCK, **({"railgun-ammo": MIX_STOCK.get("railgun-ammo", 0) + extra} if extra > 0 else {})}
     if module_spares:
@@ -620,42 +504,23 @@ def bay_stock(bays: int, module_spares: bool = True) -> dict:
     return stock
 
 
+def bays_lost(row: dict) -> str:
+    return "bays lost per 1,000 km " + (", ".join(
+        f"|x| {k.split('|x| ')[1].split('/')[0]}: {v:.2f}" for k, v in sorted(row["rates"].items())
+        if k.startswith("cargo bays lost at") and k.endswith("/1000 km")) or "none")
+
+
 def platform_bays(server) -> dict:
-    """How many cargo bays should the 16-railgun platform carry? NARROW with each of BAY_COUNTS
-    flies 8 times from each of BAY_STARTS for up to 600 s with bay_stock and MIX_RESEARCH (with
-    construction-robotics): what it lives and flies, and per 1,000 km what it used, rebuilt and
-    brought in, the bays it lost by distance from the hub, and its hub slots (tools.trip). Rows
-    are named "N bays", so `python -m tools.trip RESULT --mode "N bays" --bays N` plans its trip."""
-    from tools import trip
-    from tools.optimise import FlightEvaluator
-
-    from generators.platform import PROMETHIUM
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
-    rows = []
-    for bays, spares in ((b, s) for b in BAY_COUNTS for s in (True, False)):
-        mode = f"{bays} bays" + ("" if spares else ", no module spares")
-        for start in BAY_STARTS:
-            t = evaluate({**NARROW, "cargo_bays": bays, "start": start, "seconds": 600, "supplies": bay_stock(bays, spares),
-                          "research": {**MIX_RESEARCH, "construction-robotics": 1}, "take": [PROMETHIUM]})
-            r = t.rates
-            row = {"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
-                   "ended": t.stalled, "error": t.error}
-            if t.passed:
-                used = trip.slots(trip.table({"trials": [row]}, mode)[start])
-                top = ", ".join(f"{k} {v:.2f}" for k, v in sorted(used.items(), key=lambda kv: -kv[1])[:5])
-                lost = ", ".join(f"|x| {k.split('|x| ')[1].split('/')[0]}: {v:.2f}" for k, v in sorted(r.items())
-                                 if k.startswith("cargo bays lost at") and k.endswith("/1000 km"))
-                print(f"{mode}, from {start:.0%}: {r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, "
-                      f"{r['km_mean']:,.0f} km mean, cruise {r.get('cruise km/s', 0):.1f} km/s; hub slots per "
-                      f"1,000 km {sum(used.values()):.2f} ({top}); bays lost per 1,000 km {lost or 'none'}; "
-                      f"promethium {r.get(f'taken {PROMETHIUM}/1000 km', 0):.2f}", file=sys.stderr, flush=True)
-            else:
-                print(f"{mode}, from {start:.0%}: FAIL {t.error}", file=sys.stderr, flush=True)
-            rows.append(row)
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": NARROW, "bays": BAY_COUNTS, "research": {**MIX_RESEARCH, "construction-robotics": 1},
-            "supplies": {b: bay_stock(b) for b in BAY_COUNTS}, "module spares": BAY_MODULE_SPARES, "trials": rows}
+    """How many cargo bays should the 16-railgun platform carry? NARROW with each of BAY_COUNTS (with
+    and without the module's spares), bay_stock and TRIP_RESEARCH, 8 flights of up to 600 s from each of
+    BAY_STARTS. Rows are named "N bays", so `python -m tools.trip RESULT --mode "N bays" --bays N` plans."""
+    trials = [({"start": s, "mode": f"{bays} bays" + ("" if spares else ", no module spares")},
+               {**NARROW, "cargo_bays": bays, "start": s, "seconds": 600, "supplies": bay_stock(bays, spares),
+                "research": TRIP_RESEARCH, "take": [PROMETHIUM]})
+              for bays in BAY_COUNTS for spares in (True, False) for s in BAY_STARTS]
+    return {"design": NARROW, "bays": BAY_COUNTS, "research": TRIP_RESEARCH,
+            "supplies": {b: bay_stock(b) for b in BAY_COUNTS}, "module spares": BAY_MODULE_SPARES,
+            "trials": flights(server, 8, trials, [hub, bays_lost])}
 
 
 # The promethium platform's hub feeds its own turrets (ammo_feed), with no ammo by script,
@@ -667,13 +532,6 @@ FEED_MODES = {"script ammo": {}, "hub feeds": {"ammo_feed": True}}
 
 
 def feed_stock() -> dict:
-    import math
-
-    from draftsman.data import items
-
-    def slots(stock):
-        return sum(math.ceil(n / items.raw[k]["stack_size"]) for k, n in stock.items())
-
     base = bay_stock(24)
     stock = {**base, "uranium-rounds-magazine": 4000, "underground-belt": 10}
     stock["space-platform-foundation"] -= 100 * (slots(stock) - slots(base))
@@ -689,45 +547,25 @@ def fast_feed_stock() -> dict:
     return stock
 
 
+def fed(row: dict) -> str:
+    """Ammo used a second, and turret-seconds with none."""
+    r = row["rates"]
+    return (f"ammo used a second {({k[:-2]: round(v, 2) for k, v in r.items() if k in ('railgun-ammo/s', 'uranium-rounds-magazine/s')})}"
+            f"; turrets dry {r.get('dry turret s', 0):.0f} turret-s a flight")
+
+
 def platform_feed(server, modes=FEED_MODES, starts=FEED_STARTS, stock=None) -> dict:
-    """Does the hub keep the turrets fed? BAYS_PLATFORM in each of modes flies 8 times
-    from each of starts for up to 600 s with stock (feed_stock) and MIX_RESEARCH (with
-    construction-robotics, and a mode's own "research"): what it lives and flies, the
-    turret-seconds with no ammo, and per 1,000 km what it used (from the hub, or by script),
-    rebuilt and brought in, and its hub slots (tools.trip). Rows are named by mode, so
-    `python -m tools.trip RESULT --mode M --bays 24` plans its trip."""
-    from tools import trip
-    from tools.optimise import FlightEvaluator
-
-    from generators.platform import PROMETHIUM
-
-    evaluate = FlightEvaluator(server, "platform", runs=8)
+    """Does the hub keep the turrets fed? BAYS_PLATFORM in each of modes (with a mode's own "research"
+    besides TRIP_RESEARCH) with stock (feed_stock), 8 flights of up to 600 s from each of starts. Rows are
+    named by mode, so `python -m tools.trip RESULT --mode M --bays 24` plans its trip."""
     stock = stock or feed_stock()
-    rows, researched = [], {}
-    for mode, extra in modes.items():
-        extra = dict(extra)
-        researched[mode] = {**MIX_RESEARCH, "construction-robotics": 1, **extra.pop("research", {})}
-        for start in starts:
-            t = evaluate({**BAYS_PLATFORM, **extra, "start": start, "seconds": 600, "supplies": stock,
-                          "research": researched[mode], "take": [PROMETHIUM]})
-            r = t.rates
-            row = {"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
-                   "ended": t.stalled, "error": t.error}
-            if t.passed:
-                used = trip.slots(trip.table({"trials": [row]}, mode)[start])
-                top = ", ".join(f"{k} {v:.2f}" for k, v in sorted(used.items(), key=lambda kv: -kv[1])[:5])
-                feed = {k[:-2]: round(v, 2) for k, v in r.items()
-                        if k in ("railgun-ammo/s", "uranium-rounds-magazine/s")}
-                print(f"{mode}, from {start:.0%}: {r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, "
-                      f"{r['km_mean']:,.0f} km mean, cruise {r.get('cruise km/s', 0):.1f} km/s; ammo used a second "
-                      f"{feed}; turrets dry {r.get('dry turret s', 0):.0f} turret-s a flight; hub slots per 1,000 km "
-                      f"{sum(used.values()):.2f} ({top}); promethium {r.get(f'taken {PROMETHIUM}/1000 km', 0):.2f}",
-                      file=sys.stderr, flush=True)
-            else:
-                print(f"{mode}, from {start:.0%}: FAIL {t.error}", file=sys.stderr, flush=True)
-            rows.append(row)
-    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
-    return {"design": BAYS_PLATFORM, "modes": modes, "research": researched, "supplies": stock, "trials": rows}
+    researched = {mode: {**TRIP_RESEARCH, **extra.get("research", {})} for mode, extra in modes.items()}
+    trials = [({"start": s, "mode": mode}, {**BAYS_PLATFORM, **{k: v for k, v in extra.items() if k != "research"},
+                                             "start": s, "seconds": 600, "supplies": stock,
+                                             "research": researched[mode], "take": [PROMETHIUM]})
+              for mode, extra in modes.items() for s in starts]
+    return {"design": BAYS_PLATFORM, "modes": modes, "research": researched, "supplies": stock,
+            "trials": flights(server, 8, trials, [fed, hub])}
 
 
 # platform-feed's hub inserters bound its feed 0.1 out: inserter capacity research
