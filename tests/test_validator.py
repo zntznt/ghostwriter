@@ -463,6 +463,9 @@ class Validator(unittest.TestCase):
         self.assertEqual([s["at"] for s in flown.stops], ["nauvis", "vulcanus", "vulcanus", "nauvis"])
         self.assertEqual(flown.stops[0]["cargo"].get("pipe"), 7)
         legs = flown.legs()
+        # A stop records the fuel made on board (none here: fuel by script) and what the thruster held.
+        self.assertTrue(all(leg["made"] == {} and set(leg["held"]) == {"thruster-fuel", "thruster-oxidizer"}
+                            for leg in legs), legs)
         self.assertEqual([(leg["from"], leg["to"]) for leg in legs],
                          [("nauvis", "vulcanus"), ("vulcanus", "vulcanus"), ("vulcanus", "nauvis")])
         for leg, km in zip(legs, (15000, 2 * 0.02 * 15000, 15000)):

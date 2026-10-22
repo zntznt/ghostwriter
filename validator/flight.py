@@ -37,6 +37,7 @@ SPEED = 100
 POLL = 10  # game seconds between reads
 PRIME = entities.raw["thruster"]["fuel_fluid_box"]["volume"]  # a primed thruster's worth of each fluid
 FUSION_CELL_J = 40e9  # a fusion power cell's fuel_value (dump)
+THRUSTER_FLUIDS = ("thruster-fuel", "thruster-oxidizer")
 
 
 @dataclass
@@ -141,17 +142,23 @@ class Flown:
     def legs(self) -> list[dict]:
         """What happened between each two stops (Flight.home): km, seconds, what the hub lost (a gain
         is negative) and what died. The last runs on to the end of the flight if it ended between
-        stops (to: None)."""
+        stops (to: None). With stops that record them, also what the fuel module made on the leg
+        and the fuel and oxidizer the thruster and its tanks held at its end."""
         ends = list(self.stops)
         if ends and not self.back:
             ends.append({"at": None, "seconds": self.seconds, "km": self.trip_km, "cargo": self.cargo,
-                         "deaths": self.deaths})
+                         "deaths": self.deaths, "made": self.made,
+                         "held": {k: self.held.get(k, 0.0) for k in THRUSTER_FLUIDS}})
         out = []
         for a, b in zip(ends, ends[1:]):
             used = {k: a["cargo"].get(k, 0) - b["cargo"].get(k, 0) for k in {**a["cargo"], **b["cargo"]}}
             died = {k: n - a["deaths"].get(k, 0) for k, n in b["deaths"].items()}
-            out.append({"from": a["at"], "to": b["at"], "km": b["km"] - a["km"], "seconds": b["seconds"] - a["seconds"],
-                        "used": {k: n for k, n in used.items() if n}, "died": {k: n for k, n in died.items() if n}})
+            leg = {"from": a["at"], "to": b["at"], "km": b["km"] - a["km"], "seconds": b["seconds"] - a["seconds"],
+                   "used": {k: n for k, n in used.items() if n}, "died": {k: n for k, n in died.items() if n}}
+            if "made" in a and "made" in b:
+                made = {k: n - a["made"].get(k, 0) for k, n in b["made"].items()}
+                leg.update(made={k: n for k, n in made.items() if n}, held=dict(b["held"]))
+            out.append(leg)
         return out
 
     def budget(self) -> dict[str, float]:
@@ -270,7 +277,8 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
             flown.low_fuel = got.get("low_fuel") or 0
             flown.trip_km = got.get("trip_km") or 0.0
             flown.stops = [{**s, "cargo": {c["name"]: c["count"] for c in s.get("cargo") or [] if isinstance(c, dict)},
-                            "deaths": s["deaths"] if isinstance(s.get("deaths"), dict) else {}}
+                            "deaths": s["deaths"] if isinstance(s.get("deaths"), dict) else {},
+                            **{k: s[k] if isinstance(s[k], dict) else {} for k in ("made", "held") if k in s}}
                            for s in got.get("stops") or []]
             if isinstance(got.get("at_turn"), dict):
                 flown.at_turn = {"km": got["at_turn"]["km"], "cargo": {

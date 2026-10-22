@@ -276,6 +276,26 @@ class Cache(unittest.TestCase):
              "died": {"railgun-turret <- big-oxide-asteroid": 1}}])
         self.assertEqual(Flown("plain").legs(), [])
 
+    def test_a_leg_says_what_the_module_made_and_what_its_lines_held(self):
+        # Stops that record the fuel made on board so far and the fuel and oxidizer in the thruster
+        # and its tanks: a leg then has what was made on it and what was held at its end (the
+        # reserve as it got there), the last leg to the end of the flight.
+        from validator.flight import Flown
+
+        fluids = ("thruster-fuel", "thruster-oxidizer")
+        stops = [{"at": "nauvis", "seconds": 0, "km": 0, "cargo": {}, "deaths": {}, "made": {},
+                  "held": dict.fromkeys(fluids, 26000)},
+                 {"at": "aquilo", "seconds": 900, "km": 45000, "cargo": {}, "deaths": {},
+                  "made": {"thruster-fuel": 30000, "thruster-oxidizer": 9000}, "held": dict.fromkeys(fluids, 800)}]
+        flown = Flown("legs", seconds=1500, trip_km=60000, stops=stops, ended="stranded",
+                      made={"thruster-fuel": 45000, "thruster-oxidizer": 9000},
+                      held={"thruster-fuel": 600, "thruster-oxidizer": 0, "railgun-ammo": 40})
+        out, on = flown.legs()
+        self.assertEqual((out["made"], out["held"]), ({"thruster-fuel": 30000, "thruster-oxidizer": 9000},
+                                                      dict.fromkeys(fluids, 800)))
+        self.assertEqual((on["made"], on["held"]), ({"thruster-fuel": 15000}, {"thruster-fuel": 600,
+                                                                                "thruster-oxidizer": 0}))
+
     def test_leg_rates_come_from_every_flight_that_got_onto_the_leg(self):
         # platform-legs: per leg, in the order flown (out, the route, home), what the hub gave per
         # 1,000 km over all the km flown on it (a leg it died on counts its km too), the chunks it
