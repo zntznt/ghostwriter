@@ -11,6 +11,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m tools.bp gen gated_requester item=iron-plate count=100 --validate
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 --validate      # rows on a main bus, all connected
 .venv/bin/python -m tools.bp gen production item=electronic-circuit rate=5 --validate   # the same rows as a book
+.venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 | .venv/bin/python -m tools.bp density - --rate 5   # how it spends its tiles
 .venv/bin/python -m tools.bp plan platform railguns=16 guns=16 thrusters=1 cargo_bays=24 fuel=1 reserve=1 power=2 promethium=1 ammo_feed=1   # a platform's promethium trip: where to turn, what to load
 .venv/bin/python -m tools.bp plan platform ... --verify 8 --shock 8   # fly the plan whole 8 times, 8 railguns killed as each turns
 .venv/bin/python -m tools.bp plan platform ... --save   # file that plan beside the platform's blueprint in library/ (the site shows it)
@@ -28,6 +29,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `site/` | library browser: `template.html`, built by `python -m tools.site` into `site/dist/` (gitignored) |
 | `data/` | `data-raw-dump.json` from `python -m tools.dump_data` (gitignored) |
 | `NOTES.md` | format facts and how each was verified |
+| `docs/` | design notes: `layout-optimizer.md` (where the generators spend their tiles, and how to optimise it) |
 
 ## Library site (GitHub Pages)
 

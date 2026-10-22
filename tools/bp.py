@@ -3,6 +3,8 @@
   decode SRC            string -> pretty JSON
   encode SRC            JSON (file or -) -> string
   check SRC             static checks (string or JSON); exit 1 on errors
+  density SRC           how a blueprint spends its tiles: box, covered and empty, by role
+      [--rate R] [--json]   (--rate: its output in items/s, for tiles per item/s)
   add SRC [--to DIR]    decode into library/ (books become folders)
   book DIR [--json]     library folder -> blueprint book string
   gen NAME [k=v ...]    run generators/NAME.py build(), check, print string
@@ -71,6 +73,15 @@ def cmd_check(args):
     if _report(check(decode(read_input(args.src)))):
         sys.exit(1)
     print("ok", file=sys.stderr)
+
+
+def cmd_density(args):
+    import json
+
+    from tools.density import density, report
+
+    measures = density(decode(read_input(args.src)), rate=args.rate)
+    print(json.dumps(measures, indent=1) if args.json else report(measures))
 
 
 def cmd_add(args):
@@ -309,6 +320,12 @@ def main(argv=None):
         p = sub.add_parser(name)
         p.add_argument("src")
         p.set_defaults(fn=fn)
+
+    p = sub.add_parser("density")
+    p.add_argument("src")
+    p.add_argument("--rate", type=float, help="the blueprint's output in items/s, for tiles per item/s")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_density)
 
     p = sub.add_parser("add")
     p.add_argument("src")
