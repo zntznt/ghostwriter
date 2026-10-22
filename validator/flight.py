@@ -269,13 +269,15 @@ def run_flight(server: Server, data: dict, flight: Flight, report: Report) -> Fl
         flown.built, flown.entities = setup["built"], setup["entities"]
         if flown.built < flown.entities:
             report.warnings.append(f"flight '{flight.name}': built {flown.built} of {flown.entities} entities")
-        elapsed = 0.0
-        while elapsed < flight.seconds:
-            step = min(POLL, flight.seconds - elapsed)
-            _step(server, int(step * 60), timeout=step + 60)
+        # In whole ticks: a last step of less than a tick would advance nothing, forever.
+        elapsed, ticks, last = 0.0, 0, round(flight.seconds * 60)
+        while ticks < last:
+            step = min(POLL * 60, last - ticks)
+            _step(server, step, timeout=step / 60 + 60)
             got = server.call("flight_read")
             _ok(got)
-            elapsed = got["ticks"] / 60
+            ticks = got["ticks"]
+            elapsed = ticks / 60
             flown.km, flown.speed_max = got["km"], got["speed_max"]
             flown.deaths = got["deaths"] if isinstance(got["deaths"], dict) else {}
             flown.cargo = {c["name"]: c["count"] for c in got.get("cargo") or [] if isinstance(c, dict)}

@@ -153,6 +153,13 @@ def best(rates: dict, slots: int, turns, stays=(0.0,), **kw) -> tuple[dict | Non
 
 
 SHOW = (0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4)  # the turns printed
+STAYS = (0.0, 10_000.0, 50_000.0)  # km flown at the turn
+
+
+def turns(furthest: float) -> list[float]:
+    """The turns tried: fine near the edge, where short trips are all that fit; coarser out to the
+    furthest start measured."""
+    return [t / 1000 for t in range(1, 51)] + [t / 100 for t in range(6, round(furthest * 100) + 1)]
 
 
 def main(argv=None):
@@ -173,12 +180,9 @@ def main(argv=None):
     if args.legs:
         print(f"with {sum(km for km, _ in before + after):,.0f} km of legs to the route and home")
     aboard = {a for a in args.aboard.split(",") if a}
-    # Fine near the edge, where short trips are all that fit; coarser out to the furthest start measured.
-    turns = [t / 1000 for t in range(1, 51)] + [t / 100 for t in range(6, round(max(rates) * 100) + 1)]
     for bays in args.bays:
         slots = HUB_SLOTS + BAY_SLOTS * bays
-        top, rows = best(rates, slots, turns, stays=(0.0, 10_000.0, 50_000.0), aboard=aboard, before=before,
-                         after=after)
+        top, rows = best(rates, slots, turns(max(rates)), stays=STAYS, aboard=aboard, before=before, after=after)
         print(f"{bays} cargo bays ({slots} slots){', made aboard: ' + ', '.join(sorted(aboard)) if aboard else ''}:")
         for r in rows:
             if r["stay"] == 0.0 and r["turn"] in SHOW:
