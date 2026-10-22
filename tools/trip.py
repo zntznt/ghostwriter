@@ -2,6 +2,7 @@
 
     python -m tools.trip [RESULT] [--bays N ...] [--mode M]   # RESULT: .optimise-cache/platform-route.result.json
         [--whole-trip WHOLE]                                  # a platform-whole-trip result, folded in as a row
+        [--legs LEGS]                                         # a platform-legs result: Nauvis to the edge and home
 
 The platform flies from the solar system edge out to `turn` (a share of the route)
 and back, using foundation, ammo, fusion cells and spares at the rates the
@@ -74,6 +75,14 @@ def measured(result: dict) -> tuple[float, dict[str, float]]:
     return result["turn"] / 2, row
 
 
+def legs(result: dict) -> tuple[list, list]:
+    """A platform-legs result's legs out before the route and home after it, as (km, rates row) in
+    the order flown (trip's `before` and `after`); the route itself is the model's own."""
+    rates = result["leg rates"]
+    return ([(r["km"], r["row"]) for r in rates if r["part"] == "out"],
+            [(r["km"], r["row"]) for r in rates if r["part"] == "home"])
+
+
 def slots(row: dict[str, float]) -> dict[str, float]:
     """Hub slots a table row's use fills per 1,000 km, item by item (each over its stack size)."""
     return {k: v / items.raw[k]["stack_size"] for k, v in row.items() if k not in (CHUNK, SPEED, DEATHS)}
@@ -92,15 +101,21 @@ def at(rates: dict[float, dict[str, float]], share: float) -> dict[str, float]:
 
 
 def trip(rates: dict, turn: float, slots: int, stock: dict | None = None, stay: float = 0.0, step: float = 1000.0,
-         length: float = LENGTH, aboard=()) -> dict:
-    """Out to `turn`, `stay` km flown there, and back, in steps of `step` km. Returns what it
-    flew, used and loaded (nothing of what's made `aboard`); whether the load fits the hub's
-    `slots`; the chunks it brings back and lost for want of room; the chance it comes back at
-    the measured deaths per 1,000 km; and, with a given stock, the first item to run out
-    (item, km into the trip, share of the route) or None."""
+         length: float = LENGTH, aboard=(), before=(), after=()) -> dict:
+    """Out to `turn`, `stay` km flown there, and back, in steps of `step` km; first the legs
+    `before` it and last those `after` it ((km, rates row) each, in order: getting to the edge
+    and home again). Returns what it flew, used and loaded (nothing of what's made `aboard`);
+    whether the load fits the hub's `slots`; the chunks it brings back and lost for want of room;
+    the chance it comes back at the measured deaths per 1,000 km; and, with a given stock, the
+    first item to run out (item, km into the trip, share of the route: 0 on a leg) or None."""
     out = [(k + 0.5) * step / length for k in range(round(turn * length / step))]
-    path = out + [turn] * round(stay / step) + out[::-1]
-    use = [at(rates, x) for x in path]
+    route = out + [turn] * round(stay / step) + out[::-1]
+
+    def legs(segments):
+        return [(0.0, row) for km, row in segments for _ in range(round(km / step))]
+
+    steps = legs(before) + [(x, at(rates, x)) for x in route] + legs(after)
+    path, use = [x for x, _ in steps], [r for _, r in steps]
     need = {}
     for r in use:
         for k, v in r.items():
@@ -147,18 +162,23 @@ def main(argv=None):
     ap.add_argument("--aboard", default="", help="items made on board, not loaded: a,b")
     ap.add_argument("--mode", default="out", help="the study's rows to plan from (platform-mix: a design)")
     ap.add_argument("--whole-trip", help="a platform-whole-trip result, folded in as one more measured row")
+    ap.add_argument("--legs", help="a platform-legs result: its legs to the route and home, flown before and after it")
     args = ap.parse_args(argv)
     rates = table(json.loads(Path(args.result).read_text()), args.mode)
     if args.whole_trip:
         share, row = measured(json.loads(Path(args.whole_trip).read_text()))
         rates[share] = row
         print(f"with a whole trip measured at {share:g} of the route")
+    before, after = legs(json.loads(Path(args.legs).read_text())) if args.legs else ([], [])
+    if args.legs:
+        print(f"with {sum(km for km, _ in before + after):,.0f} km of legs to the route and home")
     aboard = {a for a in args.aboard.split(",") if a}
     # Fine near the edge, where short trips are all that fit; coarser out to the furthest start measured.
     turns = [t / 1000 for t in range(1, 51)] + [t / 100 for t in range(6, round(max(rates) * 100) + 1)]
     for bays in args.bays:
         slots = HUB_SLOTS + BAY_SLOTS * bays
-        top, rows = best(rates, slots, turns, stays=(0.0, 10_000.0, 50_000.0), aboard=aboard)
+        top, rows = best(rates, slots, turns, stays=(0.0, 10_000.0, 50_000.0), aboard=aboard, before=before,
+                         after=after)
         print(f"{bays} cargo bays ({slots} slots){', made aboard: ' + ', '.join(sorted(aboard)) if aboard else ''}:")
         for r in rows:
             if r["stay"] == 0.0 and r["turn"] in SHOW:
