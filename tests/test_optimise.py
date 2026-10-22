@@ -251,6 +251,36 @@ class Cache(unittest.TestCase):
         self.assertEqual(means["first out"], {"space-platform-foundation": 1})
         self.assertEqual((means["km"], means["dry turret s"]), (116_000, 2.5))
 
+    def test_a_flight_whose_seconds_end_between_ticks_still_ends(self):
+        # A flight of 444.444 s (a plan's three times its hours) once stepped 0 ticks forever: the
+        # last 0.0133 s is less than a tick. It steps in whole ticks, so it ends on its last one.
+        from validator.flight import Flight, run_flight
+        from validator.validate import Report
+
+        class Game:  # a paused game that advances only by flight_step, as the scenario's does
+            tick, steps = 0, []
+
+            def call(self, function, *args):
+                if function == "flight_setup":
+                    return {"built": 1, "entities": 1}
+                if function == "flight_step":
+                    if int(args[0]) <= 0:
+                        raise AssertionError("a step of no ticks never ends")
+                    self.steps.append(int(args[0]))
+                    self.tick += int(args[0])
+                    return {"ok": True, "tick": self.tick - int(args[0])}
+                if function == "tick":
+                    return self.tick
+                if function == "flight_read":
+                    return {"ticks": self.tick, "km": 0, "speed_max": 0, "deaths": {}, "alive": True, "speed": 0,
+                            "hub_health": 1}
+                return {"ok": True}
+
+        game = Game()
+        flown = run_flight(game, {"blueprint": {"entities": []}}, Flight("between ticks", seconds=444.444), Report("2"))
+        self.assertTrue(flown.survived)
+        self.assertEqual(game.tick, round(444.444 * 60))
+
     def test_a_flight_from_home_splits_into_legs_at_its_stops(self):
         # Flight.home: each place it reaches is a stop with the km flown so far and what the hub
         # held; a leg is what happened between two stops, and the last runs on to the end if it
