@@ -713,6 +713,68 @@ def platform_bays(server) -> dict:
             "supplies": {b: bay_stock(b) for b in BAY_COUNTS}, "module spares": BAY_MODULE_SPARES, "trials": rows}
 
 
+# The promethium platform's hub feeds its own turrets (ammo_feed), with no ammo by script,
+# against the same platform on script ammo, from where the trip goes (NOTES.md). Both fly
+# the same stock: bay_stock(24) with magazines for 600 s 0.1 out (about 5.7 a second) and
+# spares for the feed's underground belts, in place of as much foundation.
+FEED_STARTS = [0.0, 0.1]
+FEED_MODES = {"script ammo": {}, "hub feeds": {"ammo_feed": True}}
+
+
+def feed_stock() -> dict:
+    import math
+
+    from draftsman.data import items
+
+    def slots(stock):
+        return sum(math.ceil(n / items.raw[k]["stack_size"]) for k, n in stock.items())
+
+    base = bay_stock(24)
+    stock = {**base, "uranium-rounds-magazine": 4000, "underground-belt": 10}
+    stock["space-platform-foundation"] -= 100 * (slots(stock) - slots(base))
+    return stock
+
+
+def platform_feed(server) -> dict:
+    """Does the hub keep the turrets fed? PROMETHIUM_PLATFORM in each of FEED_MODES flies 8
+    times from each of FEED_STARTS for up to 600 s with feed_stock and MIX_RESEARCH (with
+    construction-robotics): what it lives and flies, the turret-seconds with no ammo, and per
+    1,000 km what it used (from the hub, or by script), rebuilt and brought in, and its hub
+    slots (tools.trip). Rows are named by mode, so `python -m tools.trip RESULT --mode M
+    --bays 24` plans its trip."""
+    from tools import trip
+    from tools.optimise import FlightEvaluator
+
+    from generators.platform import PROMETHIUM
+
+    evaluate = FlightEvaluator(server, "platform", runs=8)
+    stock = feed_stock()
+    rows = []
+    for mode, extra in FEED_MODES.items():
+        for start in FEED_STARTS:
+            t = evaluate({**PROMETHIUM_PLATFORM, **extra, "start": start, "seconds": 600, "supplies": stock,
+                          "research": {**MIX_RESEARCH, "construction-robotics": 1}, "take": [PROMETHIUM]})
+            r = t.rates
+            row = {"start": start, "mode": mode, "passed": t.passed, "rates": r, "counts": t.counts,
+                   "ended": t.stalled, "error": t.error}
+            if t.passed:
+                used = trip.slots(trip.table({"trials": [row]}, mode)[start])
+                top = ", ".join(f"{k} {v:.2f}" for k, v in sorted(used.items(), key=lambda kv: -kv[1])[:5])
+                feed = {k[:-2]: round(v, 2) for k, v in r.items()
+                        if k in ("railgun-ammo/s", "uranium-rounds-magazine/s")}
+                print(f"{mode}, from {start:.0%}: {r['seconds_mean']:.0f}s mean, survived {r['survived']:.0%}, "
+                      f"{r['km_mean']:,.0f} km mean, cruise {r.get('cruise km/s', 0):.1f} km/s; ammo used a second "
+                      f"{feed}; turrets dry {r.get('dry turret s', 0):.0f} turret-s a flight; hub slots per 1,000 km "
+                      f"{sum(used.values()):.2f} ({top}); promethium {r.get(f'taken {PROMETHIUM}/1000 km', 0):.2f}",
+                      file=sys.stderr, flush=True)
+            else:
+                print(f"{mode}, from {start:.0%}: FAIL {t.error}", file=sys.stderr, flush=True)
+            rows.append(row)
+    print(f"trials run: {evaluate.ran} (the rest from the cache)", file=sys.stderr)
+    return {"design": PROMETHIUM_PLATFORM, "modes": FEED_MODES, "research": {**MIX_RESEARCH, "construction-robotics": 1},
+            "supplies": stock, "trials": rows}
+
+
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
            "platform-promethium": platform_promethium, "platform-belt": platform_belt, "platform-front": platform_front,
            "platform-wide": lambda server: platform_belt(server, WIDE_SPACE, WIDE_START, seconds=600),
@@ -720,4 +782,4 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
            "platform-budget": platform_budget, "platform-fuel": platform_fuel, "platform-reserve": platform_reserve,
            "platform-power": platform_power, "platform-plant": platform_plant, "platform-ammo": platform_ammo,
            "platform-sides": platform_sides, "platform-route": platform_route,
-           "platform-mix": platform_mix, "platform-bays": platform_bays}
+           "platform-mix": platform_mix, "platform-bays": platform_bays, "platform-feed": platform_feed}
