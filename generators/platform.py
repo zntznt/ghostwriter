@@ -81,6 +81,12 @@ UNDER_BELT = "underground-belt"  # ammo_feed: the feed belt under the chunk belt
 # turrets 0.1 out; inserter capacity research (levels 2 and 7) makes it 3 a swing, 5.7 a
 # second (NOTES.md). A base-game technology: its flights fly with it.
 FEED_RESEARCH = {"inserter-capacity-bonus": 7}
+# The designs library/platforms/ holds, as built (tests hold the library to them; NOTES.md has how
+# each was chosen): the 32-railgun platform of platform-foundation, and the promethium platform of
+# platform-bays with the hub feeding its turrets (platform-feed).
+FILED_PLATFORM = {"railguns": 32, "guns": 32, "thrusters": 1, "cargo_bays": 8}
+PROMETHIUM_PLATFORM = {"railguns": 16, "guns": 16, "thrusters": 1, "cargo_bays": 24, "fuel": True, "reserve": True,
+                       "power": 2, "promethium": True, "ammo_feed": True}
 
 
 def _inserter_for(demand: float) -> str:
