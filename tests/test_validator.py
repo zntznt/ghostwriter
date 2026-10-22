@@ -21,7 +21,7 @@ from tools.factorio import locate
 from tools.library import entries
 from tools.settings import game_settings, registry
 from validator.circuit import Case, Expect, Inject, run_circuit_tests
-from validator.flight import Flight, _step, run_flight
+from validator.flight import Flight, _step, run_flight, start_flight
 from validator.flow import Flow, run_flow_tests
 from validator.tests_file import library_tests
 from validator.server import Server
@@ -424,6 +424,50 @@ class Validator(unittest.TestCase):
         self.assertEqual(modifiers(), [0, 0])
         # A refused flight leaves the game running for the tests after it.
         self.assertEqual(self.server.command("/sc rcon.print(tostring(game.tick_paused))").strip(), "false")
+
+    def test_a_flight_turns_round_and_comes_back(self):
+        # turn: at that share of the route the schedule goes back to the origin, which turns a
+        # platform round within a tick and keeps its speed (NOTES.md); the flight ends when it is
+        # back. Nauvis toward Vulcanus, 15,000 km: from 0.3 out to 0.45 and back is 9,000 km.
+        data = platform.build(railguns=1, guns=2, thrusters=1).to_dict()
+        flight = Flight("round trip", origin="nauvis", destination="vulcanus", start=0.3, turn=0.45, seconds=300,
+                        fuel=True, power=True, ammo=platform.AMMO)
+        report = Report(self.server.version)
+        flown = run_flight(self.server, data, flight, report)
+        self.assertEqual(report.errors, [])
+        self.assertTrue(flown.survived, flown.ended)
+        self.assertGreater(flown.back, flown.turned)
+        self.assertGreater(flown.turned, 0)
+        self.assertEqual(flown.position, 0.0)  # at the origin
+        self.assertAlmostEqual(flown.km, 0.15 * 15000, delta=0.02 * 15000)  # furthest out, as before
+        self.assertAlmostEqual(flown.odometer, 0.6 * 15000, delta=0.03 * 15000)
+        self.assertEqual(flown.seconds, flown.back)
+        self.assertAlmostEqual(flown.at_turn["km"], 0.15 * 15000, delta=0.02 * 15000)  # the two legs apart
+        self.assertIsInstance(flown.at_turn["cargo"], dict)
+
+    def test_a_platform_readied_in_orbit_fills_its_feed_first(self):
+        # fill: before leaving, in Nauvis orbit (chunks only, no asteroids), the hub feed fills its
+        # belts and turrets while the script holds the hub's feed items at their stock, as a player
+        # would top it up; the flight then leaves with the hub holding exactly that stock.
+        data = platform.build(railguns=4, guns=6, thrusters=1, ammo_feed=True).to_dict()
+        supplies = {"railgun-ammo": 500, "uranium-rounds-magazine": 500}
+        hub = ("/sc local inv = storage.flight.platform.hub.get_inventory(defines.inventory.hub_main) "
+               "rcon.print(helpers.table_to_json{inv.get_item_count('railgun-ammo'), "
+               "inv.get_item_count('uranium-rounds-magazine')})")
+        flight = Flight("readied", origin="nauvis", destination="vulcanus", start=0.3, seconds=1, fuel=True,
+                        power=True, supplies=supplies, loaded=dict(platform.FED), feed=sorted(supplies), fill=True)
+        try:
+            setup, filled = start_flight(self.server, data, flight)
+            self.assertNotIn("error", setup)
+            left = json.loads(self.server.command(hub))
+            where = self.server.call("flight_read")
+        finally:
+            self.server.call("flight_teardown")
+        self.assertEqual(left, [500, 500])  # topped up to the stock as the feed drew it
+        self.assertGreaterEqual(filled["railgun-ammo"], 40)  # 4 railguns' 10, and the belts
+        self.assertGreaterEqual(filled["uranium-rounds-magazine"], 60)  # 6 gun turrets' 10, and the belts
+        self.assertEqual(where["ticks"], 0)  # the flight's clock starts as it leaves
+        self.assertAlmostEqual(where["position"], 0.3)
 
     def test_flight_can_start_partway(self):
         # 40% along the 4,000,000 km route, moving on toward the shattered planet.

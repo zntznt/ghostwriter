@@ -728,6 +728,17 @@ class Platform(unittest.TestCase):
         self.assertEqual(flight.supplies, {"repair-pack": 100})
         self.assertEqual(platform.flight_tests()[0].supplies, {})
 
+    def test_a_round_trip_turns_and_a_fed_platform_can_ready_in_orbit(self):
+        [flight] = platform.flight_tests(turn=0.02, fill=True, ammo_feed=True)
+        self.assertEqual((flight.turn, flight.fill), (0.02, True))
+        self.assertEqual((platform.flight_tests()[0].turn, platform.flight_tests()[0].fill), (0.0, False))
+        with self.assertRaises(ValueError):
+            platform.flight_tests(fill=True)  # nothing for the hub to fill without its feed
+        with self.assertRaises(ValueError):
+            platform.flight_tests(start=0.1, turn=0.05)  # turns before it starts
+        with self.assertRaises(ValueError):
+            platform.flight_tests(start=0.1, reverse=True, turn=0.2)  # a flight back has nowhere to turn
+
     def test_side_guns_stand_at_both_side_ends(self):
         # Asteroids eat foundation from the side ends inward, past the gun row's reach
         # (NOTES.md): side_guns stands that many gun turrets in a column at each outer

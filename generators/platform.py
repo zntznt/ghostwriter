@@ -508,7 +508,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
 
 def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=False, reserve=False, script_fuel=False,
-                 power=False, magazine=AMMO["gun-turret"], reverse=False, take=None, ammo_feed=False, **params):
+                 power=False, magazine=AMMO["gun-turret"], reverse=False, take=None, ammo_feed=False, turn=0.0,
+                 fill=False, **params):
     """research: technology series -> levels researched; start: share of the route
     to begin at; supplies: items into the hub, which rebuilds from them (with
     construction-robotics researched) and repairs with repair packs
@@ -527,13 +528,20 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     still the share from the edge). take: items the script empties from the hub
     each second and counts, so a full hub doesn't cap what is measured. With ammo_feed the
     script stocks no turret: each is loaded once from the hub at the start, as its feed
-    would in orbit, and what leaves the hub counts as used (Flight.feed)."""
+    would in orbit, and what leaves the hub counts as used (Flight.feed). turn: a round trip,
+    back to where it set out once it reaches that share of the route. fill: a fed platform
+    readied in orbit first, its feed's belts and turrets filled while the hub holds its stock."""
     from validator.flight import PRIME, Flight
 
     if ammo_feed and magazine != AMMO["gun-turret"]:
         raise ValueError(f"ammo_feed's hub inserters take {AMMO['gun-turret']}, not {magazine}")
     if reverse and not 0 < start < 1:
         raise ValueError(f"a flight back starts partway along the route, not at {start} of it")
+    if fill and not ammo_feed:
+        raise ValueError("fill readies a hub feed in orbit; without ammo_feed there is none")
+    if turn and (reverse or not start < turn < 1):
+        raise ValueError(f"a round trip turns past where it starts ({start}) and before the end, not at {turn}"
+                         + (" (and a flight back has nowhere to turn)" if reverse else ""))
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
     research = {**(research or {}), **({"space-platform": 1, "space-platform-thruster": 1} if fuel else {}),
                 **({"cryogenic-plant": 1} if power else {})}  # the cooler's recipe
@@ -546,4 +554,5 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     return [Flight(shape, seconds=seconds, **route, supplies=supplies, fuel=not on_board, power=not power,
                    ammo={} if ammo_feed else {**AMMO, "gun-turret": magazine}, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
                    charged=power, coolant=COOLANT if power else 0, take=list(take or []),
-                   loaded=dict(FED) if ammo_feed else {}, feed=sorted(set(FED.values())) if ammo_feed else [])]
+                   loaded=dict(FED) if ammo_feed else {}, feed=sorted(set(FED.values())) if ammo_feed else [],
+                   turn=turn, fill=fill)]
