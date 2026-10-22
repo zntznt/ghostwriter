@@ -12,6 +12,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 --validate      # rows on a main bus, all connected
 .venv/bin/python -m tools.bp gen production item=electronic-circuit rate=5 --validate   # the same rows as a book
 .venv/bin/python -m tools.bp plan platform railguns=16 guns=16 thrusters=1 cargo_bays=24 fuel=1 reserve=1 power=2 promethium=1 ammo_feed=1   # a platform's promethium trip: where to turn, what to load
+.venv/bin/python -m tools.bp plan platform ... --save   # file that plan beside the platform's blueprint in library/ (the site shows it)
 .venv/bin/python -m tools.site                  # library browser -> site/dist/index.html (open it from disk)
 .venv/bin/python -m unittest discover tests
 ```
@@ -21,7 +22,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `.claude/skills/blueprint/` | Claude Code skill: how to generate, check, file |
 | `tools/` | codec, checks, library/book builder, CLI (`python -m tools.bp`), data dump; `rates.py` (recipes, machines, belts, measured inserters) and `layout.py` (inserter facing, pole placement) for generators |
 | `generators/` | parametric designs, `build(**params)`: `factory` (ITEM at RATE/s: every row on a main bus, connected), `production` (the same rows as a book), `assembly_row` (item recipes in assemblers), `fluid_row` (recipes with one fluid: chemical plants, fluid assemblers), `fluid_block` (several fluids: oil processing, cracking, sulfur, acid, lubricant), `smelting_column`, `gated_requester` |
-| `library/` | decoded JSON, one file per blueprint; folders are books |
+| `library/` | decoded JSON, one file per blueprint; folders are books; a platform's `NAME.plan.json` is its trip plan |
 | `validator/` | in-game validation: headless server, RCON, Lua harness, diff (`bp validate`) |
 | `site/` | library browser: `template.html`, built by `python -m tools.site` into `site/dist/` (gitignored) |
 | `data/` | `data-raw-dump.json` from `python -m tools.dump_data` (gitignored) |

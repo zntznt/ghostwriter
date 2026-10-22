@@ -78,6 +78,16 @@ class Site(unittest.TestCase):
         self.assertEqual(sum(1 for _ in self.nodes(data)), sum(1 for _ in self.nodes(site.build(self.lib))))
         self.assertFalse(any("plan" in n for n in self.nodes(data) if n["path"] != path))
 
+    def test_the_promethium_platform_shows_its_plan(self):
+        data = site.build(Path(__file__).parent.parent / "library")
+        platforms = {n["path"]: n for n in self.nodes(data) if n["path"].startswith("platforms/")}
+        promethium = next(n for p, n in platforms.items() if p.endswith("keeps-promethium-feeds-its-turrets.json"))
+        self.assertGreater(promethium["plan"]["trip"]["chunks"], 0)
+        self.assertTrue(promethium["plan"]["stock"] and promethium["plan"]["readying"])
+        # The 32-railgun platform keeps no promethium: bp plan refuses it, so it has no plan.
+        self.assertEqual([p for p, n in platforms.items() if "plan" not in n],
+                         ["platforms/platform-32-railguns-32-gun-turrets-1-thruster-8-cargo-bays.json"])
+
     def test_page_embeds_data_safely(self):
         data = generated()
         data["blueprint"]["description"] = "</script><script>alert(1)</script>"
