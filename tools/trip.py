@@ -101,13 +101,15 @@ def at(rates: dict[float, dict[str, float]], share: float) -> dict[str, float]:
 
 
 def trip(rates: dict, turn: float, slots: int, stock: dict | None = None, stay: float = 0.0, step: float = 1000.0,
-         length: float = LENGTH, aboard=(), before=(), after=()) -> dict:
+         length: float = LENGTH, aboard=(), before=(), after=(), least: dict | None = None) -> dict:
     """Out to `turn`, `stay` km flown there, and back, in steps of `step` km; first the legs
     `before` it and last those `after` it ((km, rates row) each, in order: getting to the edge
     and home again). Returns what it flew, used and loaded (nothing of what's made `aboard`);
     whether the load fits the hub's `slots`; the chunks it brings back and lost for want of room;
     the chance it comes back at the measured deaths per 1,000 km; and, with a given stock, the
-    first item to run out (item, km into the trip, share of the route: 0 on a leg) or None."""
+    first item to run out (item, km into the trip, share of the route: 0 on a leg) or None.
+    least: a floor under the load (spares for a bad trip the rates don't show), each item loaded
+    at least that many, in its slots the whole way unless used."""
     out = [(k + 0.5) * step / length for k in range(round(turn * length / step))]
     route = out + [turn] * round(stay / step) + out[::-1]
 
@@ -122,13 +124,15 @@ def trip(rates: dict, turn: float, slots: int, stock: dict | None = None, stay: 
             if k not in (CHUNK, SPEED, DEATHS) and k not in aboard:
                 need[k] = need.get(k, 0.0) + v * step / 1000
     loaded = dict(stock) if stock is not None else {k: math.ceil(v - 1e-9) for k, v in need.items()}
+    for k, n in (least or {}).items():
+        loaded[k] = max(loaded.get(k, 0), n)
     stacks = {k: items.raw[k]["stack_size"] for k in set(need) | set(loaded)}
 
     def slots_for(left):
         return sum(math.ceil(n / stacks[k] - 1e-9) for k, n in left.items() if n > 0)
 
     plan = {"turn": turn, "stay": stay, "km": len(path) * step, "hours": sum(step / r[SPEED] for r in use) / 3600,
-            "used": need, "slots": slots, "loaded slots": slots_for(loaded),
+            "used": need, "loaded": loaded, "slots": slots, "loaded slots": slots_for(loaded),
             "comes back": math.exp(-sum(r.get(DEATHS, 0.0) for r in use) * step / 1000)}
     if plan["loaded slots"] > slots:
         return {**plan, "fits": False, "largest": max(loaded, key=lambda k: math.ceil(loaded[k] / stacks[k]))}
