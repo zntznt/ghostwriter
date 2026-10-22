@@ -1,0 +1,72 @@
+"""The compact factory layout (tools/compact.py): rows on shelves, belts routed between them."""
+
+import unittest
+import warnings
+from collections import Counter
+
+from generators import factory
+from tests.test_tools import assert_powered, footprint
+from tools import compact
+from tools.check import check
+from tools.route import reaches
+
+ITEMS = [{"item": "electronic-circuit", "rate": 5}, {"item": "automation-science-pack", "rate": 1}]
+
+
+def laid_out(**params):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        p = factory.rows_and_lines(**params)
+        got = compact.build(p)
+        return p, got, got.bp.to_dict()["blueprint"]
+
+
+def area(bp) -> int:
+    tiles = [t for e in bp["entities"] for t in footprint(e)]
+    xs, ys = [x for x, _ in tiles], [y for _, y in tiles]
+    return (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1)
+
+
+class Compact(unittest.TestCase):
+    def test_checks_clean_powered_and_nothing_overlaps(self):
+        for params in ITEMS:
+            _, got, bp = laid_out(**params)
+            self.assertEqual(check({"blueprint": bp}), [], params)
+            assert_powered(self, bp, params)
+            tiles = Counter(t for e in bp["entities"] for t in footprint(e))
+            self.assertEqual([t for t, n in tiles.items() if n > 1], [], params)
+            self.assertEqual(area(bp), got.area, params)
+
+    def test_every_port_gets_what_it_takes_and_nothing_else(self):
+        # Followed belt by belt from each input and each row's product: a port is reached
+        # by every item it takes, and by no item it doesn't.
+        for params in ITEMS:
+            _, got, bp = laid_out(**params)
+            tile_of = {e.id: (int(e.tile_position[0]), int(e.tile_position[1])) for e in got.bp.entities if e.id}
+            sources = [(tile_of[ident], item) for ident, item in got.inputs]
+            sources += [(tile, item) for kind, tile, item in got.ports if kind == "out"]
+            wants = {tile: items for kind, tile, items in got.ports if kind == "in"}
+            fed = {tile: set() for tile in wants}
+            for tile, item in sources:
+                for t in reaches(bp, tile) & wants.keys():
+                    fed[t].add(item)
+            self.assertEqual(fed, wants, params)
+
+    def test_smaller_than_on_the_bus(self):
+        for params in ITEMS:
+            _, got, _ = laid_out(**params)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                bus = factory.build(**params).to_dict()["blueprint"]
+            self.assertLess(got.area, area(bus), params)
+
+    def test_rows_with_fluids_are_refused_saying_why(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="advanced-circuit", rate=1, oil=1)
+            with self.assertRaisesRegex(compact.CompactError, "fluids"):
+                compact.build(p)
+
+
+if __name__ == "__main__":
+    unittest.main()
