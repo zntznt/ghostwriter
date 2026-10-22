@@ -320,6 +320,30 @@ class Cache(unittest.TestCase):
         self.assertAlmostEqual(turn, 0.004 + 25000 / 4_000_000)
         self.assertEqual(stock, {"railgun-ammo": 4551, "cargo-bay": 3})
 
+    def test_a_margin_load_tops_up_what_ran_out_and_fills_the_hub_with_railgun_ammo(self):
+        # margin_stock: from the planned trip's flights, magazines and foundation at 10% over the most
+        # a flight used, in whole stacks; every spare in whole stacks, with the cascade's 20 railguns,
+        # 20 bays and 2 reactors (NOTES.md); and railgun ammo, which never ran out, in what's left.
+        import math
+
+        from draftsman.data import items
+
+        from tools import studies
+
+        stock = {"uranium-rounds-magazine": 5726, "railgun-ammo": 4551, "space-platform-foundation": 625,
+                 "crusher": 3, "railgun-turret": 2}
+        flights = [{"left": {"uranium-rounds-magazine": 0, "railgun-ammo": 246, "space-platform-foundation": 0,
+                             "crusher": 0, "railgun-turret": 0}},
+                   {"left": {"uranium-rounds-magazine": 158, "railgun-ammo": 699, "space-platform-foundation": 483,
+                             "crusher": 3, "railgun-turret": 1}}]
+        margin = studies.margin_stock({"supplies": stock, "flights": flights}, slots=539)
+        self.assertEqual(margin["uranium-rounds-magazine"], 6300)  # 5,726 x 1.1, in stacks of 100
+        self.assertEqual(margin["space-platform-foundation"], 700)
+        self.assertEqual((margin["crusher"], margin["railgun-turret"], margin["cargo-bay"], margin["fusion-reactor"]),
+                         (10, 20, 20, 2))
+        self.assertEqual(sum(math.ceil(n / items.raw[k]["stack_size"]) for k, n in margin.items()), 539)
+        self.assertEqual(margin["railgun-ammo"] % 10, 0)
+
     def test_with_no_flight_home_the_legs_home_mirror_the_legs_out(self):
         # legs_model: the way home is the way out reversed when no flight came home to measure it.
         from tools import studies

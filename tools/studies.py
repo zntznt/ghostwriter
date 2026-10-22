@@ -1089,6 +1089,44 @@ def platform_legs_planned(server, runs: int = 8) -> dict:
     return {**platform_legs(server, runs, stock=stock, script_fuel=True, turn=turn), "plan": best}
 
 
+MARGIN = 1.1  # over the most a planned flight used
+
+
+def margin_stock(planned: dict, slots: int) -> dict:
+    """A load with a margin, from the planned trip's flights (platform-legs-planned): magazines and
+    foundation at MARGIN over the most a flight used, in whole stacks; every spare in whole stacks,
+    with the 20 railguns, 20 bays and 2 reactors that closed the cascade (NOTES.md); and railgun
+    ammo, which never ran out, in the slots left of `slots`."""
+    import math
+
+    from draftsman.data import items
+
+    stock = planned["supplies"]
+
+    def stacks(k, n):
+        return math.ceil(n / items.raw[k]["stack_size"] - 1e-9)
+
+    most = {k: max(n - f["left"].get(k, 0) for f in planned["flights"]) for k, n in stock.items()}
+    out = {**full_stacks(stock), "railgun-turret": 20, "cargo-bay": 20, "fusion-reactor": 2}
+    for k in ("uranium-rounds-magazine", "space-platform-foundation"):
+        out[k] = stacks(k, most[k] * MARGIN) * items.raw[k]["stack_size"]
+    out.pop("railgun-ammo", None)
+    room = slots - sum(stacks(k, n) for k, n in out.items())
+    return {**out, "railgun-ammo": room * items.raw["railgun-ammo"]["stack_size"]}
+
+
+def platform_legs_margin(server, runs: int = 8) -> dict:
+    """The planned trip with the legs on a load with a margin (margin_stock), fuel by script."""
+    import json
+
+    from tools import trip
+    from tools.optimise import CACHE
+
+    planned = json.loads((CACHE / "platform-legs-planned.result.json").read_text())
+    stock = margin_stock(planned, trip.HUB_SLOTS + trip.BAY_SLOTS * PROMETHIUM_PLATFORM["cargo_bays"])
+    return {**platform_legs(server, runs, stock=stock, script_fuel=True, turn=planned["turn"]), "plan": planned["plan"]}
+
+
 def platform_legs(server, runs: int = 8, stock=None, script_fuel: bool = False, turn: float = WHOLE_TRIP_TURN) -> dict:
     """What does getting there cost? PROMETHIUM_PLATFORM, readied in Nauvis orbit with stock
     (LEGS_STOCK), flies by Fulgora and Aquilo to the solar system edge, out to WHOLE_TRIP_TURN and
@@ -1162,4 +1200,4 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
                                                                                     shock=SHOCK),
            "platform-legs": lambda server: {"on board": platform_legs(server),
                                             "fuel by script": platform_legs(server, script_fuel=True)},
-           "platform-legs-planned": platform_legs_planned}
+           "platform-legs-planned": platform_legs_planned, "platform-legs-margin": platform_legs_margin}
