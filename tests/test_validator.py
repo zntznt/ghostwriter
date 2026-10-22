@@ -462,6 +462,7 @@ class Validator(unittest.TestCase):
         self.assertGreater(flown.back, flown.turned)
         self.assertEqual([s["at"] for s in flown.stops], ["nauvis", "vulcanus", "vulcanus", "nauvis"])
         self.assertEqual(flown.stops[0]["cargo"].get("pipe"), 7)
+        self.assertTrue(all("counted" in s for s in flown.stops))  # the flight's counters, at each stop
         legs = flown.legs()
         # A stop records the fuel made on board (none here: fuel by script) and what the thruster held.
         self.assertTrue(all(leg["made"] == {} and set(leg["held"]) == {"thruster-fuel", "thruster-oxidizer"}

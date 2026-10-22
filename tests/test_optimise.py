@@ -296,6 +296,23 @@ class Cache(unittest.TestCase):
         self.assertEqual((on["made"], on["held"]), ({"thruster-fuel": 15000}, {"thruster-fuel": 600,
                                                                                 "thruster-oxidizer": 0}))
 
+    def test_a_leg_counts_what_was_used_when_the_hub_is_held(self):
+        # With the hub held at its stock (Flight.hold) its cargo doesn't move, so stops also record
+        # the flight's counters (what the hub rebuilt, the feed drew and the script gave): a leg
+        # then has what they counted on it, the last leg to the end of the flight.
+        from validator.flight import Flown
+
+        stops = [{"at": "nauvis", "seconds": 0, "km": 0, "cargo": {"pipe": 50}, "deaths": {}, "counted": {}},
+                 {"at": "fulgora", "seconds": 300, "km": 15000, "cargo": {"pipe": 50}, "deaths": {},
+                  "counted": {"railgun-ammo": 40, "pipe": 2}}]
+        flown = Flown("held", seconds=900, trip_km=45000, stops=stops, cargo={"pipe": 50}, ended="stranded",
+                      rebuilt={"pipe": 5}, fed={"railgun-ammo": 100}, supplied={"thruster-fuel": 900})
+        self.assertEqual(flown.counted(), {"pipe": 5, "railgun-ammo": 100, "thruster-fuel": 900})
+        out, on = flown.legs()
+        self.assertEqual(out["counted"], {"railgun-ammo": 40, "pipe": 2})
+        self.assertEqual(on["counted"], {"railgun-ammo": 60, "pipe": 3, "thruster-fuel": 900})
+        self.assertEqual(out["used"], {})  # held: the cargo didn't move
+
     def test_leg_fuel_says_what_each_leg_made_and_what_was_left_at_its_end(self):
         # Per leg in the order flown: fuel and oxidizer made a second over every flight that got onto
         # it, and what the thruster and its tanks held at its end over the flights that finished it.

@@ -483,6 +483,16 @@ local function fluids_held(p, thrusters)
   return {["thruster-fuel"] = all["thruster-fuel"] or 0, ["thruster-oxidizer"] = all["thruster-oxidizer"] or 0}
 end
 
+-- What the flight's counters say it has used (rebuilt, fed, supplied), which a held hub's cargo
+-- can't show (Flight.hold): recorded at each stop.
+local function counted(fl)
+  local out = {}
+  for _, counter in pairs{fl.rebuilt or {}, fl.fed or {}, fl.supplied or {}} do
+    for k, n in pairs(counter) do out[k] = (out[k] or 0) + n end
+  end
+  return out
+end
+
 -- What of the hub-fed ammo (Flight.feed) is on the platform's belts: it left the hub but
 -- hasn't been used.
 local function on_belts(surface, names)
@@ -553,7 +563,7 @@ local function flight_tick()
       for k, n in pairs(fl.made or {}) do made[k] = n end  -- the fuel module's, as of the last second
       fl.stops[#fl.stops + 1] = {at = here, seconds = (game.tick - fl.start) / 60, km = fl.trip_km, deaths = deaths,
                                  cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents(),
-                                 made = made, held = fluids_held(p, fl.thrusters)}
+                                 made = made, held = fluids_held(p, fl.thrusters), counted = counted(fl)}
       fl.last_stop, fl.turned_since = here, false
     end
     fl.at = here
@@ -810,7 +820,7 @@ local function leave(fl)
     fl.trip_km, fl.at, fl.last_stop = 0, fl.home, fl.home
     fl.stops = {{at = fl.home, seconds = 0, km = 0, deaths = {},
                  cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents(),
-                 made = {}, held = fluids_held(p, fl.thrusters)}}
+                 made = {}, held = fluids_held(p, fl.thrusters), counted = counted(fl)}}
   end
   local power = p.surface.global_electric_network_statistics
   fl.power_base = power and {generated = power.output_counts["fusion-generator"] or 0,
