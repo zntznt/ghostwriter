@@ -671,7 +671,7 @@ class Platform(unittest.TestCase):
         # library/platforms/ holds the generator's output for these parameters: the 32-railgun
         # platform of platform-foundation, and the promethium platform of platform-bays with
         # the hub feeding its turrets (platform-feed).
-        from tools.studies import FILED_PLATFORM, PROMETHIUM_PLATFORM
+        from generators.platform import FILED_PLATFORM, PROMETHIUM_PLATFORM
 
         filed = {}
         for path in filter(is_entry, (Path(__file__).parent.parent / "library" / "platforms").glob("*.json")):
@@ -1143,7 +1143,7 @@ class PlatformAdvancedFuel(PlatformFuel):
                 platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel="nuclear")
 
     def test_the_filed_design_says_what_to_research(self):
-        from tools.studies import PROMETHIUM_PLATFORM
+        from generators.platform import PROMETHIUM_PLATFORM
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -1155,7 +1155,7 @@ class PlatformAdvancedFuel(PlatformFuel):
     def test_the_full_design_fits(self):
         # With 24 bays, the reserve, the plants, the hub feed and promethium, nothing overlaps,
         # everything stands on foundation, and the strip behind the thruster stays empty.
-        from tools.studies import PROMETHIUM_PLATFORM
+        from generators.platform import PROMETHIUM_PLATFORM
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

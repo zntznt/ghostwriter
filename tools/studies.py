@@ -7,7 +7,7 @@ table as it goes. Its books and values are fixed in code before it runs.
 import sys
 from collections import Counter
 
-from generators.platform import FEED_RESEARCH
+from generators.platform import FEED_RESEARCH, FILED_PLATFORM, PROMETHIUM_PLATFORM
 from tools.optimise import GameEvaluator, grid
 from tools.plan import (HIGH_RESEARCH, MIX_RESEARCH, full_stacks, leg_rates, legs_home, planned_trip,  # noqa: F401
                         trip_flown, trip_means as whole_trip_means)
@@ -295,7 +295,6 @@ def platform_foundation(server) -> dict:
             "trials": rows}
 
 
-FILED_PLATFORM = {"railguns": 32, "guns": 32, "thrusters": 1, "cargo_bays": 8}  # library/platforms/
 BUDGET_STARTS = [0.0, BELT_START]  # where the route begins, and where promethium is
 
 
@@ -717,7 +716,6 @@ def platform_bays(server) -> dict:
 # spares for the feed's underground belts, in place of as much foundation.
 FEED_STARTS = [0.0, 0.1]
 FEED_MODES = {"script ammo": {}, "hub feeds": {"ammo_feed": True}}
-PROMETHIUM_PLATFORM = {**BAYS_PLATFORM, "ammo_feed": True}  # library/platforms/: as flown, the hub feeding (NOTES.md)
 
 
 def feed_stock() -> dict:

@@ -796,7 +796,7 @@ class Validator(unittest.TestCase):
         # medium one (10% physical) for 56.448; uranium rounds (24) kill a small one with
         # one bullet. An asteroid placed by script in front of one turret, the platform
         # standing in Nauvis orbit.
-        from tools.studies import HIGH_RESEARCH
+        from tools.plan import HIGH_RESEARCH
 
         data = platform.build(railguns=1, guns=2, thrusters=1).to_dict()
         place = ("/sc local s = storage.flight.platform.surface local t = s.find_entities_filtered"
@@ -837,7 +837,7 @@ class Validator(unittest.TestCase):
         # weapons damage 10 a laser shot (two beam ticks of 10) hits for 6.1 x 20 = 122:
         # 97.6 on a small asteroid, 12.2 on a medium one. Turrets placed by script on the
         # platform in Nauvis orbit, an asteroid placed in front, its first hit read.
-        from tools.studies import MIX_RESEARCH
+        from tools.plan import MIX_RESEARCH
 
         data = platform.build(railguns=1, guns=2, thrusters=1).to_dict()
         place = ("/sc local s = storage.flight.platform.surface if storage.probe and storage.probe.valid then "
@@ -944,7 +944,7 @@ class Validator(unittest.TestCase):
         # chemical plants keep it going on their own: a plant makes 37.5 fuel or
         # oxidizer a second (75 every 2 s), and thrust settles where the thruster
         # uses what they make, about 0.62 km a tick (NOTES.md).
-        from tools.studies import HIGH_RESEARCH
+        from tools.plan import HIGH_RESEARCH
 
         data = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True).to_dict()
         # From 0.4 of the route, where chunks are plenty: from the solar system edge it
