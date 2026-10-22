@@ -607,6 +607,104 @@ class Plan(unittest.TestCase):
         self.assertIn("fits", p["error"])
         self.assertIn("fits", plan.text(p))
 
+    def test_spares_are_the_platforms_own_count_of_each_part_in_whole_stacks(self):
+        # The margin (NOTES.md: lost trips ran out of spare railguns first, then huge asteroids took
+        # the bays; trips that kept about one platform's worth of railguns in spares all came back):
+        # at least as many of each part as the platform has, enough to rebuild it once.
+        import warnings
+
+        from draftsman.data import items
+
+        from generators import platform
+        from tools import plan
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            data = platform.build(**self.FULL).to_dict()
+        counts = {}
+        for e in data["blueprint"]["entities"]:
+            counts[e["name"]] = counts.get(e["name"], 0) + 1
+        spares = plan.spares(data)
+        self.assertEqual(set(spares), {n for n in counts if n in items.raw})
+        for name, n in spares.items():
+            self.assertGreaterEqual(n, counts[name], name)
+            self.assertEqual(n % items.raw[name]["stack_size"], 0, name)
+        self.assertEqual((spares["railgun-turret"], spares["cargo-bay"], spares["fusion-reactor"]), (20, 30, 2))
+
+    def test_the_margin_scales_each_kind_of_use_by_the_spread_whole_trips_showed(self):
+        # NOTES.md, whole trips: ammo ran out in the last 3 to 10% of most trips at the mean; a bad
+        # trip used about twice the mean of foundation and two to three times of the parts the hub
+        # rebuilt. Ammo a tenth over, foundation twice, parts three times; anything else as used.
+        from tools import plan
+
+        scale = plan.margin({"railgun-ammo", "uranium-rounds-magazine", "space-platform-foundation", "crusher",
+                             "fusion-power-cell"}, parts={"crusher"})
+        self.assertEqual(scale, {"railgun-ammo": 1.1, "uranium-rounds-magazine": 1.1,
+                                 "space-platform-foundation": 2.0, "crusher": 3.0})
+
+    def test_a_plan_carries_its_spares_and_says_what_rule_sized_them(self):
+        from tools import plan
+
+        parts = {"railgun-turret": 10, "gun-turret": 50}
+        bare = plan.assemble(self.DESIGN, "edge", {}, runs=8, rows=self.rows())
+        p = plan.assemble(self.DESIGN, "edge", {}, runs=8, rows=self.rows(), spares=parts)
+        stock = {s["item"]: s["count"] for s in p["stock"]}
+        self.assertEqual((stock["railgun-turret"], stock["gun-turret"]), (10, 50))
+        self.assertEqual(sum(s["slots"] for s in p["stock"]), p["trip"]["loaded slots"])
+        self.assertLess(p["trip"]["chunks"], bare["trip"]["chunks"])  # spares take room from chunks
+        self.assertEqual(p["margin"]["spares"], parts)
+        self.assertIn("rebuild", p["margin"]["rule"])
+        self.assertIn("rebuild", plan.text(p))
+
+    @staticmethod
+    def leg(a, b, km, held=None):
+        out = {"from": a, "to": b, "km": km, "seconds": km / 50, "used": {}, "died": {}}
+        if held is not None:
+            out["held"] = held
+        return out
+
+    def flights_to_the_edge(self, finished, stranded, destroyed):
+        # Flights from Nauvis: each gets to Aquilo; then finishes the leg to the edge, strands on it
+        # short of oxidizer (out of time, its lines nearly empty of it), or is destroyed on it.
+        edge, out = "solar-system-edge", self.leg("nauvis", "aquilo", 45000.0, {"thruster-fuel": 9000.0,
+                                                                                "thruster-oxidizer": 6000.0})
+        done = [{"back": True, "ended": "back", "legs": [out, self.leg("aquilo", edge, 100000.0),
+                                                         self.leg(edge, edge, 160000.0)]}] * finished
+        stuck = [{"back": False, "ended": "out of time",
+                  "legs": [out, self.leg("aquilo", None, 30000.0, {"thruster-fuel": 4000.0,
+                                                                  "thruster-oxidizer": 2.0})]}] * stranded
+        dead = [{"back": False, "ended": "hub destroyed by huge-oxide-asteroid",
+                 "legs": [out, self.leg("aquilo", None, 60000.0, {"thruster-fuel": 9000.0,
+                                                                 "thruster-oxidizer": 8000.0})]}] * destroyed
+        return done + stuck + dead
+
+    def test_a_leg_counts_the_flights_stranded_on_it_and_what_they_ran_short_of(self):
+        from tools import plan
+
+        rates = plan.leg_rates(self.flights_to_the_edge(finished=2, stranded=5, destroyed=1))
+        crossing = next(r for r in rates if r["from"] == "aquilo")
+        self.assertEqual((crossing["flights"], crossing["finished"], crossing["stranded"], crossing["destroyed"]),
+                         (8, 2, 5, 1))
+        self.assertEqual(crossing["short of"], "thruster-oxidizer")
+        first = rates[0]
+        self.assertEqual((first["stranded"], first["destroyed"], first["short of"]), (0, 0, None))
+
+    def test_a_plan_from_nauvis_says_plainly_when_its_flights_strand_on_a_leg(self):
+        # More flights stranded on a leg than finished it: no trip, and the plan says which leg and
+        # what ran short, not a trip it can't make. Fewer: a trip, with the strandings in its caveats.
+        from tools import plan
+
+        stuck = plan.leg_rates(self.flights_to_the_edge(finished=2, stranded=5, destroyed=1))
+        p = plan.assemble(self.DESIGN, "nauvis", {}, runs=8, rows=self.rows(), legs=stuck)
+        self.assertIsNone(p["trip"])
+        for word in ("aquilo", "stranded", "5 of 8", "thruster-oxidizer"):
+            self.assertIn(word, p["error"])
+        self.assertIn("stranded", plan.text(p))
+        some = plan.leg_rates(self.flights_to_the_edge(finished=7, stranded=1, destroyed=0))
+        p = plan.assemble(self.DESIGN, "nauvis", {}, runs=8, rows=self.rows(), legs=some)
+        self.assertIsNotNone(p["trip"])
+        self.assertTrue(any("stranded" in c and "thruster-oxidizer" in c for c in p["caveats"]))
+
     def test_a_plan_from_nauvis_says_when_it_cant_get_there(self):
         from tools import plan
 
@@ -686,6 +784,10 @@ class Plan(unittest.TestCase):
         self.assertEqual(check["planned"]["comes back"], p["trip"]["comes back"])
         self.assertEqual(check["flown"]["came back"], 0.75)
         self.assertIn("chunks a trip", plan.compare_text(check))
+        # Flown under a shock (railguns killed as it turns), the check says so.
+        shocked = plan.compare(p, means, shock=8)
+        self.assertEqual(shocked["flown"]["shock"], 8)
+        self.assertIn("8 railguns killed", plan.compare_text(shocked))
 
 
 if __name__ == "__main__":

@@ -44,44 +44,126 @@
   }
  },
  "legs": null,
+ "margin": {
+  "rule": "ammo a tenth over the mean use, foundation twice, each part the hub rebuilds three times and at least as many as the platform has (enough to rebuild it once), in whole stacks: a bad whole trip uses that much, and running out of any of it starts the cascade that loses trips (NOTES.md)",
+  "spares": {
+   "gun-turret": 50,
+   "railgun-turret": 20,
+   "asteroid-collector": 10,
+   "inserter": 50,
+   "transport-belt": 200,
+   "medium-electric-pole": 50,
+   "cargo-bay": 30,
+   "crusher": 10,
+   "fast-inserter": 50,
+   "chemical-plant": 10,
+   "pipe": 200,
+   "pipe-to-ground": 50,
+   "underground-belt": 50,
+   "fusion-reactor": 2,
+   "fusion-generator": 5,
+   "cryogenic-plant": 20,
+   "accumulator": 50,
+   "express-underground-belt": 50,
+   "thruster": 10,
+   "storage-tank": 50
+  },
+  "scale": {
+   "railgun-turret": 3.0,
+   "railgun-ammo": 1.1,
+   "thruster": 3.0,
+   "underground-belt": 3.0,
+   "uranium-rounds-magazine": 1.1,
+   "chemical-plant": 3.0,
+   "medium-electric-pole": 3.0,
+   "fusion-generator": 3.0,
+   "asteroid-collector": 3.0,
+   "inserter": 3.0,
+   "cargo-bay": 3.0,
+   "gun-turret": 3.0,
+   "fusion-reactor": 3.0,
+   "fast-inserter": 3.0,
+   "pipe": 3.0,
+   "crusher": 3.0,
+   "transport-belt": 3.0,
+   "space-platform-foundation": 2.0,
+   "cryogenic-plant": 3.0,
+   "pipe-to-ground": 3.0
+  }
+ },
  "trip": {
-  "turn": 0.021,
-  "stay": 0.0,
-  "flown turn": 0.021,
-  "km": 168000.0,
-  "hours": 0.9302042846915525,
-  "chunks": 352.6887047680799,
-  "packs": 141.07548190723196,
+  "turn": 0.017,
+  "stay": 10000.0,
+  "flown turn": 0.018250000000000002,
+  "km": 146000.0,
+  "hours": 0.8074735343024146,
+  "chunks": 295.5999475571331,
+  "packs": 118.23997902285323,
   "comes back": 1.0,
   "lost for room": 0.0,
-  "loaded slots": 534,
+  "loaded slots": 524,
   "slots": 539
  },
  "limit": {
-  "by": "hub slots",
+  "by": "the chance of coming back",
   "largest": "railgun-ammo",
-  "slots": 440
+  "slots": 409
  },
  "stock": [
   {
    "item": "railgun-ammo",
-   "count": 4400,
-   "slots": 440
+   "count": 4090,
+   "slots": 409
   },
   {
    "item": "uranium-rounds-magazine",
-   "count": 5800,
-   "slots": 58
+   "count": 5400,
+   "slots": 54
   },
   {
    "item": "space-platform-foundation",
-   "count": 1800,
-   "slots": 18
+   "count": 2900,
+   "slots": 29
   },
   {
    "item": "chemical-plant",
+   "count": 50,
+   "slots": 5
+  },
+  {
+   "item": "cargo-bay",
+   "count": 30,
+   "slots": 3
+  },
+  {
+   "item": "crusher",
    "count": 20,
    "slots": 2
+  },
+  {
+   "item": "fusion-reactor",
+   "count": 2,
+   "slots": 2
+  },
+  {
+   "item": "pipe",
+   "count": 200,
+   "slots": 2
+  },
+  {
+   "item": "railgun-turret",
+   "count": 20,
+   "slots": 2
+  },
+  {
+   "item": "transport-belt",
+   "count": 200,
+   "slots": 2
+  },
+  {
+   "item": "accumulator",
+   "count": 50,
+   "slots": 1
   },
   {
    "item": "asteroid-collector",
@@ -89,18 +171,13 @@
    "slots": 1
   },
   {
-   "item": "cargo-bay",
-   "count": 10,
-   "slots": 1
-  },
-  {
-   "item": "crusher",
-   "count": 10,
-   "slots": 1
-  },
-  {
    "item": "cryogenic-plant",
    "count": 20,
+   "slots": 1
+  },
+  {
+   "item": "express-underground-belt",
+   "count": 50,
    "slots": 1
   },
   {
@@ -119,11 +196,6 @@
    "slots": 1
   },
   {
-   "item": "fusion-reactor",
-   "count": 1,
-   "slots": 1
-  },
-  {
    "item": "gun-turret",
    "count": 50,
    "slots": 1
@@ -139,23 +211,18 @@
    "slots": 1
   },
   {
-   "item": "pipe",
-   "count": 100,
-   "slots": 1
-  },
-  {
    "item": "pipe-to-ground",
    "count": 50,
    "slots": 1
   },
   {
-   "item": "railgun-turret",
-   "count": 10,
+   "item": "storage-tank",
+   "count": 50,
    "slots": 1
   },
   {
-   "item": "transport-belt",
-   "count": 100,
+   "item": "thruster",
+   "count": 10,
    "slots": 1
   },
   {
@@ -174,10 +241,26 @@
  ],
  "caveats": [
   "The trip model reads its rates in straight lines between the starts measured; flown whole, a planned trip brought back more chunks and used less foundation near the edge than planned (NOTES.md).",
-  "Flights of 600 s lose little; over a whole trip losses compound, and a load sized to average use did worse flown whole (NOTES.md). Check it with --verify, and carry spares in whole stacks.",
+  "Flights of 600 s lose little; over a whole trip losses compound, and a load sized to average use did worse flown whole (NOTES.md). The spares are sized for that, not from the rates; check the plan with --verify (and --shock N, railguns killed as it turns).",
   "The trip starts and ends at the solar system edge: getting there from Nauvis and home again isn't in it (--from nauvis)."
  ],
  "error": null,
  "generator": "platform",
- "game": "2.1.23"
+ "game": "2.1.23",
+ "verified": {
+  "planned": {
+   "chunks": 295.5999475571331,
+   "comes back": 1.0
+  },
+  "flown": {
+   "flights": 8,
+   "shock": 0,
+   "came back": 1.0,
+   "chunks a trip": 433.625,
+   "chunks a trip back": 433.625,
+   "first out": {
+    "fusion-reactor": 1
+   }
+  }
+ }
 }

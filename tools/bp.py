@@ -23,8 +23,9 @@
       [--from edge|nauvis]  check and validate it, measure it in flights along the route (and
       [--runs N]            by its legs from Nauvis), and print where to turn, what to load
       [--verify N]          and what to do before leaving; --verify flies the plan whole N
-      [--json]              times against it; research=k=n,... sets what the flights assume;
-      [--save]              --save files it beside the design's blueprint in library/ (NAME.plan.json)
+      [--shock N]           times against it (--shock kills N railguns as each turns);
+      [--json]              research=k=n,... sets what the flights assume; --save files it
+      [--save]              beside the design's blueprint in library/ (NAME.plan.json)
 
 SRC is a blueprint string, a path to a file holding one (or JSON), or - for
 stdin; `validate` also takes library folders (validated as books).
@@ -271,7 +272,7 @@ def cmd_plan(args):
         try:
             p = planner.plan(server, args.name, params, args.origin, args.runs, research, data=data)
             if args.verify and p["trip"]:
-                p["verified"] = planner.verify(server, args.name, p, args.verify)
+                p["verified"] = planner.verify(server, args.name, p, args.verify, args.shock)
         except ValueError as e:
             sys.exit(f"error: {e}")
     if args.json:
@@ -357,6 +358,8 @@ def main(argv=None):
                    help="where the trip sets out: the solar system edge, or Nauvis by its legs")
     p.add_argument("--runs", type=int, default=8, help="flights at each start (they differ run to run)")
     p.add_argument("--verify", type=int, default=0, metavar="N", help="fly the planned trip whole N times")
+    p.add_argument("--shock", type=int, default=0, metavar="N",
+                   help="with --verify: N railguns killed as each trip turns, a bad trip on purpose")
     p.add_argument("--save", action="store_true",
                    help="file the plan beside the library entry that is this design's blueprint (NAME.plan.json)")
     p.add_argument("--json", action="store_true")

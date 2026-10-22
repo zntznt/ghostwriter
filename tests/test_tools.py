@@ -1831,6 +1831,27 @@ class Trip(unittest.TestCase):
         self.assertEqual((loaded["loaded slots"], made["loaded slots"]), (2200, 200))
         self.assertNotIn("railgun-ammo", made["used"])
 
+    def test_spares_set_a_floor_under_the_load_and_take_their_slots(self):
+        # least: a floor under the load, spares for a bad trip the rates don't show. They're loaded
+        # and fill their slots the whole way, so they take room from the chunks; they aren't use.
+        from tools import trip
+
+        plain = trip.trip(self.flat(), 0.1, slots=1000, length=1e6)
+        spared = trip.trip(self.flat(), 0.1, slots=1000, length=1e6, least={"railgun-turret": 20})
+        self.assertEqual(spared["loaded"]["railgun-turret"], 20)
+        self.assertEqual(spared["loaded slots"], plain["loaded slots"] + 2)
+        self.assertAlmostEqual(spared["chunks"], plain["chunks"] - 2, delta=0.5)
+        self.assertNotIn("railgun-turret", spared["used"])
+        self.assertIsNone(spared["ran out"])
+        # A floor under what's used too: the larger of the two is loaded.
+        floor = trip.trip(self.flat(), 0.1, slots=1000, length=1e6, least={self.FOUNDATION: 100})
+        self.assertEqual(floor["loaded"][self.FOUNDATION], 20000)
+        # scale: what's used times a margin, for a trip that uses more than the average.
+        scaled = trip.trip(self.flat(), 0.1, slots=1000, length=1e6, scale={self.FOUNDATION: 1.5})
+        self.assertEqual(scaled["loaded"][self.FOUNDATION], 30000)
+        self.assertAlmostEqual(scaled["used"][self.FOUNDATION], 20000.0)
+        self.assertEqual(scaled["loaded slots"], 300)
+
     def test_legs_to_and_from_the_route_use_stock_before_and_after_it(self):
         # before and after: legs flown at their own rates, in order, before the route and after it
         # (Nauvis to the edge and back). Their use is loaded and counted, and their time and deaths,

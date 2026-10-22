@@ -131,8 +131,16 @@ def leg_rates(rows: list[dict]) -> list[dict]:
         row[SPEED] = km / sum(leg["seconds"] for leg in on) if km else 0.0
         row[DEATHS] = sum(leg["to"] is None for leg in on) / km * 1000 if km else 0.0
         name = whole[0] if whole else on[0]
+        # A flight that ended on the leg either ran out of time on it (stranded: short of fuel, as
+        # a platform is when it can't make enough) or was destroyed; what the stranded held least of.
+        ended = [r for r in rows if len(r["legs"]) > i and r["legs"][i]["to"] is None]
+        stuck = [r["legs"][i] for r in ended if r.get("ended") == "out of time"]
+        held = {k: sum(leg["held"].get(k, 0.0) for leg in stuck if "held" in leg) for k in
+                {k for leg in stuck for k in leg.get("held", {})}}
         out.append({"part": "out" if route is None or i < route else "route" if i == route else "home",
                     "from": name["from"], "to": name["to"], "flights": len(on), "finished": len(whole),
+                    "stranded": len(stuck), "destroyed": len(ended) - len(stuck),
+                    "short of": min(held, key=held.get) if held else None,
                     "km": sum(leg["km"] for leg in whole) / len(whole) if whole else None, "row": row,
                     "died": {k: sum(leg["died"].get(k, 0) for leg in on) for k in {k for leg in on for k in leg["died"]}}})
     return out
@@ -161,6 +169,36 @@ VERIFY_SECONDS = 1800  # a trip flown whole gets three times its planned time, a
 def slots(stock: dict) -> int:
     """Hub slots a stock fills, each item over its stack size."""
     return sum(math.ceil(n / items.raw[k]["stack_size"] - 1e-9) for k, n in stock.items() if n > 0)
+
+
+# The margin a plan loads over its flights' mean rates: 600 s flights lose little, and over a whole
+# trip losses compound (NOTES.md). The trips lost ran out of something (spare railguns, crushers,
+# ammo, foundation), and then huge asteroids took the cargo bays. Over 88 whole trips of the promethium
+# platform: ammo at the mean rate ran out in the last 3 to 10% of most trips; a bad trip (the 90th
+# percentile) used about twice the mean of foundation and two to three times of each part the hub
+# rebuilt. So ammo a tenth over, foundation twice, parts three times and at least the platform's own
+# count of each (enough to rebuild it once), in whole stacks.
+MARGIN = {"ammo": 1.1, "tile": 2.0, "part": 3.0}
+MARGIN_RULE = ("ammo a tenth over the mean use, foundation twice, each part the hub rebuilds three times and at "
+               "least as many as the platform has (enough to rebuild it once), in whole stacks: a bad whole trip "
+               "uses that much, and running out of any of it starts the cascade that loses trips (NOTES.md)")
+
+
+def spares(data: dict) -> dict:
+    """The margin's floor (MARGIN_RULE) for a blueprint: its own count of each part, in whole stacks."""
+    return full_stacks(Counter(e["name"] for e in data["blueprint"]["entities"] if e["name"] in items.raw))
+
+
+def margin(used, parts) -> dict:
+    """The margin's factor (MARGIN) for each item a trip uses: ammo, tiles (foundation), and the
+    platform's parts; anything else (fusion cells) as used."""
+    out = {}
+    for k in used:
+        kind = ("part" if k in parts else "ammo" if items.raw[k].get("type") == "ammo"
+                else "tile" if "place_as_tile" in items.raw[k] else None)
+        if kind:
+            out[k] = MARGIN[kind]
+    return out
 
 
 def capacity(design: dict) -> int:
@@ -242,7 +280,8 @@ def caveats(design: dict, origin: str) -> list[str]:
     out = ["The trip model reads its rates in straight lines between the starts measured; flown whole, a "
            "planned trip brought back more chunks and used less foundation near the edge than planned (NOTES.md).",
            "Flights of 600 s lose little; over a whole trip losses compound, and a load sized to average use did "
-           "worse flown whole (NOTES.md). Check it with --verify, and carry spares in whole stacks."]
+           "worse flown whole (NOTES.md). The spares are sized for that, not from the rates; check the plan with "
+           "--verify (and --shock N, railguns killed as it turns)."]
     if origin == "edge":
         out.append("The trip starts and ends at the solar system edge: getting there from Nauvis and home again "
                    "isn't in it (--from nauvis).")
@@ -253,18 +292,28 @@ def caveats(design: dict, origin: str) -> list[str]:
     return out
 
 
-def assemble(design: dict, origin: str, research: dict, runs: int, rows: list[dict], legs: list[dict] | None = None):
+def stranding(leg: dict) -> str:
+    """What happened to the flights on a leg that didn't all finish it."""
+    short = f", short of {leg['short of']}" if leg.get("short of") else ""
+    return (f"on the leg from {leg['from']} to {leg['to'] or 'the next stop'}, {leg.get('stranded', 0)} of "
+            f"{leg['flights']} flights stranded{short}, {leg.get('destroyed', 0)} destroyed, {leg['finished']} finished")
+
+
+def assemble(design: dict, origin: str, research: dict, runs: int, rows: list[dict], legs: list[dict] | None = None,
+             spares: dict | None = None):
     """A plan from measured flights: rows at starts along the route (tools.trip.table's trials) and,
     from Nauvis, the legs' rates (leg_rates). The trip that brings back the most chunks in the hub's
-    slots (tools.trip.best), what to load in whole stacks, what binds it, and what to do before
-    leaving; or why there is none (error)."""
+    slots (tools.trip.best), with spares as a floor under its load (MARGIN_RULE), what to load in whole
+    stacks, what binds it, and what to do before leaving; or why there is none (error)."""
     rates = trip.table({"trials": rows}, "plan")
     measured = {start: {"lived": next(r["rates"]["survived"] for r in rows if r["start"] == start),
                         "cruise km/s": row[trip.SPEED],
                         "hub slots per 1,000 km": sum(trip.slots(row).values()),
                         "chunks per 1,000 km": row.get(trip.CHUNK, 0.0)} for start, row in rates.items()}
+    keep = ("part", "from", "to", "km", "finished", "flights", "stranded", "destroyed", "short of")
     plan = {"design": design, "from": origin, "research": research, "runs": runs, "measured": measured,
-            "legs": legs and [{k: leg[k] for k in ("part", "from", "to", "km", "finished", "flights")} for leg in legs],
+            "legs": legs and [{k: leg.get(k) for k in keep} for leg in legs],
+            "margin": None,
             "trip": None, "limit": None, "stock": [], "readying": readying(design), "caveats": caveats(design, origin),
             "error": None}
     failed = [r for r in rows if not r["passed"]]
@@ -273,21 +322,37 @@ def assemble(design: dict, origin: str, research: dict, runs: int, rows: list[di
         return plan
     before, after = (), ()
     if legs is not None:
-        stuck = [leg for leg in legs if leg["part"] == "out" and leg["km"] is None]
+        out = [leg for leg in legs if leg["part"] == "out"]
+        stuck = [leg for leg in out if leg["km"] is None]
         if stuck:
-            plan["error"] = (f"it can't get there: no flight finished the leg from {stuck[0]['from']} "
-                             f"({stuck[0]['flights']} got onto it)")
+            plan["error"] = f"it can't get there: no flight finished the leg out ({stranding(stuck[0])})"
             return plan
+        # A leg that strands more flights than finish it is the design falling short (of fuel, most
+        # likely), not bad luck: no trip, and what ran short.
+        stranded = [leg for leg in out if leg.get("stranded", 0) > leg["finished"]]
+        if stranded:
+            plan["error"] = f"it can't get there on its own: {stranding(stranded[0])}"
+            return plan
+        plan["caveats"] += [f"Some flights stranded getting there: {stranding(leg)}." for leg in out if leg.get("stranded")]
         before, after = trip.legs({"leg rates": legs_home(legs)})
     room = capacity(design)
-    top, tried = trip.best(rates, room, trip.turns(max(rates)), stays=trip.STAYS, before=before, after=after)
+    scale = None
+    if spares is not None:
+        used = {k for row in rates.values() for k in row if k not in (trip.CHUNK, trip.SPEED, trip.DEATHS)}
+        for _, row in (*before, *after):
+            used |= {k for k in row if k not in (trip.CHUNK, trip.SPEED, trip.DEATHS)}
+        scale = margin(used, set(spares))
+        plan["margin"] = {"rule": MARGIN_RULE, "spares": dict(spares), "scale": scale}
+    top, tried = trip.best(rates, room, trip.turns(max(rates)), stays=trip.STAYS, before=before, after=after,
+                           least=spares, scale=scale)
     if top is None:
         shortest = min(tried, key=lambda r: (r["turn"], r["stay"]))
-        plan["error"] = (f"no trip fits in the hub's {room} slots: the shortest loads {shortest['loaded slots']:,} "
-                         f"({shortest['largest']} the most)")
+        spare = " with its margin" if spares is not None else ""
+        plan["error"] = (f"no trip fits in the hub's {room} slots{spare}: the shortest loads "
+                         f"{shortest['loaded slots']:,} ({shortest['largest']} the most)")
         return plan
-    turn, load = planned_trip(top)
-    stock = full_stacks(load)
+    turn, _ = planned_trip(top)
+    stock = full_stacks({k: n for k, n in top["loaded"].items() if n > 0})
     plan["stock"] = sorted(({"item": k, "count": n, "slots": slots({k: n})} for k, n in stock.items()),
                            key=lambda s: (-s["slots"], s["item"]))
     plan["trip"] = {"turn": top["turn"], "stay": top["stay"], "flown turn": turn, "km": top["km"], "hours": top["hours"],
@@ -310,19 +375,24 @@ def text(plan: dict) -> str:
         lines.append(f"  measured at {s:g}: lived {m['lived']:.0%}, {m['cruise km/s']:.1f} km/s, "
                      f"{m['hub slots per 1,000 km']:.2f} hub slots and {m['chunks per 1,000 km']:.2f} chunks per 1,000 km")
     for leg in plan["legs"] or []:
+        lost = [f"{leg[k]} {k}" for k in ("stranded", "destroyed") if leg.get(k)]
         lines.append(f"  leg {leg['from']} to {leg['to'] or '(not reached)'}: finished {leg['finished']} of "
-                     f"{leg['flights']}" + (f", {leg['km']:,.0f} km" if leg["km"] else ""))
+                     f"{leg['flights']}" + (f", {leg['km']:,.0f} km" if leg["km"] else "")
+                     + (f" ({', '.join(lost)}" + (f", short of {leg['short of']}" if leg.get("short of") else "") + ")"
+                        if lost else ""))
     t = plan["trip"]
     if t is None:
         lines.append(f"No trip: {plan['error']}.")
     else:
         lines += [f"Best trip: turn at {t['turn']:g} of the route, stay {t['stay']:,.0f} km: {t['km']:,.0f} km, "
                   f"{t['hours']:.1f} h; {t['chunks']:,.0f} chunks back ({t['packs']:,.0f} packs), comes back "
-                  f"{t['comes back']:.0%}",
+                  f"{t['comes back']:.0%} by its 600 s flights' losses (whole trips: --verify)",
                   f"Limit: {plan['limit']['by']} ({t['loaded slots']} of {t['slots']} loaded); "
                   f"{plan['limit']['largest']} fills the most ({plan['limit']['slots']} slots)",
                   "Load the hub:"]
         lines += [f"  {s['item']:<32} {s['count']:>7,}  {s['slots']:>3} slots" for s in plan["stock"]]
+    if plan.get("margin"):
+        lines.append(f"Margin: {plan['margin']['rule']}.")
     lines.append("Research: " + ", ".join(f"{k} {v}" for k, v in plan["research"].items()))
     lines.append("Before leaving:")
     lines += [f"  - {s}" for s in plan["readying"]]
@@ -331,20 +401,22 @@ def text(plan: dict) -> str:
     return "\n".join(lines)
 
 
-def compare(plan: dict, means: dict) -> dict:
-    """The plan against its trip flown whole (trip_means)."""
+def compare(plan: dict, means: dict, shock: int = 0) -> dict:
+    """The plan against its trip flown whole (trip_means), shock railguns killed as it turned."""
     t = plan["trip"]
     return {"planned": {"chunks": t["chunks"], "comes back": t["comes back"]},
-            "flown": {"flights": means["flights"], "came back": means["came back"], "chunks a trip": means["chunks back"],
-                      "chunks a trip back": means["chunks per trip back"], "first out": means["first out"]}}
+            "flown": {"flights": means["flights"], "shock": shock, "came back": means["came back"],
+                      "chunks a trip": means["chunks back"], "chunks a trip back": means["chunks per trip back"],
+                      "first out": means["first out"]}}
 
 
 def compare_text(check: dict) -> str:
     p, f = check["planned"], check["flown"]
     first = ", ".join(f"{k} in {n}" for k, n in f["first out"].items()) or "nothing"
+    shock = f", {f['shock']} railguns killed as it turned" if f.get("shock") else ""
     return (f"Planned: {p['chunks']:,.0f} chunks a trip, comes back {p['comes back']:.0%}. Flown whole "
-            f"({f['flights']} flights): came back {f['came back']:.0%}, {f['chunks a trip'] or 0:,.0f} chunks a trip "
-            f"counting losses ({f['chunks a trip back'] or 0:,.0f} a trip back); first to run out: {first}.")
+            f"({f['flights']} flights{shock}): came back {f['came back']:.0%}, {f['chunks a trip'] or 0:,.0f} chunks a "
+            f"trip counting losses ({f['chunks a trip back'] or 0:,.0f} a trip back); first to run out: {first}.")
 
 
 def measure(server, generator: str, design: dict, research: dict, stock: dict, runs: int, starts=STARTS,
@@ -425,18 +497,19 @@ def measure_legs(server, generator: str, design: dict, research: dict, stock: di
     return leg_rates(t.rates["flights"])
 
 
-def verify(server, generator: str, plan: dict, runs: int) -> dict:
-    """The planned trip flown whole `runs` times on its stock, nothing held: compare against the plan."""
+def verify(server, generator: str, plan: dict, runs: int, shock: int = 0) -> dict:
+    """The planned trip flown whole `runs` times on its stock, nothing held: compare against the plan.
+    shock: that many railguns killed as it turns (Flight.shock), a bad trip on purpose."""
     design, t = plan["design"], plan["trip"]
     stock = {s["item"]: s["count"] for s in plan["stock"]}
     home = {"home": HOME, "via": list(VIA)} if plan["from"] == "nauvis" else {}
     flights = _trips(server, generator, runs)({**design, **home, "turn": t["flown turn"],
                                                "fill": bool(design.get("ammo_feed")),
                                                "seconds": math.ceil(max(VERIFY_SECONDS, 3 * t["hours"] * 3600)), "supplies": stock,
-                                               "research": plan["research"]})
+                                               "research": plan["research"], **({"shock": shock} if shock else {})})
     if not flights.passed:
         raise ValueError(f"the trip couldn't be flown: {flights.error}")
-    return compare(plan, trip_means(flights.rates["flights"]))
+    return compare(plan, trip_means(flights.rates["flights"]), shock)
 
 
 def build(generator: str, design: dict) -> dict:
@@ -467,7 +540,8 @@ def plan(server, generator: str, design: dict, origin: str = "edge", runs: int =
     rows = measure(server, generator, design, research, stock, runs, STARTS if starts is None else starts,
                    SECONDS if seconds is None else seconds)
     legs = measure_legs(server, generator, design, research, stock, runs) if origin == "nauvis" else None
-    return {**assemble(design, origin, research, runs, rows, legs), "generator": generator, "game": server.version}
+    return {**assemble(design, origin, research, runs, rows, legs, spares(data)), "generator": generator,
+            "game": server.version}
 
 
 def _filed(path: Path) -> dict:
