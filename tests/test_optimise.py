@@ -508,5 +508,126 @@ class Cache(unittest.TestCase):
             self.assertNotEqual(first, optimise.fingerprint(["*.py"], root))
 
 
+class Plan(unittest.TestCase):
+    # tools.plan: a promethium trip for any platform design, from its flights (faked here).
+    DESIGN = {"railguns": 8, "guns": 4, "thrusters": 1, "fuel": True, "promethium": True}
+    FULL = {"railguns": 16, "guns": 16, "thrusters": 1, "cargo_bays": 24, "fuel": True, "reserve": True, "power": 2,
+            "promethium": True, "ammo_feed": True}
+
+    @staticmethod
+    def rows(magazines=(30.0, 170.0), chunks=(2.0, 8.0)):
+        # Two starts measured: per 1,000 km what the hub gave and the chunks it took in, the
+        # cruise, and how many flights lived.
+        def rates(m, c):
+            return {"uranium-rounds-magazine/1000 km": m, "rebuilt space-platform-foundation/1000 km": 10.0,
+                    "taken promethium-asteroid-chunk/1000 km": c, "cruise km/s": 50.0, "survived": 1.0,
+                    "km_mean": 30000.0}
+        return [{"start": s, "mode": "plan", "passed": True, "rates": rates(m, c), "counts": {}}
+                for s, m, c in zip((0.0, 0.1), magazines, chunks)]
+
+    def test_the_hub_holds_its_own_slots_and_its_cargo_bays(self):
+        from tools import plan
+
+        self.assertEqual(plan.capacity(self.DESIGN), 59)
+        self.assertEqual(plan.capacity(self.FULL), 59 + 24 * 20)
+
+    def test_a_measurement_holds_a_stack_of_every_part_and_the_ammo_to_load_the_turrets(self):
+        import warnings
+
+        from draftsman.data import items
+
+        from generators import platform
+        from tools import plan
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            data = platform.build(**self.DESIGN).to_dict()
+            fed = platform.build(**{k: v for k, v in self.FULL.items()}).to_dict()
+        stock = plan.measure_stock(data, self.DESIGN)
+        for name in {e["name"] for e in data["blueprint"]["entities"]}:
+            self.assertEqual(stock[name], items.raw[name]["stack_size"], name)
+        self.assertEqual(stock["space-platform-foundation"], 100)
+        self.assertNotIn("railgun-ammo", stock)  # not fed: the script stocks the turrets
+        stock = plan.measure_stock(fed, self.FULL)
+        self.assertGreaterEqual(stock["railgun-ammo"], 16 * 10)
+        self.assertGreaterEqual(stock["uranium-rounds-magazine"], 16 * 10)
+        self.assertIn("fusion-power-cell", stock)
+        self.assertLessEqual(plan.slots(stock), plan.capacity(self.FULL))
+
+    def test_a_design_that_keeps_no_promethium_cant_plan_a_trip(self):
+        from tools import plan
+
+        self.assertIn("promethium", plan.cannot_plan({"railguns": 8, "guns": 4, "thrusters": 1, "fuel": True}))
+        self.assertIsNone(plan.cannot_plan(self.DESIGN))
+
+    def test_research_is_the_flights_own_unless_given(self):
+        from generators.platform import FEED_RESEARCH
+        from tools import plan
+
+        self.assertEqual(plan.research_for(self.DESIGN), {**plan.MIX_RESEARCH, "construction-robotics": 1})
+        self.assertEqual(plan.research_for(self.FULL), {**plan.MIX_RESEARCH, "construction-robotics": 1, **FEED_RESEARCH})
+        self.assertEqual(plan.research_for(self.DESIGN, {"railgun-damage": 4}), {"railgun-damage": 4})
+
+    def test_readying_follows_the_designs_options(self):
+        from tools import plan
+
+        full = " ".join(plan.readying(self.FULL)).lower()
+        for word in ("reserve", "fusion power cells", "fluoroketone", "accumulator", "feed", "24 cargo bays"):
+            self.assertIn(word, full)
+        plain = " ".join(plan.readying({"railguns": 8, "guns": 4, "thrusters": 1})).lower()
+        for word in ("thruster fuel", "power", "load the turrets"):
+            self.assertIn(word, plain)
+
+    def test_a_plan_from_measured_rates(self):
+        from tools import plan
+
+        p = plan.assemble(self.DESIGN, "edge", plan.research_for(self.DESIGN), runs=8, rows=self.rows())
+        trip = p["trip"]
+        self.assertGreater(trip["chunks"], 0)
+        self.assertAlmostEqual(trip["packs"], trip["chunks"] * 10 / 25)
+        self.assertLessEqual(trip["loaded slots"], 59)
+        self.assertEqual(sum(s["slots"] for s in p["stock"]), trip["loaded slots"])
+        for s in p["stock"]:  # whole stacks: they cost no more slots
+            from draftsman.data import items
+            self.assertEqual(s["count"] % items.raw[s["item"]]["stack_size"], 0, s)
+        self.assertIn(p["limit"]["by"], ("hub slots", "the chance of coming back"))
+        self.assertEqual(sorted(p["measured"]), [0.0, 0.1])
+        self.assertTrue(p["readying"] and p["caveats"])
+        self.assertIsNone(p["error"])
+        json.dumps(p)  # for --json and the site
+        text = plan.text(p)
+        for word in ("turn", "uranium-rounds-magazine", "Before leaving"):
+            self.assertIn(word, text)
+
+    def test_a_plan_says_when_no_trip_fits(self):
+        from tools import plan
+
+        p = plan.assemble(self.DESIGN, "edge", {}, runs=8, rows=self.rows(magazines=(100_000.0, 200_000.0)))
+        self.assertIsNone(p["trip"])
+        self.assertIn("fits", p["error"])
+        self.assertIn("fits", plan.text(p))
+
+    def test_a_plan_from_nauvis_says_when_it_cant_get_there(self):
+        from tools import plan
+
+        legs = [{"part": "out", "from": "nauvis", "to": "fulgora", "km": 15000.0, "finished": 2, "flights": 2,
+                 "row": {"uranium-rounds-magazine": 5.0, "km/s": 76.0, "deaths": 0.0}},
+                {"part": "out", "from": "aquilo", "to": None, "km": None, "finished": 0, "flights": 2,
+                 "row": {"uranium-rounds-magazine": 14.0, "km/s": 20.0, "deaths": 0.0}}]
+        p = plan.assemble(self.DESIGN, "nauvis", {}, runs=2, rows=self.rows(), legs=legs)
+        self.assertIsNone(p["trip"])
+        self.assertIn("aquilo", p["error"])
+
+    def test_a_check_against_trips_flown_whole(self):
+        from tools import plan
+
+        p = plan.assemble(self.DESIGN, "edge", {}, runs=8, rows=self.rows())
+        means = {"flights": 4, "came back": 0.75, "chunks back": 30.0, "chunks per trip back": 40.0, "first out": {}}
+        check = plan.compare(p, means)
+        self.assertEqual(check["planned"]["comes back"], p["trip"]["comes back"])
+        self.assertEqual(check["flown"]["came back"], 0.75)
+        self.assertIn("chunks a trip", plan.compare_text(check))
+
+
 if __name__ == "__main__":
     unittest.main()
