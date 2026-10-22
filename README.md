@@ -29,6 +29,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `site/` | library browser: `template.html`, built by `python -m tools.site` into `site/dist/` (gitignored) |
 | `data/` | `data-raw-dump.json` from `python -m tools.dump_data` (gitignored) |
 | `NOTES.md` | format facts and how each was verified |
+| `docs/` | design notes: `layout-optimizer.md` (where the generators spend their tiles, and how to optimise it) |
 
 ## Library site (GitHub Pages)
 
