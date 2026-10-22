@@ -1215,6 +1215,8 @@ class PlatformFeed(unittest.TestCase):
         self.assertIn("feeds the turrets", self.bp["description"])
         self.assertTrue(self.bp["label"].endswith(", feeds its turrets"), self.bp["label"])
         self.assertNotIn("Supply railgun ammo", self.bp["description"])
+        for tech, level in platform.FEED_RESEARCH.items():  # its hub inserters keep up 0.1 out only with it
+            self.assertIn(f"research {tech}-{level}", self.bp["description"])
         self.assertLessEqual(len(self.bp["description"].encode()), 500)
         self.assertLessEqual(len(self.bp["label"].encode()), 200)
 

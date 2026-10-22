@@ -3,7 +3,7 @@
     "item": "blueprint",
     "version": 562954249699328,
     "label": "Platform: 16 railguns, 16 gun turrets, 1 thruster, 24 cargo bays, makes its fuel with a reserve, powers itself, keeps promethium, feeds its turrets",
-    "description": "Railguns in front for big and huge asteroids, gun turrets behind them, the hub at the origin. The hub feeds the turrets railgun ammo and magazines; it makes thruster fuel (research space-platform-thruster), fill its tanks first. Fusion power (research cryogenic-plant): before leaving, fill the reactors with cells and the loops with cold fluoroketone, charge the accumulator and railguns. With construction-robotics the hub rebuilds from its stock: fill the bays with ammo, spares and foundation.",
+    "description": "Railguns in front for big and huge asteroids, gun turrets behind, the hub at the origin. The hub feeds the turrets (research inserter-capacity-bonus-7); it makes thruster fuel (research space-platform-thruster), fill its tanks first. Fusion power (research cryogenic-plant): before leaving fill the reactors with cells and the loops with cold fluoroketone, charge the accumulator and railguns. With construction-robotics the hub rebuilds from stock: fill the bays with ammo, spares and foundation.",
     "icons": [
       {
         "index": 1,
