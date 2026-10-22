@@ -1025,6 +1025,26 @@ def leg_rates(rows: list[dict]) -> list[dict]:
     return out
 
 
+def leg_fuel(rows: list[dict]) -> list[dict]:
+    """Per leg, in the order flown: fuel and oxidizer the module made a second over every flight that
+    got onto it, and what the thruster and its tanks held at its end (the reserve as it got there)
+    over the flights that finished it (Flown.legs)."""
+    out = []
+    for i in range(max((len(r["legs"]) for r in rows), default=0)):
+        on = [r["legs"][i] for r in rows if len(r["legs"]) > i and "made" in r["legs"][i]]
+        whole = [leg for leg in on if leg["to"] is not None]
+        if not on:
+            continue
+        seconds = sum(leg["seconds"] for leg in on)
+        fluids = sorted({k for leg in on for k in (*leg["made"], *leg["held"])})
+        name = whole[0] if whole else on[0]
+        out.append({"from": name["from"], "to": name["to"], "flights": len(on), "finished": len(whole),
+                    "made/s": {k: sum(leg["made"].get(k, 0) for leg in on) / seconds for k in fluids} if seconds else {},
+                    "held at end": {k: sum(leg["held"].get(k, 0) for leg in whole) / len(whole) for k in fluids}
+                    if whole else {}})
+    return out
+
+
 def legs_home(rates: list[dict]) -> list[dict]:
     """leg_rates with the way home as the way out reversed (mirrored) when no flight came home to
     measure it; measured legs home stand."""
@@ -1127,14 +1147,16 @@ def platform_legs_margin(server, runs: int = 8) -> dict:
     return {**platform_legs(server, runs, stock=stock, script_fuel=True, turn=planned["turn"]), "plan": planned["plan"]}
 
 
-def platform_legs(server, runs: int = 8, stock=None, script_fuel: bool = False, turn: float = WHOLE_TRIP_TURN) -> dict:
+def platform_legs(server, runs: int = 8, stock=None, script_fuel: bool = False, turn: float = WHOLE_TRIP_TURN,
+                 design=None) -> dict:
     """What does getting there cost? PROMETHIUM_PLATFORM, readied in Nauvis orbit with stock
     (LEGS_STOCK), flies by Fulgora and Aquilo to the solar system edge, out to WHOLE_TRIP_TURN and
     back, and home to Nauvis the same way, `runs` times, with nothing topped up and every chunk
     kept: per flight as platform-whole-trip, with its legs; per leg (leg_rates); and the trip model
     for the same trip with the measured legs before and after the route, and its best trip with them.
     With script_fuel its thrusters are kept full by script, the module still aboard: what the legs
-    cost in stock when fuel can't strand it."""
+    cost in stock when fuel can't strand it. design: another platform flown the same way
+    (PROMETHIUM_PLATFORM by default); per leg also what its fuel module made (leg_fuel)."""
     import inspect
     import json
     import warnings
@@ -1143,12 +1165,12 @@ def platform_legs(server, runs: int = 8, stock=None, script_fuel: bool = False, 
     from validator.flight import run_flight
     from validator.validate import Report
 
-    stock = stock or LEGS_STOCK
+    stock, design = stock or LEGS_STOCK, design or PROMETHIUM_PLATFORM
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        data = platform.build(**{k: v for k, v in PROMETHIUM_PLATFORM.items()
+        data = platform.build(**{k: v for k, v in design.items()
                                  if k in inspect.signature(platform.build).parameters}).to_dict()
-        [flight] = platform.flight_tests(**PROMETHIUM_PLATFORM, start=0.0, turn=turn, fill=True,
+        [flight] = platform.flight_tests(**design, start=0.0, turn=turn, fill=True,
                                          seconds=LEGS_SECONDS, supplies=stock, research=WHOLE_TRIP_RESEARCH,
                                          home=LEGS_HOME, via=LEGS_VIA, script_fuel=script_fuel)
     rows = []
@@ -1174,12 +1196,35 @@ def platform_legs(server, runs: int = 8, stock=None, script_fuel: bool = False, 
     for r in rates_by_leg:
         print(f"{r['part']} {r['from']}-{r['to']}: {r['finished']}/{r['flights']} finished, "
               f"{json.dumps({k: round(v, 3) for k, v in r['row'].items()})}", file=sys.stderr)
+    fuel_by_leg = leg_fuel(rows)
+    for r in fuel_by_leg:
+        print(f"{r['from']}-{r['to']}: made {json.dumps({k: round(v, 1) for k, v in r['made/s'].items()})} a second, "
+              f"held at its end {json.dumps({k: round(v) for k, v in r['held at end'].items()})}", file=sys.stderr)
     model = legs_model(rates_by_leg, stock)
     print(f"model: {json.dumps(model)}", file=sys.stderr)
-    return {"design": PROMETHIUM_PLATFORM, "home": LEGS_HOME, "via": LEGS_VIA, "script fuel": script_fuel,
+    return {"design": design, "home": LEGS_HOME, "via": LEGS_VIA, "script fuel": script_fuel,
             "turn": turn,
             "supplies": stock, "research": WHOLE_TRIP_RESEARCH, "flights": rows, "means": means,
-            "leg rates": rates_by_leg, "model": model}
+            "leg rates": rates_by_leg, "leg fuel": fuel_by_leg, "model": model}
+
+
+# fuel="advanced" (NOTES.md): the filed platform on the advanced thruster recipes, which need a
+# twentieth of the metallic and carbonic chunks; flown from Nauvis on its own fuel as platform-legs
+# flew the plain one ("on board"), with the plain one re-flown as the control.
+ADVANCED_PLATFORM = {**PROMETHIUM_PLATFORM, "fuel": "advanced"}
+
+
+def platform_advanced_fuel_margin(server, runs: int = 8) -> dict:
+    """The trip platform-legs-margin flew on fuel by script (its load and turn), flown by ADVANCED_PLATFORM
+    on its own fuel: whether the advanced recipes take the place of the script's fuel."""
+    import json
+
+    from tools import trip
+    from tools.optimise import CACHE
+
+    margin = json.loads((CACHE / "platform-legs-margin.result.json").read_text())
+    return {**platform_legs(server, runs, stock=margin["supplies"], turn=margin["turn"], design=ADVANCED_PLATFORM),
+            "plan": margin["plan"]}
 
 
 STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-research": platform_research,
@@ -1200,4 +1245,7 @@ STUDIES = {"belt-fill": belt_fill, "platform-shape": platform_shape, "platform-r
                                                                                     shock=SHOCK),
            "platform-legs": lambda server: {"on board": platform_legs(server),
                                             "fuel by script": platform_legs(server, script_fuel=True)},
-           "platform-legs-planned": platform_legs_planned, "platform-legs-margin": platform_legs_margin}
+           "platform-legs-planned": platform_legs_planned, "platform-legs-margin": platform_legs_margin,
+           "platform-advanced-fuel": lambda server: platform_legs(server, design=ADVANCED_PLATFORM),
+           "platform-advanced-fuel-control": lambda server: platform_legs(server),
+           "platform-advanced-fuel-margin": platform_advanced_fuel_margin}
