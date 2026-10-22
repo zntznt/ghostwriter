@@ -735,6 +735,17 @@ class Platform(unittest.TestCase):
         with self.assertRaises(ValueError):
             platform.flight_tests(shock=8)  # no turn to take it at
 
+    def test_a_trip_can_set_out_from_home_by_way_of_stops(self):
+        # home and via: it sets out from Nauvis orbit, flies the stops to the route's origin, makes
+        # its trip, and comes home the same way (validator.flight.Flight).
+        [flight] = platform.flight_tests(turn=0.02, home="nauvis", via=["fulgora", "aquilo"])
+        self.assertEqual((flight.home, flight.via), ("nauvis", ["fulgora", "aquilo"]))
+        self.assertEqual((platform.flight_tests()[0].home, platform.flight_tests()[0].via), ("", []))
+        with self.assertRaises(ValueError):
+            platform.flight_tests(via=["aquilo"])  # stops on the way from nowhere
+        with self.assertRaises(ValueError):
+            platform.flight_tests(start=0.1, turn=0.2, home="nauvis")  # from home it flies the whole route
+
     def test_a_round_trip_turns_and_a_fed_platform_can_ready_in_orbit(self):
         [flight] = platform.flight_tests(turn=0.02, fill=True, ammo_feed=True)
         self.assertEqual((flight.turn, flight.fill), (0.02, True))
@@ -1689,6 +1700,41 @@ class Trip(unittest.TestCase):
         self.assertEqual((loaded["loaded slots"], made["loaded slots"]), (2200, 200))
         self.assertNotIn("railgun-ammo", made["used"])
 
+    def test_legs_to_and_from_the_route_use_stock_before_and_after_it(self):
+        # before and after: legs flown at their own rates, in order, before the route and after it
+        # (Nauvis to the edge and back). Their use is loaded and counted, and their time and deaths,
+        # and nothing comes in on them.
+        from tools import trip
+
+        leg = {self.FOUNDATION: 200.0, "km/s": 50.0, "deaths": 0.001}
+        plain = trip.trip(self.flat(), 0.1, slots=1000, length=1e6)
+        legs = trip.trip(self.flat(), 0.1, slots=1000, length=1e6, before=[(10000, leg)], after=[(10000, leg)])
+        self.assertEqual(legs["km"], plain["km"] + 20000)
+        self.assertAlmostEqual(legs["used"][self.FOUNDATION], plain["used"][self.FOUNDATION] + 4000)
+        self.assertAlmostEqual(legs["hours"], plain["hours"] + 20000 / 50 / 3600)
+        self.assertAlmostEqual(legs["comes back"], math.exp(-0.001 * 20))
+        self.assertEqual(legs["loaded slots"], plain["loaded slots"] + 40)
+        # A load that covers the route alone runs out on it: the leg out took its share first.
+        short = trip.trip(self.flat(), 0.1, slots=1000, length=1e6, stock={self.FOUNDATION: 20000},
+                          before=[(10000, leg)], after=[(10000, leg)])
+        item, km, share = short["ran out"]
+        self.assertEqual(item, self.FOUNDATION)
+        self.assertAlmostEqual(km, 10000 + 180000, delta=1000)
+        self.assertGreater(share, 0)
+
+    def test_legs_come_from_a_legs_result_before_and_after_the_route(self):
+        # trip.legs: a platform-legs result's leg rates, the ones out before the route and the ones
+        # home after it, as (km, row) in the order flown; the route itself is the model's own.
+        from tools import trip
+
+        rates = [{"part": "out", "from": "nauvis", "to": "aquilo", "km": 45000, "row": {"km/s": 50.0}},
+                 {"part": "route", "from": "solar-system-edge", "to": "solar-system-edge", "km": 160000, "row": {}},
+                 {"part": "home", "from": "solar-system-edge", "to": "aquilo", "km": 100000, "row": {"km/s": 70.0}},
+                 {"part": "home", "from": "aquilo", "to": "nauvis", "km": 45000, "row": {"km/s": 60.0}}]
+        before, after = trip.legs({"leg rates": rates})
+        self.assertEqual(before, [(45000, {"km/s": 50.0})])
+        self.assertEqual(after, [(100000, {"km/s": 70.0}), (45000, {"km/s": 60.0})])
+
     def test_a_trip_that_needs_more_than_the_hub_holds_does_not_fit(self):
         from tools import trip
 
@@ -1809,6 +1855,28 @@ class Trip(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 self.assertEqual(trip.main([str(path), "--whole-trip", str(whole)]), 0)
         self.assertIn("with a whole trip measured at 0.01", out.getvalue())
+        self.assertIn("best: turn", out.getvalue())
+
+    def test_the_command_plans_with_the_legs_to_the_route_and_home(self):
+        import contextlib
+        import io
+
+        from tools import trip
+
+        rates = {"rebuilt space-platform-foundation/1000 km": 100.0, "taken promethium-asteroid-chunk/1000 km": 5.0,
+                 "cruise km/s": 40.0, "km_mean": 20000.0, "survived": 1.0}
+        result = {"trials": [{"start": s, "mode": "out", "passed": True, "rates": rates} for s in (0.0, 0.1)]}
+        leg = {self.FOUNDATION: 50.0, "km/s": 50.0, "deaths": 0.0}
+        legs = {"leg rates": [{"part": "out", "from": "nauvis", "to": "solar-system-edge", "km": 145000, "row": leg},
+                              {"part": "home", "from": "solar-system-edge", "to": "nauvis", "km": 145000, "row": leg}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path, legs_path = Path(tmp) / "route.json", Path(tmp) / "legs.json"
+            path.write_text(json.dumps(result))
+            legs_path.write_text(json.dumps(legs))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(trip.main([str(path), "--legs", str(legs_path)]), 0)
+        self.assertIn("with 290,000 km of legs to the route and home", out.getvalue())
         self.assertIn("best: turn", out.getvalue())
 
 

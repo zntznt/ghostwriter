@@ -509,7 +509,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
 def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=False, reserve=False, script_fuel=False,
                  power=False, magazine=AMMO["gun-turret"], reverse=False, take=None, ammo_feed=False, turn=0.0,
-                 fill=False, shock=0, **params):
+                 fill=False, shock=0, home="", via=(), **params):
     """research: technology series -> levels researched; start: share of the route
     to begin at; supplies: items into the hub, which rebuilds from them (with
     construction-robotics researched) and repairs with repair packs
@@ -532,7 +532,9 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
     back to where it set out once it reaches that share of the route. fill: a fed platform
     readied in orbit first, its feed's belts and turrets filled while the hub holds its stock.
     shock: as a round trip turns, that many railguns nearest the middle die, for the hub to
-    rebuild (validator.flight.Flight.shock)."""
+    rebuild (validator.flight.Flight.shock). home and via: it sets out from home orbit (where it
+    readies), flies the via stops to the solar system edge, and comes home the same way, as a real
+    trip does (validator.flight.Flight.home)."""
     from validator.flight import PRIME, Flight
 
     if ammo_feed and magazine != AMMO["gun-turret"]:
@@ -546,6 +548,10 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
                          + (" (and a flight back has nowhere to turn)" if reverse else ""))
     if shock and not turn:
         raise ValueError("a shock comes as a round trip turns; this flight has no turn")
+    if via and not home:
+        raise ValueError(f"via {list(via)}: stops on the way from home, but no home")
+    if home and (start or reverse):
+        raise ValueError(f"from {home} it flies the whole route, not from {start} of it")
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
     research = {**(research or {}), **({"space-platform": 1, "space-platform-thruster": 1} if fuel else {}),
                 **({"cryogenic-plant": 1} if power else {})}  # the cooler's recipe
@@ -559,4 +565,4 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
                    ammo={} if ammo_feed else {**AMMO, "gun-turret": magazine}, research=research, primed=primed, start_speed=CRUISE if on_board else 0.0,
                    charged=power, coolant=COOLANT if power else 0, take=list(take or []),
                    loaded=dict(FED) if ammo_feed else {}, feed=sorted(set(FED.values())) if ammo_feed else [],
-                   turn=turn, fill=fill, shock=shock)]
+                   turn=turn, fill=fill, shock=shock, home=home, via=list(via))]

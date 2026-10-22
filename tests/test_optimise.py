@@ -251,6 +251,31 @@ class Cache(unittest.TestCase):
         self.assertEqual(means["first out"], {"space-platform-foundation": 1})
         self.assertEqual((means["km"], means["dry turret s"]), (116_000, 2.5))
 
+    def test_a_flight_from_home_splits_into_legs_at_its_stops(self):
+        # Flight.home: each place it reaches is a stop with the km flown so far and what the hub
+        # held; a leg is what happened between two stops, and the last runs on to the end if it
+        # died between them. Used is what the hub lost (a gain is negative).
+        from validator.flight import Flown
+
+        stops = [{"at": "nauvis", "seconds": 0, "km": 0, "cargo": {"railgun-ammo": 100, "pipe": 50}, "deaths": {}},
+                 {"at": "fulgora", "seconds": 300, "km": 15000, "cargo": {"railgun-ammo": 90, "pipe": 50},
+                  "deaths": {"gun-turret <- medium-metallic-asteroid": 1}},
+                 {"at": "aquilo", "seconds": 900, "km": 45000, "cargo": {"railgun-ammo": 60, "pipe": 40},
+                  "deaths": {"gun-turret <- medium-metallic-asteroid": 1, "railgun-turret <- big-oxide-asteroid": 2}}]
+        died = Flown("legs", seconds=1500, trip_km=60000, stops=stops, cargo={"railgun-ammo": 20, "pipe": 40,
+                                                                                "promethium-asteroid-chunk": 3},
+                     deaths={"gun-turret <- medium-metallic-asteroid": 1, "railgun-turret <- big-oxide-asteroid": 3},
+                     ended="hub destroyed by huge-oxide-asteroid")
+        self.assertEqual(died.legs(), [
+            {"from": "nauvis", "to": "fulgora", "km": 15000, "seconds": 300, "used": {"railgun-ammo": 10},
+             "died": {"gun-turret <- medium-metallic-asteroid": 1}},
+            {"from": "fulgora", "to": "aquilo", "km": 30000, "seconds": 600, "used": {"railgun-ammo": 30, "pipe": 10},
+             "died": {"railgun-turret <- big-oxide-asteroid": 2}},
+            {"from": "aquilo", "to": None, "km": 15000, "seconds": 600,
+             "used": {"railgun-ammo": 40, "promethium-asteroid-chunk": -3},
+             "died": {"railgun-turret <- big-oxide-asteroid": 1}}])
+        self.assertEqual(Flown("plain").legs(), [])
+
     def test_lost_trips_count_the_bays_and_railguns_that_died(self):
         # What starts the cascade (NOTES.md): railguns die, huge asteroids get through to the bays.
         from tools import studies

@@ -528,11 +528,39 @@ local function flight_tick()
     pos = p.space_location.name == fl.origin and 0 or p.space_location.name == fl.destination and 1 or pos
   end
   fl.odometer, fl.pos = fl.odometer + math.abs(pos - fl.pos) * fl.length, pos
+  -- home: km flown on every connection, legs included, and a stop at each place it reaches,
+  -- with what the hub held and what had died by then.
+  if fl.home then
+    local c = p.space_connection
+    if c and p.distance then
+      if fl.leg and fl.leg.name == c.name then fl.trip_km = fl.trip_km + math.abs(p.distance - fl.leg.d) * c.length end
+      fl.leg = {name = c.name, d = p.distance}
+    else
+      fl.leg = nil
+    end
+    -- Back in the same orbit without having turned (it set out and fell back) isn't a new place.
+    local here = p.space_location and p.space_location.name
+    if here and here ~= fl.at and (here ~= fl.last_stop or fl.turned_since) then
+      local deaths = {}
+      for k, n in pairs(fl.deaths) do deaths[k] = n end
+      fl.stops[#fl.stops + 1] = {at = here, seconds = (game.tick - fl.start) / 60, km = fl.trip_km, deaths = deaths,
+                                 cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()}
+      fl.last_stop, fl.turned_since = here, false
+    end
+    fl.at = here
+    -- At the origin on the way out: on to the destination, the route's own schedule. A stop after
+    -- the shattered planet would never send it there: that's a fly_condition location, whose stop
+    -- is done once its wait conditions are, and with none they are at once (NOTES.md).
+    if here == fl.origin and not fl.outbound and not fl.turned then
+      p.schedule = {current = 1, records = {{station = fl.destination}}}
+      fl.outbound = true
+    end
+  end
   -- turn: there the schedule goes back to the origin, which turns a platform round at once
   -- and keeps its speed (NOTES.md); back: when it arrives there again.
   if fl.turn and not fl.turned and pos >= fl.turn then
     p.schedule = {current = 1, records = {{station = fl.origin}}}
-    fl.turned = game.tick
+    fl.turned, fl.turned_since = game.tick, true
     -- What it had then: the two legs apart.
     fl.at_turn = {km = fl.odometer, cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()}
     -- shock: a gap in the railgun line where asteroids are thickest, nearest the middle first.
@@ -540,7 +568,19 @@ local function flight_tick()
     table.sort(railguns, function(a, b) return math.abs(a.position.x) < math.abs(b.position.x) end)
     for i = 1, math.min(fl.shock or 0, #railguns) do railguns[i].die() end
   end
-  if fl.turned and not fl.back and p.space_location and p.space_location.name == fl.origin then fl.back = game.tick end
+  if fl.turned and not fl.back and p.space_location then
+    local here = p.space_location.name
+    if fl.home and not fl.homeward and here == fl.origin then
+      -- Back at the origin: home the way it came.
+      local records = {}
+      for i = #fl.via, 1, -1 do records[#records + 1] = {station = fl.via[i]} end
+      records[#records + 1] = {station = fl.home}
+      p.schedule = {current = 1, records = records}
+      fl.homeward = game.tick
+    elseif here == (fl.home or fl.origin) and (fl.homeward or not fl.home) then
+      fl.back = game.tick
+    end
+  end
   if game.tick % 60 == 0 then
     -- The hub rebuilds what dies as new entities, which need stocking too.
     fl.thrusters = p.surface.find_entities_filtered{type = "thruster"}
@@ -589,7 +629,7 @@ local function flight_tick()
     -- that dies spills its slots' items, which come back when the hub rebuilds it (NOTES.md):
     -- an item that comes back hasn't run out.
     for name in pairs(fl.watch) do
-      if hub.get_item_count(name) == 0 then fl.ran_out[name] = fl.ran_out[name] or fl.odometer
+      if hub.get_item_count(name) == 0 then fl.ran_out[name] = fl.ran_out[name] or (fl.home and fl.trip_km or fl.odometer)
       else fl.ran_out[name] = nil end
     end
     -- low: seconds a thruster held under low_fuel of either fluid (thrust follows the line's fill).
@@ -728,18 +768,32 @@ end
 -- made and generated while readied (fill) is left out.
 local function leave(fl)
   local p = fl.platform
-  if fl.from_start > 0 then
+  local records = {}
+  if fl.home then
+    -- From home orbit, at rest as a real departure is: by the via stops to the origin (flight_tick
+    -- sends it on to the destination from there). A stop with no wait conditions doesn't stop it,
+    -- and a schedule finds its own way between stops (NOTES.md).
+    for _, stop in pairs(fl.via) do records[#records + 1] = {station = stop} end
+    records[#records + 1] = {station = fl.origin}
+    p.schedule = {current = 1, records = records}
+  elseif fl.from_start > 0 then
     p.space_connection = fl.connection
     p.distance = fl.reversed and 1 - fl.from_start or fl.from_start
   else
     p.space_location = fl.origin
   end
-  p.schedule = {current = 1, records = {{station = fl.destination}}}
+  if not fl.home then p.schedule = {current = 1, records = {{station = fl.destination}}} end
   p.paused = false
-  if fl.start_speed then p.speed = fl.start_speed end
+  if fl.start_speed and not fl.home then p.speed = fl.start_speed end
   fl.filling, fl.start, fl.pos, fl.odometer, fl.furthest = nil, game.tick, fl.from_start, 0, fl.from_start
   fl.deaths, fl.rebuilt, fl.dry, fl.brownout, fl.speed_max, fl.low = {}, {}, 0, 0, 0, 0
   for _, c in pairs(p.hub.get_inventory(defines.inventory.hub_main).get_contents()) do fl.watch[c.name] = true end
+  if fl.home then
+    -- Home is the first stop: by the next tick it has left orbit.
+    fl.trip_km, fl.at, fl.last_stop = 0, fl.home, fl.home
+    fl.stops = {{at = fl.home, seconds = 0, km = 0, deaths = {},
+                 cargo = p.hub.get_inventory(defines.inventory.hub_main).get_contents()}}
+  end
   local power = p.surface.global_electric_network_statistics
   fl.power_base = power and {generated = power.output_counts["fusion-generator"] or 0,
                              plant = (power.input_counts["fusion-reactor"] or 0)
@@ -1127,6 +1181,18 @@ remote.add_interface("ghostwriter", {
     if args.start and not (args.start >= 0 and args.start < 1) then
       return reply{error = "start must be from 0 to below 1 (a share of the route), not " .. args.start}
     end
+    -- home and via: it sets out from home and flies the via stops to `from`; each hop needs a connection.
+    if args.via and not args.home then return reply{error = "via: stops on the way from home, but no home"} end
+    if args.home then
+      if (args.start or 0) > 0 then return reply{error = "from home it flies the whole route, not from " .. args.start} end
+      local at, stops = args.home, {}
+      for _, stop in pairs(args.via or {}) do stops[#stops + 1] = stop end
+      stops[#stops + 1] = args.from
+      for _, stop in ipairs(stops) do
+        if not connection_between(at, stop) then return reply{error = "no space connection between " .. at .. " and " .. stop} end
+        at = stop
+      end
+    end
     force.unlock_space_platforms()
     for name in pairs(prototypes.space_location) do force.unlock_space_location(name) end
     local inv = game.create_inventory(1)
@@ -1146,7 +1212,7 @@ remote.add_interface("ghostwriter", {
     -- exactly the ticks asked. Paused only once nothing can refuse the flight:
     -- only flight_teardown unpauses, and a refusal leaves no flight to tear down.
     game.tick_paused = true
-    local p = force.create_space_platform{name = "ghostwriter flight " .. game.tick, planet = "nauvis",
+    local p = force.create_space_platform{name = "ghostwriter flight " .. game.tick, planet = args.home or "nauvis",
                                           starter_pack = "space-platform-starter-pack"}
     p.apply_starter_pack()
     local s = p.surface
@@ -1220,7 +1286,8 @@ remote.add_interface("ghostwriter", {
                       generated_j = 0, plant_j = 0, brownout = 0, take = args.take, taken = {}, bays_lost = {},
                       fed = {}, dry = 0, origin = args.from, destination = args.to, start_speed = args.start_speed,
                       turn = args.turn, shock = args.shock, low_fuel = args.low_fuel, low = 0, pos = start, odometer = 0, watch = {},
-                      ran_out = {}, filled = {}, made_base = {}}
+                      ran_out = {}, filled = {}, made_base = {}, home = args.home, via = args.via or {},
+                      stops = {}, trip_km = 0}
     -- feed: the hub feeds the turrets by its own inserters, and what leaves it counts as
     -- used (fed), counted from here; loaded: each turret filled once from the hub to what
     -- an inserter fills it to (automated_ammo_count), as its feed would in orbit.
@@ -1291,7 +1358,7 @@ remote.add_interface("ghostwriter", {
           bays_lost = fl.bays_lost, fed = fl.fed, dry = fl.dry, position = fl.pos, odometer = fl.odometer,
           turned = fl.turned and (fl.turned - fl.start) / 60 or 0, back = fl.back and (fl.back - fl.start) / 60 or 0,
           ran_out = fl.ran_out, low_fuel = fl.low, filling = fl.filling ~= nil, drawn = fl.drawn or 0,
-          filled = fl.filled, at_turn = fl.at_turn or false}
+          filled = fl.filled, at_turn = fl.at_turn or false, stops = fl.stops, trip_km = fl.trip_km}
   end,
 
   flight_leave = function()

@@ -445,6 +445,67 @@ class Validator(unittest.TestCase):
         self.assertAlmostEqual(flown.at_turn["km"], 0.15 * 15000, delta=0.02 * 15000)  # the two legs apart
         self.assertIsInstance(flown.at_turn["cargo"], dict)
 
+    def test_a_flight_sets_out_from_home_and_comes_home(self):
+        # home: it sets out from Nauvis orbit, flies its stops to the route's origin (here none,
+        # Nauvis to Vulcanus), turns round on the route (Vulcanus toward Gleba) and comes home the
+        # same way. A stop with no wait conditions doesn't stop it, and a schedule finds its own way
+        # between stops (NOTES.md). Each place it reaches is a stop with what the hub held then.
+        # 30,600 km of medium asteroids: with 2 gun turrets and no research, half the hubs died.
+        data = platform.build(railguns=1, guns=6, thrusters=1).to_dict()
+        flight = Flight("from home", home="nauvis", origin="vulcanus", destination="gleba", turn=0.02, seconds=900,
+                        fuel=True, power=True, ammo=platform.AMMO, supplies={"pipe": 7},
+                        research={"physical-projectile-damage": 10, "weapon-shooting-speed": 6})
+        report = Report(self.server.version)
+        flown = run_flight(self.server, data, flight, report)
+        self.assertEqual(report.errors, [])
+        self.assertTrue(flown.survived, flown.ended)
+        self.assertGreater(flown.back, flown.turned)
+        self.assertEqual([s["at"] for s in flown.stops], ["nauvis", "vulcanus", "vulcanus", "nauvis"])
+        self.assertEqual(flown.stops[0]["cargo"].get("pipe"), 7)
+        legs = flown.legs()
+        self.assertEqual([(leg["from"], leg["to"]) for leg in legs],
+                         [("nauvis", "vulcanus"), ("vulcanus", "vulcanus"), ("vulcanus", "nauvis")])
+        for leg, km in zip(legs, (15000, 2 * 0.02 * 15000, 15000)):
+            self.assertAlmostEqual(leg["km"], km, delta=0.02 * km + 50)
+        self.assertAlmostEqual(flown.trip_km, 30600, delta=700)
+        self.assertAlmostEqual(flown.odometer, 600, delta=50)  # on the route itself, as before
+
+    def test_a_schedule_flies_toward_the_shattered_planet_until_its_wait_is_done(self):
+        # The shattered planet is a fly_condition location (dump): its stop is never arrived at; the
+        # platform flies toward it until the stop's wait conditions are met and then goes on to the
+        # next. With none, they are at once and the stop is skipped. Set just short of the edge.
+        data = platform.build(railguns=4, guns=6, thrusters=1).to_dict()
+        research = {"physical-projectile-damage": 10, "weapon-shooting-speed": 6, "railgun-damage": 2,
+                    "railgun-shooting-speed": 6}
+        state = ("/sc local p = storage.flight.platform rcon.print(helpers.table_to_json{conn = p.space_connection "
+                 "and p.space_connection.name or '', d = p.distance or -1, current = p.schedule.current})")
+
+        def fly(shattered):
+            try:
+                start_flight(self.server, data, Flight("fly", origin="aquilo", destination="solar-system-edge",
+                                                       fuel=True, power=True, ammo=platform.AMMO, research=research))
+                self.server.command("/sc local p = storage.flight.platform p.schedule = {current = 1, records = "
+                                    f"{{{{station = 'solar-system-edge'}}, {shattered}, {{station = 'aquilo'}}}}}} "
+                                    "p.space_connection = 'aquilo-solar-system-edge' p.distance = 0.999 p.speed = 1")
+                seen = []
+                for _ in range(8):
+                    _step(self.server, 150, timeout=60)
+                    seen.append(json.loads(self.server.command(state)))
+                return seen
+            finally:
+                self.server.call("flight_teardown")
+
+        waited = fly("{station = 'shattered-planet', wait_conditions = {{type = 'time', ticks = 600, "
+                     "compare_type = 'and'}}}")
+        out = [s for s in waited if s["conn"] == "solar-system-edge-shattered-planet"]
+        self.assertTrue(out, waited)  # it flew toward the shattered planet
+        self.assertEqual(waited[-1]["current"], 3, waited)  # and then on to Aquilo
+        self.assertEqual(waited[-1]["conn"], "aquilo-solar-system-edge", waited)
+        skipped = fly("{station = 'shattered-planet'}")
+        self.assertFalse([s for s in skipped if s["d"] > 1e-4 and s["conn"] == "solar-system-edge-shattered-planet"],
+                         skipped)  # never out toward it
+        self.assertEqual(skipped[-1]["conn"], "aquilo-solar-system-edge", skipped)
+
     def test_a_shock_kills_the_middle_railguns_as_it_turns(self):
         # shock: as the flight turns, that many railguns nearest the platform's middle die, as a
         # gap in the line would open where asteroids are thickest; with construction-robotics and
