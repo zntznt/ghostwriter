@@ -60,6 +60,11 @@ UNDER = "express-underground-belt"  # power=N: the cell belt under a reactor and
 # top band then bottom (the ice plants feed the plants under them).
 FUEL_BANDS = [("oxide", "ice-melting", "carbonic", "thruster-fuel"),
               ("oxide", "ice-melting", "metallic", "thruster-oxidizer")]
+# fuel="advanced": the advanced thruster recipes, 1,500 from 2 carbon or iron ore, a calcite and
+# 100 water (75 from 2 and 10), with calcite from advanced oxide crushing: each side's ore and plant.
+ADVANCED_BANDS = [("carbonic", "advanced-thruster-fuel"), ("metallic", "advanced-thruster-oxidizer")]
+ADVANCED_OXIDE = "advanced-oxide-asteroid-crushing"
+FUEL_RESEARCH = {True: "space-platform-thruster", "advanced": "advanced-asteroid-processing"}  # its recipes'
 CRUISE = 0.62  # km a tick the fuel=True platform holds on what it makes (NOTES.md): its flights start there
 # power=N: the first fusion reactor's centre, south-west of the hub, so that its generators,
 # cooler and coolant lines stay west of the thruster's tanks and off its exhaust; each
@@ -87,7 +92,68 @@ def _inserter_for(demand: float) -> str:
     raise ValueError(f"no inserter moves {demand:g} items/s")
 
 
-def _fuel_module(bp: Blueprint, xb: int, r: int, bottom: int):
+def _advanced_module(bp: Blueprint, xb: int, r: int) -> float:
+    """fuel="advanced" (_fuel_module): on each side the ice plant (row r) and the thruster plant
+    under it (r + 3), as fuel=True has them, and beside them an oxide crusher on advanced crushing
+    (ice and calcite) standing across both, rows r + 1 to r + 3: ice into the ice plant, calcite
+    into the thruster plant, and the calcite they leave onto the belt, so it never stops for it
+    (2 a craft with 3 ice, where a plant takes 1 for 100 water). Under it (r + 4 to r + 6) the
+    carbonic or metallic crusher hands its ore to the thruster plant, so the oxidizer line passes
+    under both crushers. Returns the calcite it can put on the belt a second, at most."""
+    from draftsman.data import recipes
+
+    from tools import rates
+
+    fixed = {p["name"]: p["amount"] for p in recipes.raw[ADVANCED_OXIDE]["results"]
+             if "independent_probability" not in p}  # the chunk comes back a tenth of the time
+    crushes = entities.raw["crusher"]["crafting_speed"] / recipes.raw[ADVANCED_OXIDE]["energy_required"]
+    ice = rates.recipe_any("ice-melting")
+    calcite = 0.0
+    for side, (chunk, recipe) in zip((-1, 1), ADVANCED_BANDS):
+        crusher_x, plant_x = (xb - 3, xb - 7) if side < 0 else (xb + 2, xb + 5)
+        toward = Direction.EAST if side < 0 else Direction.WEST  # an inserter's direction is where it picks up
+        xc, xf = xb + side, xb + 4 * side  # beside the belt, and beside the plants
+        plant = rates.recipe_any(recipe)
+        crafts = rates.crafts_per_second("chemical-plant", plant)
+        ore = next(k for k in plant.ingredients if k != "calcite")
+        bp.entities.append("chemical-plant", tile_position=(plant_x, r), recipe="ice-melting")
+        bp.entities.append("chemical-plant", tile_position=(plant_x, r + 3), recipe=recipe)
+        bp.entities.append("crusher", tile_position=(crusher_x, r + 1), recipe=ADVANCED_OXIDE)
+        bp.entities.append("inserter", tile_position=(xc, r + 1), direction=toward)
+        for y, item in ((r + 2, "calcite"), (r + 3, "oxide-asteroid-chunk")):
+            bp.entities.append("inserter", tile_position=(xc, y), direction=toward.opposite(), use_filters=True)
+            bp.entities[-1].set_item_filter(0, item)
+        bp.entities.append(_inserter_for(ice.ingredients["ice"] * rates.crafts_per_second("chemical-plant", ice)),
+                           tile_position=(xf, r + 1), direction=toward)
+        bp.entities.append(_inserter_for(plant.ingredients["calcite"] * crafts), tile_position=(xf, r + 3),
+                           direction=toward)
+        bp.entities.append("crusher", tile_position=(crusher_x, r + 4), recipe=f"{chunk}-asteroid-crushing")
+        bp.entities.append("inserter", tile_position=(xc, r + 4), direction=toward)
+        bp.entities.append("inserter", tile_position=(xc, r + 6), direction=toward.opposite(), use_filters=True)
+        bp.entities[-1].set_item_filter(0, f"{chunk}-asteroid-chunk")
+        bp.entities.append(_inserter_for(plant.ingredients[ore] * crafts), tile_position=(xf, r + 5), direction=toward)
+        calcite += fixed["calcite"] * crushes - plant.ingredients["calcite"] * crafts
+    # The ore crushers fill row r + 6, so the lines run a row lower than fuel=True's and the
+    # thruster stands a row further back (its top row r + 7). Oxidizer from its plant's west
+    # output down to row r + 7, under the belt, and west; fuel from its plant's west output under
+    # row r + 7 (a pair down from r + 6 to r + 8) to row r + 9, the thruster's middle row.
+    yo, yf = r + 7, r + 9
+    for y in (r + 6, yo):
+        bp.entities.append("pipe", tile_position=(xb + 5, y))
+    for x in range(xb + 2, xb + 5):
+        bp.entities.append("pipe", tile_position=(x, yo))
+    for x, d in ((xb + 1, Direction.EAST), (xb - 1, Direction.WEST)):
+        bp.entities.append("pipe-to-ground", tile_position=(x, yo), direction=d)
+    for x in range(2, xb - 1):
+        bp.entities.append("pipe", tile_position=(x, yo))
+    for y, d in ((r + 6, Direction.NORTH), (r + 8, Direction.SOUTH)):
+        bp.entities.append("pipe-to-ground", tile_position=(xb - 7, y), direction=d)
+    for x in range(2, xb - 6):
+        bp.entities.append("pipe", tile_position=(x, yf))
+    return calcite
+
+
+def _fuel_module(bp: Blueprint, xb: int, r: int, bottom: int, advanced: bool = False):
     """Crushers, plants and pipes beside the chunk belt (column xb, flowing south) from
     row r, and the thruster's lines (one thruster, centred, its top row r + 6).
 
@@ -95,9 +161,13 @@ def _fuel_module(bp: Blueprint, xb: int, r: int, bottom: int):
     (a chunk stacks to 1, so one left in its output stops it) and hands its
     product straight to its plant; the belt carries chunks only. An ice plant's
     outputs feed the plant under it directly. A thruster takes fuel on its east
-    side at its middle row and oxidizer at its top row (NOTES.md)."""
+    side at its middle row and oxidizer at its top row (NOTES.md). advanced: the
+    advanced recipes (_advanced_module), whose spare calcite rides the belt too."""
     from tools import rates
 
+    if advanced:
+        _void(bp, xb, bottom, _advanced_module(bp, xb, r))
+        return
     for side, (chunk1, plant1, chunk2, plant2) in zip((-1, 1), FUEL_BANDS):
         for band, (chunk, recipe) in enumerate(((chunk1, plant1), (chunk2, plant2))):
             y = r + 3 * band
@@ -127,8 +197,15 @@ def _fuel_module(bp: Blueprint, xb: int, r: int, bottom: int):
         bp.entities.append("pipe", tile_position=(xb - 5, y))
     for x in range(2, xb - 4):
         bp.entities.append("pipe", tile_position=(x, yf))
-    # What the belt brings and no crusher takes goes off the back edge into space.
-    inflow = 2 * rates.inserter_rate("inserter", BELT, from_belt=False)
+    _void(bp, xb, bottom)
+
+
+def _void(bp: Blueprint, xb: int, bottom: int, more: float = 0.0):
+    """What the belt brings (the collectors' two inserters, and `more` a second) and no crusher
+    takes goes off the back edge into space."""
+    from tools import rates
+
+    inflow = 2 * rates.inserter_rate("inserter", BELT, from_belt=False) + more
     void, n = rates.fewest_inserters(inflow, BELT, True, ("inserter", "fast-inserter"), margin=1.0)
     if n != 1:
         raise ValueError(f"the belt's end takes {n} {void}s; the layout has room for one")
@@ -300,6 +377,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         raise ValueError(f"layout is rows or front, not {layout!r}")
     if cargo_bays < 0 or margin < 0 or side_guns < 0:
         raise ValueError("cargo_bays, margin and side_guns can't be negative")
+    if fuel not in FUEL_RESEARCH and fuel:
+        raise ValueError(f"fuel is True or 'advanced' (the advanced thruster recipes), not {fuel!r}")
     if fuel and thrusters != 1:
         raise ValueError("fuel=True makes fuel for one thruster")
     if fuel and layout != "rows":
@@ -351,7 +430,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         xb = -(widths[0] // 2) + slot * step + 4
         if xb < east:
             raise ValueError(f"fuel=True needs more railguns: the belt would run down x={xb}, inside the hub's rows")
-        bottom = HUB + 10  # the module's two bands, its lines and the thruster (_fuel_module)
+        # The module's two bands, its lines and the thruster (_fuel_module): advanced's a row further back.
+        bottom = HUB + 10 + (fuel == "advanced")
         full = min(full, bottom)
         if xb + 8 > half:  # the east chemical plants end at xb + 7; the full-width rows at half - 1
             raise ValueError(f"cargo_bays={cargo_bays}: the fuel module would stand off the foundation's east edge "
@@ -363,7 +443,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
 
     bp.label = (f"Platform: {count(railguns, 'railgun')}, {count(guns, 'gun turret')}{' among them' if front else ''}, "
                 f"{count(thrusters, 'thruster')}" + (f", {count(cargo_bays, 'cargo bay')}" if cargo_bays else "")
-                + (", makes its fuel" if fuel else "") + (" with a reserve" if reserve else "")
+                + (", makes its fuel" if fuel else "") + (" (advanced)" if fuel == "advanced" else "")
+                + (" with a reserve" if reserve else "")
                 + (", powers itself" if power else "") + (", keeps promethium" if promethium else "")
                 + (f", {count(rockets, 'rocket turret')}" if rockets else "") + (", feeds its turrets" if ammo_feed else ""))
     where = "between the railguns" if front else "behind them"
@@ -371,7 +452,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
                       " for the rest, thrusters at the back, the hub in the middle (the blueprint's origin is the "
                       "hub's centre). " + ("The hub feeds the turrets: stock it with railgun ammo and magazines. "
                                             "Supply power" if ammo_feed else "Supply power, railgun ammo, magazines") +
-                      ("; it makes its thruster fuel and oxidizer (research space-platform-thruster)" +
+                      (f"; it makes its thruster fuel and oxidizer (research {FUEL_RESEARCH[fuel]})" +
                        ("; fill its tanks first." if reserve else ".") if fuel
                        else " and thruster fuel and oxidizer."))
     if cargo_bays:
@@ -384,7 +465,8 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
                           ("The hub feeds the turrets (research " +
                            ", ".join(f"{k}-{v}" for k, v in FEED_RESEARCH.items()) + ")" if ammo_feed else
                            "Supply railgun ammo" + (", rockets" if rockets else "") + " and magazines") +
-                          ("; it makes thruster fuel (research space-platform-thruster)" +
+                          (("; makes" if fuel == "advanced" else "; it makes") +  # 500 bytes: the longer research
+                           f" thruster fuel (research {FUEL_RESEARCH[fuel]})" +
                            (", fill its tanks first" if reserve else "") if fuel else
                            ("; supply thruster fuel" if ammo_feed else " and thruster fuel")) +
                           ". Fusion power (research cryogenic-plant): before leaving fill the reactors with cells" +
@@ -474,7 +556,7 @@ def build(railguns=4, guns=6, thrusters=2, front_gap=2, back_gap=2, spacing=1, l
         x = (HUB + CARGO_BAY // 2 + CARGO_BAY * column) * (1 if place % 2 == 0 else -1)
         bp.entities.append("cargo-bay", position=(x, -CARGO_BAY // 2 if place < 2 else CARGO_BAY // 2))
     if fuel:
-        _fuel_module(bp, xb, HUB, bottom)
+        _fuel_module(bp, xb, HUB, bottom, advanced=fuel == "advanced")
     if promethium:
         _promethium_path(bp, xb, HUB - 1 if ammo_feed else HUB - 2)  # ammo_feed: its feeders need column 2
     if ammo_feed:
@@ -554,6 +636,7 @@ def flight_tests(seconds=300, research=None, start=0.0, supplies=None, fuel=Fals
         raise ValueError(f"from {home} it flies the whole route, not from {start} of it")
     shape = ", ".join(f"{params.get(k, d)} {k}" for k, d in (("railguns", 4), ("guns", 6), ("thrusters", 2)))
     research = {**(research or {}), **({"space-platform": 1, "space-platform-thruster": 1} if fuel else {}),
+                **({FUEL_RESEARCH["advanced"]: 1} if fuel == "advanced" else {}),
                 **({"cryogenic-plant": 1} if power else {})}  # the cooler's recipe
     supplies = {**({"fusion-power-cell": CELLS} if power else {}), **(supplies or {})}
     on_board = fuel and not script_fuel

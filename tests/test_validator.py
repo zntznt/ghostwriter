@@ -21,7 +21,7 @@ from tools.factorio import locate
 from tools.library import entries
 from tools.settings import game_settings, registry
 from validator.circuit import Case, Expect, Inject, run_circuit_tests
-from validator.flight import Flight, _step, run_flight, start_flight
+from validator.flight import SPEED, Flight, _step, run_flight, start_flight
 from validator.flow import Flow, run_flow_tests
 from validator.tests_file import library_tests
 from validator.server import Server
@@ -954,6 +954,38 @@ class Validator(unittest.TestCase):
         for k in fluids:
             self.assertGreater(flown.made.get(k, 0), 2000, flown.made)
         self.assertGreater(flown.log[-1]["speed"], 0.4, flown.log)
+
+    def test_the_advanced_fuel_module_makes_fuel_from_chunks_on_its_belt(self):
+        # fuel="advanced": 1,500 fuel or oxidizer from 2 carbon or iron ore, a calcite and 100 water.
+        # An oxide chunk on the belt every 2 s, and a carbonic or a metallic one in turn, keep both
+        # plants going: each oxide crusher's ice goes to its ice plant, its calcite to its thruster
+        # plant and the rest onto the belt, so it never stops for calcite. 4 crafts of each in 90 s:
+        # the plain module's plants make 37.5 a second, 3,375 in 90 s at best. Put on the belt by
+        # script from Nauvis toward Vulcanus, where no asteroid is needed, and read once at the end.
+        data = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel="advanced").to_dict()
+        crushers = [e["position"]["x"] for e in data["blueprint"]["entities"] if e["name"] == "crusher"]
+        xb = int(min(crushers) + 2)  # the belt, between the crushers (2 wide, 1 off it)
+
+        def put(chunk):
+            return ("/sc local b = storage.flight.platform.surface.find_entities_filtered{name = 'transport-belt', "
+                    f"position = {{{xb + 0.5}, {platform.HUB + 0.5}}}}}[1] b.get_transport_line(1)"
+                    f".insert_at_back({{name = '{chunk}-asteroid-chunk', count = 1}})")
+        try:
+            setup = self.server.call("flight_setup", json.dumps({
+                "blueprint": encode(data), "from": "nauvis", "to": "vulcanus", "power": True, "ammo": platform.AMMO,
+                "speed": SPEED,
+                "research": {"space-platform": 1, "space-platform-thruster": 1, "advanced-asteroid-processing": 1}}))
+            self.assertNotIn("error", setup)
+            for k in range(45):
+                for chunk in ("oxide", "carbonic" if k % 2 else "metallic"):
+                    self.server.command(put(chunk))
+                _step(self.server, 120, timeout=60)
+            got = self.server.call("flight_read")
+        finally:
+            self.server.call("flight_teardown")
+        made = got["made"] if isinstance(got.get("made"), dict) else {}
+        for fluid in ("thruster-fuel", "thruster-oxidizer"):
+            self.assertGreaterEqual(made.get(fluid, 0), 4 * 1500, made)
 
     def test_a_promethium_chunk_on_the_chunk_belt_reaches_the_hub(self):
         # promethium=True: the filter inserter takes it off the chunk belt, the belt in the
