@@ -1055,6 +1055,35 @@ class Validator(unittest.TestCase):
             self.assertGreaterEqual(got["fed"]["railgun-ammo"], 40)
             self.assertGreaterEqual(got["fed"]["uranium-rounds-magazine"], 60)
 
+    def test_bp_plan_plans_and_verifies_a_trip_for_a_design(self):
+        # The whole command on the smallest design that keeps promethium, its flights short: it
+        # validates the blueprint, measures it at two starts, plans, and flies the plan whole once.
+        # The trips searched are held to the shortest (turn 0.001, no stay), so the flight that
+        # verifies it is short too. Only the plan's shape is asserted: what 20 s flights meet is up
+        # to the route.
+        import contextlib
+        import io
+        from unittest import mock
+
+        from tools import bp, plan, trip
+
+        out = io.StringIO()
+        with mock.patch.object(plan, "STARTS", (0.0, 0.1)), mock.patch.object(plan, "SECONDS", 20), \
+                mock.patch.object(plan, "VERIFY_SECONDS", 60), mock.patch.object(trip, "turns", lambda _: [0.001]), \
+                mock.patch.object(trip, "STAYS", (0.0,)), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            bp.main(["plan", "platform", "railguns=8", "guns=4", "thrusters=1", "fuel=1", "promethium=1",
+                     "--runs", "1", "--verify", "1", "--json"])
+        got = json.loads(out.getvalue())
+        self.assertEqual(sorted(got["measured"]), ["0.0", "0.1"])
+        self.assertEqual(got["research"], plan.research_for({"promethium": 1}))
+        self.assertIsNone(got["error"])
+        self.assertTrue(got["stock"] and got["trip"]["loaded slots"] <= plan.capacity({}))
+        self.assertEqual(got["verified"]["flown"]["flights"], 1)
+        with self.assertRaises(SystemExit) as stopped, contextlib.redirect_stderr(io.StringIO()):
+            bp.main(["plan", "platform", "railguns=8", "guns=4", "thrusters=1", "fuel=1"])
+        self.assertIn("promethium", str(stopped.exception))
+
     def test_a_flight_can_hold_the_hubs_stock(self):
         # hold (a measurement, not a trip): the script tops the held items back up to their
         # stock each second, so nothing runs out and the hub's room doesn't bind, and what the
