@@ -53,7 +53,7 @@ from generators import factory
 from tools import belts, pipes
 from tools.belts import Blocked, Conn
 from tools.pipe_route import Fluids, route_line, sides
-from tools.route import N, S, route_all, tunnels_of
+from tools.route import N, S, W, route_all, tunnels_of
 from tools.shelves import GAP, MIN_CHANNEL, far, least_area, localize, place, restore, shelve, width, widths
 
 MAX_EXTRA = 14  # rows added to every channel before a width is given up
@@ -84,7 +84,8 @@ class Result:
     shelves: list = field(default_factory=list)  # (west column, south row, north row) per shelf
     leftovers: list = field(default_factory=list)  # (product port tile, ingredient it also carries)
     fluid_inputs: list = field(default_factory=list)  # (id, fluid)
-    fluid_ports: list = field(default_factory=list)  # (tile, fluid): row fluid ports and inputs
+    fluid_ports: list = field(default_factory=list)  # (tile, fluid): row fluid ports, inputs and outputs
+    fluid_outputs: list = field(default_factory=list)  # (id, fluid, "product" or "surplus")
 
 
 def build(p, budget=BUDGET) -> Result:
@@ -162,17 +163,19 @@ def _fitted(p, shelves, bus_far, beat=math.inf, deadline=math.inf):
 
 
 def _refuse(p):
-    blocks = sorted({r.step.item for r in p["rows"]
-                     if any(q.kind == "fluid_out" or (q.kind == "fluid_in" and q.side != "south") for q in r.ports)})
-    if blocks:
-        raise CompactError(f"fluid blocks ({', '.join(blocks)}) aren't laid out compact yet")
-    made = sorted({ln.name for named in p["lines"].values() for ln in named if ln.fluid and not ln.supplied})
-    if made:
-        raise CompactError(f"fluids made here ({', '.join(made)}) aren't laid out compact yet")
+    from generators.production import CRACKING
+
+    gated = sorted({r.step.item for r in p["rows"] if r.step.item in CRACKING})
+    if gated:
+        raise CompactError(f"cracking ({', '.join(gated)}) takes its oil through a gate the compact layout "
+                           f"doesn't build yet")
     for r in p["rows"]:
         x0, y0, x1, y1 = r.box
         for q in r.ports:
-            if (q.kind in ("in", "fluid_in") and q.y != y1) or (q.kind == "out" and q.y != y0):
+            if q.kind.startswith("fluid"):
+                if not ((q.side == "south" and q.y == y1) or (q.side == "west" and q.x == x0)):
+                    raise CompactError(f"{r.step.item}: a fluid port off the row's south or west edge")
+            elif (q.kind == "in" and q.y != y1) or (q.kind == "out" and q.y != y0):
                 raise CompactError(f"{r.step.item}: a port off the row's south or north edge")
 
 
@@ -186,7 +189,8 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
     lines = [ln for named in p["lines"].values() for ln in named]
     shelf_of = {k: s for s, shelf in enumerate(shelves) for k in shelf}
     raw = [ln for ln in lines if ln.supplied and not ln.fluid]
-    raw += [ln for ln in lines if bus_far and not ln.supplied and not ln.top and far(ln, rows, shelf_of)]
+    raw += [ln for ln in lines if bus_far and not ln.supplied and not ln.fluid and not ln.top
+            and far(ln, rows, shelf_of)]
     canvas = factory.Canvas()
     claimed = {}  # goal tiles: (x, y) -> the connection allowed onto it
     conns = []
@@ -233,14 +237,14 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
         return q.x + dx, q.y + dy
 
     localize(rows, lines, raw, at)
-    # The tile under each fluid port is its pipe's, kept from the belts.
+    # The tile beside each fluid port (south of it, or west) is its pipe's, kept from the belts.
     for k, r in enumerate(rows):
         for q in r.ports:
-            if q.kind == "fluid_in":
-                px, py = at(k, q)
-                if not canvas.free(px, py + 1):
-                    raise Blocked(f"{q.name}: no room under its port")
-                claimed[(px, py + 1)] = f"fluid {q.name}"
+            if q.kind.startswith("fluid"):
+                (ax, ay), _ = _approach(at(k, q), q.side)
+                if not canvas.free(ax, ay) or claimed.get((ax, ay), f"fluid {q.name}") != f"fluid {q.name}":
+                    raise Blocked(f"{q.name}: no room beside its port")
+                claimed[(ax, ay)] = f"fluid {q.name}"
 
     def channel_rows(s):
         """Rows of the channel below shelf s, south to north (the top channel for s = len)."""
@@ -294,7 +298,7 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
     outlets = []
     bus_entry = {}  # id(line) -> its merged rows' handle, for lines made here that ride the bus
     for ln in lines:
-        if ln.supplied:
+        if ln.supplied or ln.fluid:
             continue
         # Merged at the northmost: the others flow north into it, on toward the users and the top.
         hs = sorted(handles.get(id(ln), []), key=lambda h: (h[1], h[0]))
@@ -363,7 +367,8 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
         if s < len(shelves):
             band.update({y: s for y in range(shelf_box[s][1], shelf_box[s][0] + 1)})
     bounds = (min(x for x, _ in yard), y_out, x_max, -1)
-    fluid_inputs, fluid_ports = _pipe_fluids(p, rows, lines, where, at, canvas, claimed, yard, band, bounds)
+    fluid_inputs, fluid_outputs, fluid_ports = _pipe_fluids(p, rows, lines, where, at, canvas, claimed, yard, band,
+                                                            bounds)
     spec = [(cn.start, cn.heading, cn.goal, cn.facing, lambda x, y, cn=cn: claimed.get((x, y), cn.owner) == cn.owner)
             for cn in conns]
     paths = route_all(spec, lambda x, y: canvas.free(x, y) and x >= yard[band.get(y, 0)][0], reach, bounds,
@@ -424,21 +429,31 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
              for k, r in enumerate(rows) for q in r.ports if q.kind in ("in", "out")]
     return Result(bp, area, inputs, [(ident, name) for _, ident, name in outlets], max(ys) - min(ys) + 1, used,
                   ports, [(line.name, line.column, min(line.events)) for line in bus],
-                  [(x0s[s], *shelf_box[s]) for s in range(len(shelves))], leftovers, fluid_inputs, fluid_ports)
+                  [(x0s[s], *shelf_box[s]) for s in range(len(shelves))], leftovers, fluid_inputs, fluid_ports,
+                  fluid_outputs)
+
+
+def _approach(tile, side):
+    """The tile beside a fluid port its pipe joins it from, and the heading away from it."""
+    x, y = tile
+    return ((x, y + 1), S) if side == "south" else ((x - 1, y), W)
 
 
 def _pipe_fluids(p, rows, lines, where, at, canvas, claimed, yard, band, bounds):
-    """Each supplied fluid in at the bottom through a pipe of its own (two columns from any
-    other, so the players' pipes beyond don't join), piped to the rows that take it.
-    Returns (inputs as (id, fluid), fluid tiles as (tile, fluid): the inputs and ports)."""
+    """Each fluid line piped between its rows' ports (south ends of fluid rows, west ends of
+    blocks' lines): a supplied fluid in at the bottom, a fluid product or left-over out at
+    the top, each through a pipe of its own (two columns from any other, so the players'
+    pipes beyond don't join). Returns (inputs as (id, fluid), outputs as (id, fluid, top),
+    fluid tiles as (tile, fluid): the inputs, outputs and ports)."""
     fluid_lines = [ln for ln in lines if ln.fluid]
     if not fluid_lines:
-        return [], []
+        return [], [], []
     fluids = Fluids(_row_fluids(p, rows, where))
     fluids.spans += [span for k in range(len(rows)) for span in _row_spans(p, rows[k], where[k])]
     boxes = {(x + where[k][0], y + where[k][1]) for k, r in enumerate(rows)
              for x in range(r.box[0], r.box[2] + 1) for y in range(r.box[1], r.box[3] + 1)}
-    inputs, ports, columns = [], [], []
+    x_lo, y_top, x_hi, _ = bounds
+    inputs, outputs, ports, columns = [], [], [], {0: [], y_top: []}
     for ln in fluid_lines:
         owner = f"fluid {ln.name}"
 
@@ -446,33 +461,45 @@ def _pipe_fluids(p, rows, lines, where, at, canvas, claimed, yard, band, bounds)
             return (canvas.free(x, y) and claimed.get((x, y), owner) == owner and (x, y) not in boxes
                     and x >= yard[band.get(y, 0)][0])
 
-        users = [(k, q) for k, r in enumerate(rows) for q in r.ports if q.kind == "fluid_in" and q.lines.get(q.name) is ln]
-        target = sum(at(k, q)[0] for k, q in users) / len(users)
-        column = min((x for x in range(yard[0][1] + 1, bounds[2] + 1)
-                      if all(abs(x - c) > 1 for c in columns) and ok(x, 0) and ok(x, -1)),
-                     key=lambda x: abs(x - target), default=None)
-        if column is None:
-            raise Blocked(f"{ln.name}: no room for its input")
-        columns.append(column)
-        ident = f"in {ln.name} {column}"
-        canvas.put("pipe", column, 0, owner, id=ident)
-        fluids.fix(ln.name, (column, 0), "pipe")
-        fluids.at[(column, 1)] = (ln.name, sides("pipe", None))  # where the player's pipe joins it
-        inputs.append((ident, ln.name))
-        ports.append(((column, 0), ln.name))
-        terminals = [({(column, 0)}, ((column, -1), N))]
-        for k, q in users:
-            px, py = at(k, q)
-            terminals.append(({(px, py)}, ((px, py + 1), S)))
-            ports.append(((px, py), ln.name))
+        terminals = []
+        for k, r in enumerate(rows):
+            for q in r.ports:
+                if q.kind.startswith("fluid") and q.lines.get(q.name) is ln:
+                    terminals.append(({at(k, q)}, _approach(at(k, q), q.side)))
+                    ports.append((at(k, q), ln.name))
+        target = sum(t[1][0][0] for t in terminals) / len(terminals)
+
+        def end(y, inward, ident_of):
+            """A pipe of the line's own at row y, the player's joining it from beyond."""
+            column = min((x for x in range(yard[0][1] + 1, x_hi + 1)
+                          if all(abs(x - c) > 1 for c in columns[y]) and ok(x, y) and ok(x, y + inward)),
+                         key=lambda x: abs(x - target), default=None)
+            if column is None:
+                raise Blocked(f"{ln.name}: no room for its pipe {'in' if y == 0 else 'out'}")
+            columns[y].append(column)
+            ident = ident_of(column)
+            canvas.put("pipe", column, y, owner, id=ident)
+            fluids.fix(ln.name, (column, y), "pipe")
+            fluids.at[(column, y - inward)] = (ln.name, sides("pipe", None))
+            ports.append(((column, y), ln.name))
+            return ident, ({(column, y)}, ((column, y + inward), N if inward < 0 else S))
+
+        if ln.supplied:  # in at the bottom, first: the tree the rows join
+            ident, terminal = end(0, -1, lambda c: f"in {ln.name} {c}")
+            inputs.append((ident, ln.name))
+            terminals.insert(0, terminal)
+        if ln.top:  # a fluid product or left-over, out at the top
+            ident, terminal = end(y_top, 1, lambda c: f"out {ln.name} {c}")
+            outputs.append((ident, ln.name, ln.top))
+            terminals.append(terminal)
         try:
-            route_line(fluids, ln.name, terminals, ok, (bounds[0], bounds[1], bounds[2], 0))
+            route_line(fluids, ln.name, terminals, ok, (x_lo, y_top, x_hi, 0))
         except ValueError as e:
             raise Blocked(str(e)) from None
     for (x, y), (name, d) in fluids.placed.items():
         if canvas.free(x, y):
             canvas.put(name, x, y, f"pipe {x} {y}", **({"direction": d} if d is not None else {}))
-    return inputs, ports
+    return inputs, outputs, ports
 
 
 def _row_local(p, r):
@@ -550,6 +577,8 @@ def flow_tests(p, result):
 
     feeds = [Feed(ident, lane, item) for ident, item in result.inputs for lane in ("left", "right")]
     fluids = [FluidFeed(ident, fluid, side="south") for ident, fluid in result.fluid_inputs]
+    fluids += [FluidFeed(ident, fluid, side="north", sink=True, level=factory.SURPLUS_LEVEL if top == "surplus" else 0)
+               for ident, fluid, top in result.fluid_outputs]
     drains = [ident for ident, item in result.outputs if item == p["item"]]
     warmup = sum(max(r.flow.warmup for r in p["rows"] if r.step is s) for s in p["steps"])
     warmup += rates.travel_seconds(p["belt"], result.height)
