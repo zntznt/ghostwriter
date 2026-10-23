@@ -4,8 +4,10 @@ The aim: layouts that use space as well as they use throughput, like a perfect
 game of Tetris. This note measures where today's generators spend their tiles
 (`python -m tools.bp density`), names what's structurally wasteful, and proposes
 how to optimise it. The first step, a constructive compact layout, is built
-(`factory ... layout=compact`); what it gained and where the space still goes is
-in [The constructive layout](#the-constructive-layout-built).
+(`factory ... layout=compact`, now the default); what it gained and where the space
+still goes is in [The constructive layout](#the-constructive-layout-built), and its
+fluids and the sweep that made it the default in
+[Fluids, and compact as the default](#fluids-and-compact-as-the-default-built).
 
 All numbers are from `gen NAME ... --validate` on Factorio 2.1.23 (flow tests,
 and chain tests for books, all passing) and `bp density` on the result. Empty
@@ -291,4 +293,121 @@ tests, and the search now keeps to a budget (40 s by default, the slowest reques
 measured taking 31 s), but (1) every factory with oil falls back to the bus, so the
 default would change only some requests, with a fallback message on the rest; (2)
 the evidence is seven item requests. Make it the default once fluid rows lay out
-compact, after a wider sweep of requests in game.
+compact, after a wider sweep of requests in game. (Both done since: see below.)
+
+## Fluids, and compact as the default (built)
+
+Every factory with a fluid used to fall back to the bus. Now:
+
+- **Pipes** (`tools/pipe_route.py`). A fluid line's terminals are joined one at a time
+  to the tree already joined, by A* over (tile, heading): a pipe, which connects every
+  way, so it stands only where no other fluid connects toward it; or a pipe-to-ground
+  pair straight on, under anything, never overlapping another pair on its row or
+  column (the game pairs each with the first opposite one within reach). Pairs cost
+  less than the pipes they replace, so lines leave their tiles to belts. Fluids are
+  routed before the belts, which go round or under them. Each layout is then checked
+  as the game joins it (`tools/pipes.py`): every fluid one network, no network two
+  fluids, none longer than the game's 320 tiles less the players' pipes at the ends.
+- **Fluid rows and blocks** join their ports: fluid rows at the south end of their
+  pipe, blocks (refining, cracking, sulfur, acid, lubricant) at their lines' west
+  ends. A supplied fluid enters at the bottom and a fluid product or left-over leaves
+  at the top, each through a pipe of its own, two columns from any other so the
+  players' pipes beyond don't join. The flow test feeds the inputs and sinks the
+  outputs, a left-over only above half full as on the bus, so refining still backs up
+  as it would in a game.
+- **A near-lane ingredient on the product's belt.** A fluid row's ingredient on the
+  near lane (plastic's coal) rides the product belt out; a filter splitter keeps it
+  in the row, and its port is side-loaded from that lane's side with a stub behind it,
+  so the coal comes in on one lane. Fed from below, coal filled both lanes and plastic
+  stopped (0/s); side-loaded, 8/s against the bus's 8/s.
+- **Cracking through a gate**, as on the bus: in the cracking block's own row, a
+  storage tank on the oil's line and a pump below it into the block's outermost line,
+  wired red, running while the tank holds more than 1,000 (`factory.GATE_LEVEL`).
+- **The smaller layout kept.** `factory` builds the bus too and keeps it, saying so,
+  when compact is no smaller.
+
+### The sweep (34 requests, both layouts, in game)
+
+Every request passed `gen factory ... layout=bus --validate` and
+`... layout=compact --validate` on Factorio 2.1.23 (macOS). Areas from `bp density`;
+build is `gen` alone, compact including the bus it compares with. A rate above the
+request is a row's last machine rounding up.
+
+| Request | Bus | Compact | Change | In game, bus | In game, compact | Build, compact |
+|---|---|---|---|---|---|---|
+| electronic-circuit 5/s | 1,560 | 880 | -44% | 6.01/s | 6.01/s | 1 s |
+| electronic-circuit 15/s | 4,462 | 2,847 | -36% | 15/s (window 3) | 14.9/s (window 2) | 32 s |
+| electronic-circuit 5/s, assembling machine 3 | 1,480 | 800 | -46% | 6.01/s | 6/s | 1 s |
+| electronic-circuit 2/s, assembling machine 1 | 756 | 475 | -37% | 2.65/s | 2.67/s | 1 s |
+| electronic-circuit 10/s, fast belts | 1,840 | 1,160 | -37% | 12/s | 12/s | 2 s |
+| electronic-circuit 20/s, express belts | 2,520 | 1,880 | -25% | 24/s | 24/s | 3 s |
+| electronic-circuit 5/s, smelt=1 | 2,640 | 1,564 | -41% | 5.68/s | 6/s | 4 s |
+| automation-science-pack 1/s | 738 | 450 | -39% | 1.21/s | 1.2/s | 1 s |
+| automation-science-pack 1/s, smelt=1 | 1,463 | 900 | -38% | 1.2/s | 1.19/s | 2 s |
+| logistic-science-pack 1/s | 2,373 | 1,239 | -48% | 1.25/s | 1.25/s | 14 s |
+| logistic-science-pack 0.5/s, fast belts, assembling machine 3 | 1,691 | 704 | -58% | 0.835/s | 0.835/s | 3 s |
+| military-science-pack 0.5/s | 2,424 | 1,196 | -51% | 0.599/s | 0.598/s | 6 s |
+| inserter 1/s | 1,407 | 609 | -57% | 1.49/s | 1.5/s | 2 s |
+| iron-gear-wheel 1/s | 154 | 88 | -43% | 1.49/s | 1.5/s | 1 s |
+| engine-unit 1/s | 1,512 | 860 | -43% | 1.05/s | 1.05/s | 3 s |
+| battery 2/s | 1,752 | 1,073 | -39% | 2.48/s | 2.45/s | 3 s |
+| electric-engine-unit 0.5/s | 3,200 | 1,540 | -52% | 0.6/s | 0.6/s | 12 s |
+| sulfur 5/s | 506 | 234 | -54% | 5.99/s | 5.98/s | 1 s |
+| plastic-bar 5/s | 527 | 272 | -48% | 8/s | 8/s | 1 s |
+| sulfuric-acid 10/s | 406 | 228 | -44% | 20.1/s | 19.8/s | 1 s |
+| lubricant 10/s | 144 | 99 | -31% | 20/s | 20/s | 1 s |
+| advanced-circuit 1/s | 2,244 | 1,242 | -45% | 1.13/s (window 2) | 1.16/s | 4 s |
+| chemical-science-pack 0.5/s | 5,070 | 4,224 | -17% | 0.603/s | 0.6/s | 45 s |
+| processing-unit 0.5/s | 8,505 | bus kept (11,505) | | 0.532/s | 0.533/s (the bus) | 46 s |
+| plastic-bar 5/s, oil=1 | 1,968 | 1,078 | -45% | 5.85/s | 5.84/s | 2 s |
+| sulfuric-acid 10/s, oil=1 | 1,248 | 792 | -37% | 12.9/s | 13.2/s | 2 s |
+| lubricant 10/s, oil=1 | 1,127 | 700 | -38% | 15.1/s | 15/s | 1 s |
+| battery 1/s, oil=1 | 2,553 | 1,566 | -39% | 1.3/s | 1.3/s | 7 s |
+| advanced-circuit 1/s, oil=1 | 3,825 | 2,116 | -45% | 1.17/s (window 2) | 1.16/s | 8 s |
+| chemical-science-pack 0.5/s, oil=1 | 6,832 | 6,318 | -8% | 0.601/s | 0.609/s | 45 s |
+| electric-engine-unit 0.5/s, oil=1 | 4,401 | 2,461 | -44% | 0.599/s | 0.598/s | 22 s |
+| flying-robot-frame 0.2/s, oil=1 | 7,028 | bus (doesn't route) | | 0.225/s | 0.225/s (the bus) | 7 s |
+| processing-unit 0.5/s, oil=1 | 10,556 | bus kept (13,689) | | 0.531/s | 0.531/s (the bus) | 46 s |
+| production-science-pack 0.2/s | 4,784 | bus (doesn't route) | | 0.21/s | 0.21/s (the bus) | 8 s |
+
+Every factory with oil (`oil=1`) refines crude oil and cracks both heavy and light oil
+through gates (lubricant cracks only light oil: its heavy oil is the lubricant's).
+Electric engines from crude oil are the case the gate is for (NOTES.md): heavy-oil
+cracking and lubricant on one heavy oil line, the lubricant first. The bus builds in 0
+to 6 s.
+
+### Should compact be the default? (decided: yes)
+
+Yes, and it is: `gen factory` packs rows on shelves, and `layout=bus` keeps the
+main bus. Compact passed everywhere it's offered (30 of 34 laid out compact, every
+one at its rate), it's smaller on each of those, by 8 to 58%, and where it can't do
+better it gives the bus and says why, so the default is never larger. The cost is
+build time: 1 to 14 s for most factories, but about 45 s for the biggest (the 40 s
+budget, plus the bus it compares with), against 0 to 6 s for the bus. `budget=`
+shortens it; `layout=bus` skips it.
+
+Still on the bus, with the reason on stderr:
+
+- **Processing units** (both): only one row a shelf routes (14 shelves; 39 by 290
+  tiles given 60 s), and a channel a shelf plus the 24-column west bus and yard cost
+  more than the bus layout's taps. "the bus layout is smaller (8,505 tiles, compact 11,505)".
+- **Production science** and **flying robot frames from crude oil**: "the rows don't
+  route in any shelf width tried"; production science's belts (stone, circuits, rails)
+  find no room for their taps and adapters.
+
+### Negative results (this step)
+
+- **Routing lines one at a time, with nothing reserved.** A line routed past another
+  port's way in and sealed it: with cracking gated, advanced circuits from crude oil
+  stopped routing at any shelf width. Each port's way in is now its own line's from
+  the start (no other fluid's piece on it or beside it).
+- **A* over (tile, heading) let a path come back over its own pipe**, as a pair's
+  entrance: the game keeps one piece a tile, so the line was cut in two (plastic from
+  crude oil, caught by the network check). A path never revisits a tile now.
+- **In and out pipes chosen without looking at the pipes already routed.** Crude
+  oil's input pipe went beside a water pipe, joining them (lubricant from crude oil).
+- **Two more columns for every shelf led by a row with west fluid ports.** Refining's
+  light oil needs them (its port sits between two others), but given to every such
+  shelf, processing units at 0.5/s stopped routing at all (11,505 tiles without). Only
+  a port with others two tiles above and below it gets them; sulfur, acid and
+  lubricant blocks lay out smaller without (sulfuric acid 266 to 228 tiles).
