@@ -40,20 +40,31 @@ def put_across(canvas, splitter, x, y, owner, d):
 
 def adapter(canvas, free, xi, yp, south, feeds, belt, claimed, owner):
     """Belts under the port at (xi, yp), up to 4 and not south of south, and where its
-    lines are to arrive: one line from below; two onto the last belt's sides, the
-    left lane's from the west and the right's from the east (NOTES.md). Returns
-    [(line, (x, y, facing, owner))]."""
+    lines are to arrive: one line onto both lanes from below; two onto the last belt's
+    sides, the left lane's from the west and the right's from the east; one onto one
+    lane from that side, with a stub belt pointing in from behind so it's a side-load,
+    not a turn (NOTES.md). Returns [(line, (x, y, facing, owner))]."""
     fed = list({id(ln): ln for ln in feeds.values()}.values())
+    one_lane = len(feeds) == 1
     for e in range(4):
         ya = yp + 1 + e
         tiles = [(xi, yy) for yy in range(yp + 1, ya + 1)]
         sides = [(xi - 1, ya), (xi + 1, ya)] if len(fed) > 1 else []
-        if ya <= south and all(free(*t) for t in tiles + sides):
+        if one_lane:
+            sides = [(xi - 1, ya) if "left" in feeds else (xi + 1, ya), (xi, ya + 1)]
+        if ya + one_lane <= south and all(free(*t) for t in tiles + sides):
             break
     else:
         raise Blocked(f"{owner}: no room for its adapter")
     for yy in range(yp + 1, ya):
         canvas.put(belt, xi, yy, owner, direction=N)
+    if one_lane:
+        (lane, line), = feeds.items()
+        canvas.put(belt, xi, ya, owner, direction=N)
+        canvas.put(belt, xi, ya + 1, owner + " stub", direction=N)
+        (gx, gy) = sides[0]
+        claimed[(gx, gy)] = owner + " " + lane
+        return [(line, (gx, gy, E if lane == "left" else W, owner + " " + lane))]
     if len(fed) == 1:
         claimed[(xi, ya)] = owner
         return [(fed[0], (xi, ya, N, owner))]

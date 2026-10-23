@@ -106,6 +106,20 @@ class Reaches(unittest.TestCase):
         self.assertIn((2, 4), got)  # onto the belt beside it, and on north
         self.assertNotIn((3, 5), got)
 
+    def test_a_filter_splitter_sends_its_item_one_way_and_the_rest_the_other(self):
+        # Filtered to plastic, priority left: plastic leaves by the left output only, coal by the right.
+        ents = [self.entity("transport-belt", 2, 6, N),
+                self.entity("splitter", 2, 5, N, filter={"type": "item", "name": "plastic-bar"},
+                            output_priority="left"),
+                self.entity("transport-belt", 2, 4, N), self.entity("transport-belt", 3, 4, N)]
+        plastic = reaches({"entities": ents}, (2, 6), item="plastic-bar")
+        coal = reaches({"entities": ents}, (2, 6), item="coal")
+        self.assertIn((2, 4), plastic)
+        self.assertNotIn((3, 4), plastic)
+        self.assertIn((3, 4), coal)
+        self.assertNotIn((2, 4), coal)
+        self.assertLessEqual({(2, 4), (3, 4)}, reaches({"entities": ents}, (2, 6)))  # any item: both ways
+
 
 if __name__ == "__main__":
     unittest.main()

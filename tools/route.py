@@ -114,11 +114,13 @@ def _own_tunnels_apart(path) -> bool:
 BELTS = {"transport-belt", "fast-transport-belt", "express-transport-belt", "turbo-transport-belt"}
 
 
-def reaches(blueprint: dict, start: tuple[int, int]) -> set[tuple[int, int]]:
+def reaches(blueprint: dict, start: tuple[int, int], item: str = "") -> set[tuple[int, int]]:
     """Tiles items placed on the belt at start can get to: along belts, onto the side
-    of a belt, through underground pairs and splitters (both outputs), and the tile
-    in front of where they stop. Inserters and machines aren't followed."""
+    of a belt, through underground pairs and splitters (both outputs, or with item, a
+    filter splitter's one side for it), and the tile in front of where they stop.
+    Inserters and machines aren't followed."""
     at = {}  # tile -> (name, direction, kind, tiles of the entity)
+    sends = {}  # a filter splitter's tiles -> the tiles item leaves by
     for e in blueprint["entities"]:
         name, d = e["name"], e.get("direction", 0)
         cx, cy = e["position"]["x"], e["position"]["y"]
@@ -136,6 +138,13 @@ def reaches(blueprint: dict, start: tuple[int, int]) -> set[tuple[int, int]]:
             continue
         for t in tiles:
             at[t] = (name, d, kind, tiles)
+        if kind == "splitter" and item and e.get("filter") and e.get("output_priority") in ("left", "right"):
+            # The filtered item leaves by the priority side, the rest by the other.
+            left = tiles[0] if d in (N, E) else tiles[1]
+            mine = (e["output_priority"] == "left") == (item == e["filter"]["name"])
+            out = left if mine else next(t for t in tiles if t != left)
+            for t in tiles:
+                sends[t] = [out]
 
     def accepts(tile, src):
         """Does the entity at tile take items pushed from the tile src?"""
@@ -162,7 +171,7 @@ def reaches(blueprint: dict, start: tuple[int, int]) -> set[tuple[int, int]]:
                     return [t]
             return []
         if kind == "splitter":
-            return [(t[0] + dx, t[1] + dy) for t in tiles]
+            return [(t[0] + dx, t[1] + dy) for t in sends.get(tile, tiles)]
         return [(tile[0] + dx, tile[1] + dy)]
 
     got, todo = set(), [start]

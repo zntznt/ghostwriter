@@ -6,11 +6,13 @@ from collections import Counter
 
 from generators import factory
 from tests.test_tools import assert_powered, footprint
-from tools import compact
+from tools import compact, pipes
 from tools.check import check
 from tools.route import reaches
 
 ITEMS = [{"item": "electronic-circuit", "rate": 5}, {"item": "automation-science-pack", "rate": 1}]
+# Fluid rows fed by a supplied fluid (petroleum gas: oil isn't processed here, oil=0).
+FLUID_ROWS = [{"item": "plastic-bar", "rate": 5}, {"item": "advanced-circuit", "rate": 1}]
 
 
 def laid_out(**params):
@@ -29,7 +31,7 @@ def area(bp) -> int:
 
 class Compact(unittest.TestCase):
     def test_checks_clean_powered_and_nothing_overlaps(self):
-        for params in ITEMS:
+        for params in ITEMS + FLUID_ROWS:
             _, got, bp = laid_out(**params)
             self.assertEqual(check({"blueprint": bp}), [], params)
             assert_powered(self, bp, params)
@@ -39,21 +41,38 @@ class Compact(unittest.TestCase):
 
     def test_every_port_gets_what_it_takes_and_nothing_else(self):
         # Followed belt by belt from each input and each row's product: a port is reached
-        # by every item it takes, and by no item it doesn't.
-        for params in ITEMS:
+        # by every item it takes, and by no item it doesn't. A row's product belt that also
+        # carries leftovers (plastic and coal) passes a filter splitter that keeps the coal.
+        for params in ITEMS + FLUID_ROWS:
             _, got, bp = laid_out(**params)
             tile_of = {e.id: (int(e.tile_position[0]), int(e.tile_position[1])) for e in got.bp.entities if e.id}
             sources = [(tile_of[ident], item) for ident, item in got.inputs]
             sources += [(tile, item) for kind, tile, item in got.ports if kind == "out"]
+            sources += [(tile, left) for tile, left in got.leftovers]
             wants = {tile: items for kind, tile, items in got.ports if kind == "in"}
+            rows_in = {tile for tile, _ in got.leftovers}  # a row's own input belt runs on to its product port
             fed = {tile: set() for tile in wants}
             for tile, item in sources:
-                for t in reaches(bp, tile) & wants.keys():
-                    fed[t].add(item)
+                for t in reaches(bp, tile, item=item) & wants.keys():
+                    if t not in rows_in or item in wants[t]:
+                        fed[t].add(item)
             self.assertEqual(fed, wants, params)
 
+    def test_each_fluid_line_is_one_network_and_no_network_two_fluids(self):
+        for params in FLUID_ROWS:
+            _, got, bp = laid_out(**params)
+            nets = pipes.networks(bp)
+            fluids_of = {}
+            for tile, fluid in got.fluid_ports:
+                self.assertIn(tile, nets, (params, tile, fluid))
+                fluids_of.setdefault(nets[tile], set()).add(fluid)
+            self.assertTrue(all(len(f) == 1 for f in fluids_of.values()), (params, fluids_of))
+            made = Counter(f for fs in fluids_of.values() for f in fs)
+            self.assertTrue(all(n == 1 for n in made.values()), (params, made))
+            self.assertEqual(made.keys(), {"petroleum-gas"}, params)
+
     def test_smaller_than_on_the_bus(self):
-        for params in ITEMS:
+        for params in ITEMS + FLUID_ROWS:
             _, got, _ = laid_out(**params)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -68,6 +87,12 @@ class Compact(unittest.TestCase):
         self.assertLessEqual({f.entity for f in flow.feed} | set(flow.drain), ids)
         self.assertEqual({f.item for f in flow.feed}, {"iron-plate", "copper-plate"})
         self.assertEqual(flow.expect, {"electronic-circuit": 5.0})
+        # A supplied fluid enters at the bottom, from the south of its input pipe.
+        p, got, _ = laid_out(**FLUID_ROWS[0])
+        (flow,) = compact.flow_tests(p, got)
+        ids = {e.id for e in got.bp.entities if e.id}
+        self.assertEqual([(f.fluid, f.side, f.sink) for f in flow.fluids], [("petroleum-gas", "south", False)])
+        self.assertLessEqual({f.entity for f in flow.fluids}, ids)
 
     def test_the_bus_ends_at_each_lines_last_tap_and_shelves_above_take_its_columns(self):
         # A raw line ends where its last channel taps it; lines reaching further north sit
@@ -109,13 +134,13 @@ class Compact(unittest.TestCase):
                 pass
         self.assertLess(time.monotonic() - t, 3 + compact.NEGOTIATION + 2)
 
-    def test_fluids_fall_back_to_the_bus_saying_why(self):
+    def test_fluid_blocks_fall_back_to_the_bus_saying_why(self):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            p = factory.rows_and_lines(item="advanced-circuit", rate=1, oil=1)
-            with self.assertRaisesRegex(compact.CompactError, "fluids"):
+            p = factory.rows_and_lines(item="sulfuric-acid", rate=10)
+            with self.assertRaisesRegex(compact.CompactError, "fluid blocks"):
                 compact.build(p)
-            bp = factory.build(item="advanced-circuit", rate=1, oil=1, layout="compact")
+            bp = factory.build(item="sulfuric-acid", rate=10, layout="compact")
         self.assertNotIn("compact", bp.label)  # the bus layout's
 
 
