@@ -194,11 +194,101 @@ rows the router can't join. Cheaper steps, in order of the space they target:
 - **Claiming comb branches before routing** made no difference to any area, and was dropped.
 - **A belt end beside a route.** The first version let routes pass in front of the top of a row's input belt; that belt end side-loads onto them, and circuits at 5/s fell to 4.5/s, 15/s to 8/s, logistic science to 0/s. Keeping that tile empty fixed all three (NOTES.md).
 
+## A time budget and a ragged bus (built)
+
+`factory ... layout=compact budget=SECONDS` (default 40). Two changes, and one
+idea measured and left out.
+
+- **A budget, and a cut for hopeless negotiations.** At 15 circuits/s, 78 of the
+  95 s went to three router negotiations that never routed: one-row shelves without
+  far items on the bus, at 15, 25 and 38 s, each running all 30 rounds because a tie
+  counts as progress. Every negotiation that routed took 0.1 to 1 s. A negotiation
+  is now cut after 4 s (`compact.NEGOTIATION`), and the whole search keeps to
+  `budget=` seconds, keeping the best layout found; with nothing found in time it
+  falls back to the bus and says so. Same areas on all seven requests; 15 circuits/s
+  went from 95 to about 30 s. The default, 40 s, is above the slowest request
+  measured (30.7 s on this machine): a smaller factory finishes when it's done, and
+  a slower machine or a bigger factory gets the best found in that time.
+- **A ragged bus.** Each raw line ends at its last tap, lines reaching further north
+  sit further west, each channel's yard is the two columns east of the lines still
+  running in it, and routes keep east of those lines at every row. A shelf moves west
+  only as far as the box needs; the search then tries every shelf as far west as the
+  bus lets it, once, and keeps that if smaller.
+
+### Measured
+
+Every request passed `gen factory ... layout=compact --validate` on Factorio
+2.1.23 (macOS) at its rated rate. Build is the search alone, in process.
+
+| Request | Bus | Compact (#61) | Compact now | Change | In game | Build |
+|---|---|---|---|---|---|---|
+| electronic-circuit 5/s | 1,560 | 880 | 880 | same | 6/s | 0.3 s |
+| electronic-circuit 15/s | 4,462 | 2,847 | 2,847 | same | 14.9/s (window 2) | 30.7 s (was about 100 s) |
+| automation-science-pack 1/s | 738 | 500 | **450** | -10% | 1.2/s | 0.1 s |
+| logistic-science-pack 1/s | 2,373 | 1,364 | **1,239** | -9% | 1.25/s | 12.7 s (was about 18 s) |
+| electronic-circuit 5/s, smelt=1 | | 1,755 | **1,564** | -11% | 6/s | 3.2 s (was about 19 s) |
+| electronic-circuit 10/s, fast belts | | 1,160 | 1,160 | same | 12/s | 0.6 s |
+| inserter 1/s | | 667 | **609** | -9% | 1.5/s | 1.3 s |
+
+A ragged bus pays only where the widest shelf stands above a line's last tap: the
+circuit factories' shelves are all one width, so nothing moves.
+
+### Where the space still goes
+
+| Request (box) | Rows | West strip (bus and yard) | Channels | Beside rows | Box / rows |
+|---|---|---|---|---|---|
+| electronic-circuit 5/s (880) | 260 | 264 (30%) | 336 (38%) | 20 (2%) | 3.4 |
+| electronic-circuit 15/s (2,847) | 624 | 584 (21%) | 1,519 (53%) | 120 (4%) | 4.6 |
+| automation-science-pack 1/s (450) | 177 | 112 (25%) | 134 (30%) | 27 (6%) | 2.5 |
+| logistic-science-pack 1/s (1,239) | 367 | 332 (27%) | 436 (35%) | 104 (8%) | 3.4 |
+| electronic-circuit 5/s, smelt=1 (1,564) | 524 | 248 (16%) | 632 (40%) | 160 (10%) | 3.0 |
+| electronic-circuit 10/s, fast belts (1,160) | 442 | 348 (30%) | 336 (29%) | 34 (3%) | 2.6 |
+| inserter 1/s (609) | 133 | 134 (22%) | 311 (51%) | 31 (5%) | 4.6 |
+
+Each row of the box counts once: a shelf's band (its rows, and beside them) or a
+channel's, east of the shelf's west column; the west strip is what lies west of it.
+Channels remain the biggest share, 29 to 53%.
+
+### Mirrored rows sharing a channel (measured, not built)
+
+The note above proposed flipping a shelf (inputs on top) so two shelves share one
+channel. On this layout it doesn't pay, and the reason is the shape of the problem,
+not the router:
+
+- **Every interior channel is already shared.** A row takes inputs at its south edge
+  and sends its product out of the top, and a shelf goes above every shelf it takes
+  from, so the channel between two shelves already holds the lower one's outputs and
+  the upper one's inputs.
+- **A stack needs a channel per shelf plus one, whichever way rows face.** Flipping a
+  shelf only changes which pair a channel serves. Two shelves of the same level
+  could share their input channel (one flipped below it), but the flipped shelf's
+  product then leaves at its south edge and has to come back north past both shelves
+  to the rows that use it.
+- **Estimated on electronic circuits at 5/s:** the two cable shelves sharing their
+  input channel saves at most one channel row band, 5 rows by 14 columns (70 tiles),
+  and the return route takes a column the factory's full height (44 tiles) with no
+  gap between rows to run in, before any routing slack. Not built.
+
+To shrink channels, the levers left are routing-aware: thinner channels where few
+lines cross (the trim already does this per channel), fewer crossings by ordering
+rows on a shelf and lines in a channel, and the floorplan with a wire-length term.
+
+### Negative results (this step)
+
+- **Every shelf as far west as the bus lets it, always.** The first ragged version
+  moved every shelf west: circuits at 5/s and on fast belts grew a column each (880
+  to 924, 1,160 to 1,218), the moved shelves standing off from the shelves they take
+  from. Moving a shelf only as far as the box needs, and trying all-west once at the
+  end, keeps both at their old size and every gain (inserters 609 needs all-west).
+- **Trimming every channel a row at once before one at a time.** It saved 5 s at 15
+  circuits/s but grew logistic science from 1,364 to 1,408 (a worse local minimum).
+  Reverted.
+
 ### Should compact be the default?
 
 Not yet. It's smaller on every item request measured and meets the same flow
-tests, but (1) every factory with oil falls back to the bus, so the default would
-change only some requests, with a fallback message on the rest; (2) the search
-takes up to about 100 s where the bus is instant; (3) the evidence is seven item
-requests. Make it the default once fluid rows lay out compact and the search has
-a time bound, and after a wider sweep of requests in game.
+tests, and the search now keeps to a budget (40 s by default, the slowest request
+measured taking 31 s), but (1) every factory with oil falls back to the bus, so the
+default would change only some requests, with a fallback message on the rest; (2)
+the evidence is seven item requests. Make it the default once fluid rows lay out
+compact, after a wider sweep of requests in game.
