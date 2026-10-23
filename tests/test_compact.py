@@ -69,6 +69,31 @@ class Compact(unittest.TestCase):
         self.assertEqual({f.item for f in flow.feed}, {"iron-plate", "copper-plate"})
         self.assertEqual(flow.expect, {"electronic-circuit": 5.0})
 
+    def test_a_search_with_no_time_left_falls_back_saying_why(self):
+        # budget=: seconds for the whole search; with none left it lays nothing out.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(**ITEMS[0])
+            with self.assertRaisesRegex(compact.CompactError, "budget"):
+                compact.build(p, budget=0)
+            bp = factory.build(**ITEMS[0], layout="compact", budget=0)
+        self.assertNotIn("compact", bp.label)  # the bus layout's
+
+    def test_a_search_keeps_to_its_budget(self):
+        # The slowest request measured (about 95 s unbounded, 78 of them in negotiations
+        # that never routed): bounded, it returns within its budget and a negotiation's cap.
+        import time
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="electronic-circuit", rate=15)
+            t = time.monotonic()
+            try:
+                compact.build(p, budget=3)
+            except compact.CompactError:
+                pass
+        self.assertLess(time.monotonic() - t, 3 + compact.NEGOTIATION + 2)
+
     def test_fluids_fall_back_to_the_bus_saying_why(self):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

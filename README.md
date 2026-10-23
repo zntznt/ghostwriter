@@ -10,7 +10,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m validator.fetch 2.1.23      # headless server for validation (Linux; elsewhere the installed game is found)
 .venv/bin/python -m tools.bp gen gated_requester item=iron-plate count=100 --validate
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 --validate      # rows on a main bus, all connected
-.venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 layout=compact --validate   # the same rows on shelves, products handed straight over
+.venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 layout=compact --validate   # the same rows on shelves, products handed straight over (budget=SECONDS, default 30)
 .venv/bin/python -m tools.bp gen production item=electronic-circuit rate=5 --validate   # the same rows as a book
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 | .venv/bin/python -m tools.bp density - --rate 5   # how it spends its tiles
 .venv/bin/python -m tools.bp plan platform railguns=16 guns=16 thrusters=1 cargo_bays=24 fuel=1 reserve=1 power=2 promethium=1 ammo_feed=1   # a platform's promethium trip: where to turn, what to load
