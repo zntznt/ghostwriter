@@ -71,6 +71,8 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
         order.append(i)  # after its ingredients
 
     visit(item, [])
+    if not how[item]:
+        raise ValueError(_supplied_only(item, furnace, forced_raw))
     demand = {i: 0.0 for i in order}
     demand[item] = float(rate)
     for i in reversed(order):  # consumers before their ingredients
@@ -138,6 +140,21 @@ def _root(f, lo):
     if f0 >= 0:
         return lo
     return lo - f0 / (f1 - f0)
+
+
+def _supplied_only(item, furnace, forced_raw) -> str:
+    """Why the item asked for would only be supplied, and what would make it instead."""
+    if item in forced_raw:
+        return f"{item} is listed in raw=, so there's nothing to make: drop it from raw="
+    if item in OIL:
+        return f"{item} comes from oil processing: pass oil=1 to make it"
+    try:
+        r = rates.recipe(item)
+    except ValueError:
+        r = None
+    if r and len(r.ingredients) == 1 and _crafts(furnace, r):
+        return f"{item} is smelted in a furnace: pass smelt=1 to make it"
+    return f"{item} has no recipe a factory here can make: it's an input to supply"
 
 
 def _how(item, tiers, smelt, furnace, forced_raw, oil=0):
