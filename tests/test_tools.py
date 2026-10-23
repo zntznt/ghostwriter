@@ -553,7 +553,7 @@ class Factory(unittest.TestCase):
         for params in FACTORIES[:2]:
             bp, p, _ = factory_built(**params)
             ids = {e.id for e in bp.entities if e.id}
-            (flow,) = factory.flow_tests(**params)
+            (flow,) = factory.flow_tests(**params, layout="bus")
             named = {f.entity for f in flow.feed} | set(flow.drain) | {f.entity for f in flow.fluids}
             self.assertLessEqual(named, ids, params)
             self.assertEqual(flow.drain, [f"out {ln.name} {ln.column}" for ln in p["lines"][params["item"]]])

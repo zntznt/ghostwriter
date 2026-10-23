@@ -316,17 +316,18 @@ class Validator(unittest.TestCase):
     def test_factory_reaches_its_rate(self):
         # A whole book on a bus: only inputs fed at the bottom, the product drained at the top.
         for params in ({"item": "electronic-circuit", "rate": 5}, {"item": "advanced-circuit", "rate": 1, "oil": 1}):
-            bp = factory.build(**params)
+            bp = factory.build(**params, layout="bus")
             data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
             self.assertPasses(data)
-            report = self.run_flow(data, factory.flow_tests(**params), ids)
+            report = self.run_flow(data, factory.flow_tests(**params, layout="bus"), ids)
             self.assertTrue(report.ok, (params, report.lines()))
 
     def test_compact_factory_reaches_its_rate(self):
         # Rows on shelves, products handed straight to the rows above: the same flow test.
         # Plastic: a fluid row on supplied petroleum gas, its coal on one lane of the product's belt.
+        # Advanced circuits from crude oil: refining, and cracking through its gate.
         for params in ({"item": "automation-science-pack", "rate": 1}, {"item": "electronic-circuit", "rate": 5},
-                       {"item": "plastic-bar", "rate": 5}):
+                       {"item": "plastic-bar", "rate": 5}, {"item": "advanced-circuit", "rate": 1, "oil": 1}):
             bp = factory.build(**params, layout="compact")
             self.assertIn("compact", bp.label)
             data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
@@ -336,11 +337,11 @@ class Validator(unittest.TestCase):
 
     def test_factory_with_a_cut_line_fails(self):
         # Without the first splitter on the copper line, nothing north of it gets copper.
-        bp = factory.build(item="electronic-circuit", rate=5)
+        bp = factory.build(item="electronic-circuit", rate=5, layout="bus")
         data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
         cut = next(e for e in data["blueprint"]["entities"] if e["name"] == "splitter")
         data["blueprint"]["entities"].remove(cut)
-        report = self.run_flow(data, factory.flow_tests(item="electronic-circuit", rate=5), ids)
+        report = self.run_flow(data, factory.flow_tests(item="electronic-circuit", rate=5, layout="bus"), ids)
         self.assertTrue(any("electronic-circuit" in e for e in report.errors), report.lines())
 
     def test_fluid_rows_reach_rated_output(self):

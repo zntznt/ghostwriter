@@ -57,8 +57,9 @@ from tools.route import N, S, W, route_all, tunnels_of
 from tools.shelves import GAP, MIN_CHANNEL, far, least_area, localize, place, restore, shelve, width, widths
 
 MAX_EXTRA = 14  # rows added to every channel before a width is given up
-# Columns more west of a shelf whose first row takes or gives fluids on its west side: with
-# the yard's two alone, a port between two others (refining's light oil) has no way out.
+# Columns more west of a shelf whose first row has a fluid port on its west side between
+# two others (refining's light oil): with the yard's two alone it has no way out. Given to
+# every row with west fluid ports, processing units at 0.5/s stopped routing.
 FLUID_ROOM = 2
 # Seconds a search may take by default: every request measured reached its best layout
 # within it (the slowest, electronic circuits at 15/s, at 30.7 s on the machine measured;
@@ -262,8 +263,7 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
     yard = [(2 * n, 2 * n + 1) for n in running]
     # A shelf moves west only as far as the box needs: moved further, it just stands
     # off from the shelves it takes from.
-    room = [FLUID_ROOM if any(q.kind.startswith("fluid") and q.side == "west" for q in rows[shelf[0]].ports) else 0
-            for shelf in shelves]
+    room = [FLUID_ROOM if _hemmed(rows[shelf[0]]) else 0 for shelf in shelves]
     span = [room[s] + sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for s, shelf in enumerate(shelves)]
     edge = max(yard[s][1] + 1 + span[s] for s in range(len(shelves)))
     x0s = [room[s] + max(yard[s][1] + 1, min(yard[s][1] + 1 if west else 2 * len(raw) + 2, edge - span[s]))
@@ -473,6 +473,12 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
                   ports, [(line.name, line.column, min(line.events)) for line in bus],
                   [(x0s[s], *shelf_box[s]) for s in range(len(shelves))], leftovers, fluid_inputs, fluid_ports,
                   fluid_outputs)
+
+
+def _hemmed(r) -> bool:
+    """Has the row a west fluid port with others two tiles above and below it?"""
+    west = {q.y for q in r.ports if q.kind.startswith("fluid") and q.side == "west"}
+    return any(y - 2 in west and y + 2 in west for y in west)
 
 
 def _approach(tile, side):

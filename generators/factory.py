@@ -473,12 +473,13 @@ class Canvas:
 
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="bus", budget=None) -> Blueprint:
+          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="compact", budget=None) -> Blueprint:
     """fill: the share of a belt a line made here may carry before it's split.
-    layout: "bus" (every row on one bus), or "compact" (rows on shelves with their
-    products handed over directly, tools/compact.py); compact falls back to the bus,
-    saying why, for what it can't lay out yet. budget: seconds the compact search may
-    take (default compact.BUDGET); it keeps the best layout found in that time."""
+    layout: "compact" (rows on shelves with their products handed over directly,
+    tools/compact.py), or "bus" (every row on one bus); compact falls back to the bus,
+    saying why, for what it can't lay out or lays out no smaller. budget: seconds the
+    compact search may take (default compact.BUDGET); it keeps the best layout found in
+    that time."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill)
     compact = _compact(layout, params, budget, say=True)
@@ -489,7 +490,7 @@ _COMPACT = {}  # params -> (parts, compact.Result) or the reason it isn't compac
 
 
 def _compact(layout, params, budget=None, say=False):
-    """(parts, compact.Result), or None for the bus layout."""
+    """(parts, compact.Result), or None for the bus layout (asked for, or no larger)."""
     if layout not in ("bus", "compact"):
         raise ValueError("layout is bus or compact")
     if layout == "bus":
@@ -505,6 +506,12 @@ def _compact(layout, params, budget=None, say=False):
             _COMPACT[key] = (p, compact.build(p, budget))
         except compact.CompactError as e:
             _COMPACT[key] = str(e)
+        else:  # kept only if smaller: one tall row can set both boxes (processing units)
+            from tools.density import density
+
+            bus = density(_build(plan(**params))[0].to_dict())[0]["area"]
+            if bus <= _COMPACT[key][1].area:
+                _COMPACT[key] = f"the bus layout is smaller ({bus:,} tiles, compact {_COMPACT[key][1].area:,})"
     got = _COMPACT[key]
     if isinstance(got, str):
         if say:
@@ -922,7 +929,7 @@ def _description(p) -> str:
     return text
 
 
-def flow_tests(layout="bus", budget=None, **params):
+def flow_tests(layout="compact", budget=None, **params):
     from validator.flow import Feed, Flow, FluidFeed
 
     compact = _compact(layout, params, budget)
