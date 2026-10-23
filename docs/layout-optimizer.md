@@ -411,3 +411,35 @@ Still on the bus, with the reason on stderr:
   shelf, processing units at 0.5/s stopped routing at all (11,505 tiles without). Only
   a port with others two tiles above and below it gets them; sulfur, acid and
   lubricant blocks lay out smaller without (sulfuric acid 266 to 228 tiles).
+
+## A CP-SAT floorplan (tried, not built)
+
+Section 1's plan: rows anywhere on the grid instead of on shelves, placed by CP-SAT
+and joined by the same routers. Prototyped and measured on five item requests, it
+doesn't beat shelves, so it isn't in the search, and neither the model nor `ortools`
+is in the code.
+
+- **The model works.**
+  - Each row is a rectangle with room around it: a column west, two east, two rows north for its lead-out, a south margin for its adapters, and a floor of rows under everything for the inputs.
+  - Rows don't overlap (`NoOverlap2D`), and each consumer stands wholly north of the rows it takes from.
+  - The objective is the least box area first, then the shortest wires weighted by flow: Manhattan, between output and input ports, to the bottom for a supplied item and to the top for the product.
+  - It runs on one worker with a deterministic time limit, so the same rows always get the same answer; every instance solved in under 0.4 s.
+  - The version tried was `ortools` 9.15.6755, which has cp313 wheels for macOS arm64 and Linux x86-64; it imports in 0.24 s warm.
+- **Routing it doesn't work with compact's pieces.**
+  - Those pieces assume a shelf's channel: a comb runs along one channel row and peels branches north to one shelf's ports, and the bus taps each channel.
+  - Placed freely, even in the stack the model picks, a line feeding rows at several heights needs new pieces. The prototype added a spine: a splitter per consumer row, each feeding a comb south of that row.
+
+  | Request | Shelves | Floorplan |
+  |---|---|---|
+  | iron-gear-wheel 1/s | 88 | 91 |
+  | automation-science-pack 1/s | 450 | 450 with a comb at the spine's splitter; none with each comb started south of its row |
+  | electronic-circuit 5/s | 880 | doesn't route at any margin tried (south 3 to 8, north 2 to 5) |
+  | inserter 1/s | 609 | doesn't route |
+  | logistic-science-pack 1/s | 1,239 | doesn't route |
+
+- **Why it can't pay with these pieces.**
+  - **The box before any routing.** For circuits at 5/s, at the least room it could ever route in (south margin 3, north 2, floor 3), the model's best is a stack 16 wide by 43 tall: 688 tiles. Shelves are 20 by 44.
+  - **The heights match.** A row's south margin plus the north margin of the row below it is a channel, the same rows a shelf's channel holds. A channel holds the adapters, combs and merges the rows need: it's routing, not placement waste. The only gain on offer is the west bus strip's columns.
+  - **The margins must grow before anything routes.** At south 4 and north 3 the box is already 848 tiles, and at 5 and 3 it's 928, more than shelves.
+  - **So the lever is routing, not placement.** A floorplan beats shelves only with pieces that pack a channel tighter than shelves fit it.
+- **Cheaper, and still open.** The west strip (bus and yard) is 16 to 30% of the box. Raw lines riding beside the rows, a column each with no yard, would take back part of it without new pieces. The three requests still on the bus (processing units, production science, robot frames from crude oil) weren't tried, since simpler requests didn't route.
