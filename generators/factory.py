@@ -106,6 +106,8 @@ class Row:
     box: tuple[int, int, int, int]  # min x, min y, max x, max y of its tiles
     dx: int = 0
     dy: int = 0
+    gate: str = ""  # compact: the fluid a gate (tank and pump) in the row lets through
+    wires: list = field(default_factory=list)  # compact: (color, id, id) between the row's own entities
 
 
 @dataclass(eq=False)

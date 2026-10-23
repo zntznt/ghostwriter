@@ -3,6 +3,7 @@
 import unittest
 import warnings
 from collections import Counter
+from functools import cache
 
 from generators import factory
 from tests.test_tools import assert_powered, footprint
@@ -13,12 +14,24 @@ from tools.route import reaches
 ITEMS = [{"item": "electronic-circuit", "rate": 5}, {"item": "automation-science-pack", "rate": 1}]
 # Fluid rows fed by a supplied fluid (petroleum gas: oil isn't processed here, oil=0).
 FLUID_ROWS = [{"item": "plastic-bar", "rate": 5}, {"item": "advanced-circuit", "rate": 1}]
+# Fluid blocks, their lines at their west end: fluids made here, and a fluid product out at the top.
+BLOCKS = [{"item": "sulfuric-acid", "rate": 10}, {"item": "lubricant", "rate": 10}]
+# Oil processed here, cracking through a gate: a pump that runs while a tank on the oil line holds some.
+OIL = [{"item": "advanced-circuit", "rate": 1, "oil": 1}]
+FLUIDS = {"plastic-bar": {"petroleum-gas"}, "advanced-circuit": {"petroleum-gas"},
+          "sulfuric-acid": {"water", "petroleum-gas", "sulfuric-acid"}, "lubricant": {"heavy-oil", "lubricant"}}
+OIL_FLUIDS = {"water", "crude-oil", "heavy-oil", "light-oil", "petroleum-gas"}
 
 
 def laid_out(**params):
+    return _laid_out(tuple(sorted(params.items())))
+
+
+@cache  # each request laid out once for all the tests here
+def _laid_out(params):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        p = factory.rows_and_lines(**params)
+        p = factory.rows_and_lines(**dict(params))
         got = compact.build(p)
         return p, got, got.bp.to_dict()["blueprint"]
 
@@ -31,7 +44,7 @@ def area(bp) -> int:
 
 class Compact(unittest.TestCase):
     def test_checks_clean_powered_and_nothing_overlaps(self):
-        for params in ITEMS + FLUID_ROWS:
+        for params in ITEMS + FLUID_ROWS + BLOCKS + OIL:
             _, got, bp = laid_out(**params)
             self.assertEqual(check({"blueprint": bp}), [], params)
             assert_powered(self, bp, params)
@@ -43,7 +56,7 @@ class Compact(unittest.TestCase):
         # Followed belt by belt from each input and each row's product: a port is reached
         # by every item it takes, and by no item it doesn't. A row's product belt that also
         # carries leftovers (plastic and coal) passes a filter splitter that keeps the coal.
-        for params in ITEMS + FLUID_ROWS:
+        for params in ITEMS + FLUID_ROWS + BLOCKS:
             _, got, bp = laid_out(**params)
             tile_of = {e.id: (int(e.tile_position[0]), int(e.tile_position[1])) for e in got.bp.entities if e.id}
             sources = [(tile_of[ident], item) for ident, item in got.inputs]
@@ -59,7 +72,7 @@ class Compact(unittest.TestCase):
             self.assertEqual(fed, wants, params)
 
     def test_each_fluid_line_is_one_network_and_no_network_two_fluids(self):
-        for params in FLUID_ROWS:
+        for params in FLUID_ROWS + BLOCKS + OIL:
             _, got, bp = laid_out(**params)
             nets = pipes.networks(bp)
             fluids_of = {}
@@ -69,10 +82,35 @@ class Compact(unittest.TestCase):
             self.assertTrue(all(len(f) == 1 for f in fluids_of.values()), (params, fluids_of))
             made = Counter(f for fs in fluids_of.values() for f in fs)
             self.assertTrue(all(n == 1 for n in made.values()), (params, made))
-            self.assertEqual(made.keys(), {"petroleum-gas"}, params)
+            self.assertEqual(made.keys(), OIL_FLUIDS if params.get("oil") else FLUIDS[params["item"]], params)
+
+    def test_cracking_takes_its_oil_through_a_gate(self):
+        # Each cracking block's oil comes through a pump wired to a tank on the oil line, set to
+        # run while the tank holds more than the bus layout's gate level (factory.GATE_LEVEL).
+        _, got, bp = laid_out(**OIL[0])
+        number = {e["entity_number"]: e for e in bp["entities"]}
+        pumps = [e for e in bp["entities"] if e["name"] == "pump"]
+        self.assertEqual(len(pumps), 2)  # heavy oil and light oil cracking
+        for pump in pumps:
+            cond = pump["control_behavior"]["circuit_condition"]
+            self.assertEqual((cond["comparator"], cond["constant"]), (">", factory.GATE_LEVEL))
+            self.assertTrue(pump["control_behavior"].get("circuit_enabled"))
+            wired = {number[a]["name"] for a, _, b, _ in bp["wires"] if pump["entity_number"] in (a, b)} | \
+                {number[b]["name"] for a, _, b, _ in bp["wires"] if pump["entity_number"] in (a, b)}
+            self.assertIn("storage-tank", wired)
+
+    def test_a_fluid_product_leaves_at_the_top_into_a_sink(self):
+        p, got, _ = laid_out(**BLOCKS[0])
+        (flow,) = compact.flow_tests(p, got)
+        ids = {e.id for e in got.bp.entities if e.id}
+        self.assertEqual(sorted((f.fluid, f.side, f.sink) for f in flow.fluids),
+                         [("petroleum-gas", "south", False), ("sulfuric-acid", "north", True),
+                          ("water", "south", False)])
+        self.assertLessEqual({f.entity for f in flow.fluids}, ids)
+        self.assertEqual(flow.expect, {"sulfuric-acid": 10.0})
 
     def test_smaller_than_on_the_bus(self):
-        for params in ITEMS + FLUID_ROWS:
+        for params in ITEMS + FLUID_ROWS + BLOCKS:
             _, got, _ = laid_out(**params)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -134,14 +172,6 @@ class Compact(unittest.TestCase):
                 pass
         self.assertLess(time.monotonic() - t, 3 + compact.NEGOTIATION + 2)
 
-    def test_fluid_blocks_fall_back_to_the_bus_saying_why(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            p = factory.rows_and_lines(item="sulfuric-acid", rate=10)
-            with self.assertRaisesRegex(compact.CompactError, "fluid blocks"):
-                compact.build(p)
-            bp = factory.build(item="sulfuric-acid", rate=10, layout="compact")
-        self.assertNotIn("compact", bp.label)  # the bus layout's
 
 
 if __name__ == "__main__":

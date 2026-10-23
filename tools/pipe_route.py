@@ -45,6 +45,12 @@ class Fluids:
         self.at = dict(known or {})
         self.placed = {}
         self.spans = []
+        self.kept = {}
+
+    def keep(self, fluid, tile):
+        """A tile a line of fluid will take (its way into a port): no other fluid's piece
+        may stand on it, or connect toward it."""
+        self.kept[tile] = fluid
 
     def fix(self, fluid, tile, name, direction=None):
         """A pipe or pipe-to-ground placed outright (a terminal, an input)."""
@@ -57,11 +63,12 @@ class Fluids:
         return got is not None and (toward[0] - tile[0], toward[1] - tile[1]) in got[1]
 
     def foreign(self, fluid, tile, offsets) -> bool:
-        """Would a connector of fluid at tile, connecting toward offsets, join another fluid?"""
+        """Would a connector of fluid at tile, connecting toward offsets, join another fluid
+        (or a tile another fluid's line will take)?"""
         for dx, dy in offsets:
             n = (tile[0] + dx, tile[1] + dy)
             got = self.at.get(n)
-            if got and got[0] != fluid and self.connects(n, tile):
+            if (got and got[0] != fluid and self.connects(n, tile)) or self.kept.get(n, fluid) != fluid:
                 return True
         return False
 
@@ -104,6 +111,8 @@ def route_line(fluids, fluid, terminals, ok, bounds, limit=60000):
             raise ValueError(f"{fluid}: no way for its pipes to {start} that keeps clear of other fluids")
         fluids.put(fluid, path)
         tree |= {(x, y) for _, x, y, _ in path} | set(connectors)
+    for tile in [t for t, f in fluids.kept.items() if f == fluid]:  # taken now, as its pieces show
+        del fluids.kept[tile]
 
 
 def route(fluids, fluid, start, heading, tree, ok, bounds, near=None, limit=60000):
@@ -117,7 +126,7 @@ def route(fluids, fluid, start, heading, tree, ok, bounds, near=None, limit=6000
         return x0 <= x <= x1 and y0 <= y <= y1
 
     def usable(x, y):
-        return inside(x, y) and ok(x, y) and (x, y) not in fluids.at
+        return inside(x, y) and ok(x, y) and (x, y) not in fluids.at and fluids.kept.get((x, y), fluid) == fluid
 
     def joins(tile, offsets):
         return any((tile[0] + dx, tile[1] + dy) in tree and fluids.connects((tile[0] + dx, tile[1] + dy), tile)
@@ -139,6 +148,9 @@ def route(fluids, fluid, start, heading, tree, ok, bounds, near=None, limit=6000
         x, y, d = state
         if not usable(x, y):
             continue
+        tiles, spans = _own(came, state)  # the way here: one piece a tile, one pair a stretch
+        if (x, y) in tiles:
+            continue
         back = BACK[d]
         # A pipe here: it connects every way, so no other fluid may connect to it.
         if not fluids.foreign(fluid, (x, y), ALL):
@@ -156,9 +168,8 @@ def route(fluids, fluid, start, heading, tree, ok, bounds, near=None, limit=6000
             ex, ey = x + k * dx, y + k * dy
             if not inside(ex, ey):
                 break
-            if not usable(ex, ey) or any(_overlaps(_span((x, y), (ex, ey)), s) for s in fluids.spans):
-                continue
-            if _crosses_own(came, state, (x, y), (ex, ey)):
+            span = _span((x, y), (ex, ey))
+            if not usable(ex, ey) or (ex, ey) in tiles or any(_overlaps(span, s) for s in fluids.spans + spans):
                 continue
             step = [("in", x, y, back), ("out", ex, ey, d)]
             onto = (ex + dx, ey + dy)
@@ -183,14 +194,15 @@ def _path(came, state, last):
     return path
 
 
-def _crosses_own(came, state, a, b) -> bool:
-    """Would the pair a..b overlap a pair already on the way to state?"""
-    span = _span(a, b)
+def _own(came, state):
+    """The tiles, and the pairs' spans, of the pieces on the way to state."""
+    tiles, spans = set(), []
     while state in came:
         state, step = came[state]
-        if len(step) == 2 and _overlaps(_span((step[0][1], step[0][2]), (step[1][1], step[1][2])), span):
-            return True
-    return False
+        tiles |= {(x, y) for _, x, y, _ in step}
+        if len(step) == 2:
+            spans.append(_span((step[0][1], step[0][2]), (step[1][1], step[1][2])))
+    return tiles, spans
 
 
 def _pairs(path):
