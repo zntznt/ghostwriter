@@ -114,7 +114,7 @@ class Compact(unittest.TestCase):
             _, got, _ = laid_out(**params)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                bus = factory.build(**params).to_dict()["blueprint"]
+                bus = factory.build(**params, layout="bus").to_dict()["blueprint"]
             self.assertLess(got.area, area(bus), params)
 
     def test_flow_test_feeds_the_bus_and_drains_the_outlets(self):
@@ -156,6 +156,14 @@ class Compact(unittest.TestCase):
                 compact.build(p, budget=0)
             bp = factory.build(**ITEMS[0], layout="compact", budget=0)
         self.assertNotIn("compact", bp.label)  # the bus layout's
+
+    def test_compact_is_the_default_and_the_bus_still_there(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.assertIn("compact", factory.build(**ITEMS[1]).label)
+            self.assertNotIn("compact", factory.build(**ITEMS[1], layout="bus").label)
+            (flow,) = factory.flow_tests(**ITEMS[1])
+        self.assertTrue(flow.name.startswith("compact"))
 
     def test_the_bus_layout_is_kept_when_it_is_smaller(self):
         # As for processing units, whose tallest row sets both boxes: a compact layout no

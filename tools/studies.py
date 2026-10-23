@@ -35,7 +35,7 @@ def belt_fill(server) -> dict:
     evaluate = GameEvaluator(server, "factory")
     result = {}
     for label, (item, line, per_share) in BELT_FILL_BOOKS.items():
-        trials = grid(evaluate, {"rate": [round(per_share * f, 4) for f in SHARES]}, {"item": item, "fill": 1.0})
+        trials = grid(evaluate, {"rate": [round(per_share * f, 4) for f in SHARES]}, {"item": item, "fill": 1.0, "layout": "bus"})
         rows = []
         for f, t in zip(SHARES, trials):
             target = t.params["rate"]

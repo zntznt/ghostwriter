@@ -473,12 +473,13 @@ class Canvas:
 
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="bus", budget=None) -> Blueprint:
+          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="compact", budget=None) -> Blueprint:
     """fill: the share of a belt a line made here may carry before it's split.
-    layout: "bus" (every row on one bus), or "compact" (rows on shelves with their
-    products handed over directly, tools/compact.py); compact falls back to the bus,
-    saying why, for what it can't lay out yet or lays out no smaller. budget: seconds the compact search may
-    take (default compact.BUDGET); it keeps the best layout found in that time."""
+    layout: "compact" (rows on shelves with their products handed over directly,
+    tools/compact.py), or "bus" (every row on one bus); compact falls back to the bus,
+    saying why, for what it can't lay out or lays out no smaller. budget: seconds the
+    compact search may take (default compact.BUDGET); it keeps the best layout found in
+    that time."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill)
     compact = _compact(layout, params, budget, say=True)
@@ -928,7 +929,7 @@ def _description(p) -> str:
     return text
 
 
-def flow_tests(layout="bus", budget=None, **params):
+def flow_tests(layout="compact", budget=None, **params):
     from validator.flow import Feed, Flow, FluidFeed
 
     compact = _compact(layout, params, budget)
