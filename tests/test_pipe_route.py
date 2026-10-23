@@ -79,6 +79,28 @@ class PipeRoute(unittest.TestCase):
         self.assertEqual(nets[(0, 2)], nets[(10, 2)])
         self.assertNotEqual(nets[(2, 0)], nets[(0, 2)])
 
+    def test_keeps_clear_of_another_lines_way_into_its_port(self):
+        # A port's way in is its line's before that line is routed: water passing a gas port
+        # (pairs ruled out there) goes round, so no water pipe stands beside the gas's tile.
+        f = Fluids()
+        a, b = port(f, "water", (0, 0)), port(f, "water", (0, 10))
+        port(f, "petroleum-gas", (0, 5))
+        f.keep("petroleum-gas", (1, 5))
+        f.spans += [("x", x, 3, 7) for x in (1, 2, 3)]
+        route_line(f, "water", [(a, ((1, 0), E)), (b, ((1, 10), E))], lambda x, y: 1 <= x <= 3, BOUNDS)
+        nets = pipes.networks(entities(f))
+        self.assertEqual(nets[(0, 0)], nets[(0, 10)])
+        self.assertFalse(f.foreign("petroleum-gas", (1, 5), {(0, -1), (1, 0), (0, 1)}))
+
+    def test_never_crosses_its_own_path(self):
+        # Facing a wall, the only way on comes back through its own pipe (as a pair's
+        # entrance under the block at (3, -1)): the game keeps one piece a tile, so it refuses.
+        f = Fluids()
+        a, b = port(f, "water", (12, -1)), port(f, "water", (4, 0))
+        way = {(3, 0), (2, 0), (2, -1), (1, -1), (0, -1), (1, -2), (0, -2)} | {(x, -1) for x in range(4, 12)}
+        with self.assertRaises(ValueError):
+            route_line(f, "water", [(a, ((11, -1), W)), (b, ((3, 0), W))], lambda x, y: (x, y) in way, BOUNDS)
+
     def test_refuses_what_it_cant_join(self):
         f = Fluids()
         a, b = port(f, "water", (0, 0)), port(f, "water", (30, 0))

@@ -32,19 +32,19 @@ Placement is tools/shelves.py, the merges, combs and taps tools/belts.py.
   from the east (NOTES.md).
 - A product belt that also carries an ingredient's leftovers (a fluid row's near
   lane) leaves through a filter splitter that keeps the ingredient in the row.
-- A supplied fluid enters at the bottom through a pipe of its own, and reaches the
-  rows that take it (fluid rows, at their south end) through pipes and
-  pipe-to-ground pairs that touch no other fluid (tools/pipe_route.py), routed
-  before the belts, which go round or under them.
-
-Fluid blocks (oil processing, cracking, sulfur, acid, lubricant) and fluids made
-here aren't laid out compact yet, and `factory` falls back to the bus layout for them.
+- Fluids go through pipes and pipe-to-ground pairs that touch no other fluid
+  (tools/pipe_route.py), routed before the belts, which go round or under them:
+  between the rows that make and take each (fluid rows at their south end, fluid
+  blocks at their lines' west ends), a supplied one in at the bottom and a fluid
+  product or left-over out at the top, each through a pipe of its own.
+- Cracking takes its oil through a gate, as on the bus: a pump wired to a tank on
+  the oil's line, running while the tank holds more than factory.GATE_LEVEL.
 """
 
 import math
 import time
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from draftsman.blueprintable import Blueprint
 from draftsman.data import entities
@@ -52,11 +52,14 @@ from draftsman.data import entities
 from generators import factory
 from tools import belts, pipes
 from tools.belts import Blocked, Conn
-from tools.pipe_route import Fluids, route_line, sides
+from tools.pipe_route import ALL, Fluids, route_line, sides
 from tools.route import N, S, W, route_all, tunnels_of
 from tools.shelves import GAP, MIN_CHANNEL, far, least_area, localize, place, restore, shelve, width, widths
 
 MAX_EXTRA = 14  # rows added to every channel before a width is given up
+# Columns more west of a shelf whose first row takes or gives fluids on its west side: with
+# the yard's two alone, a port between two others (refining's light oil) has no way out.
+FLUID_ROOM = 2
 # Seconds a search may take by default: every request measured reached its best layout
 # within it (the slowest, electronic circuits at 15/s, at 30.7 s on the machine measured;
 # docs/layout-optimizer.md), with room for a slower one. A search ends when it's done, so
@@ -98,6 +101,7 @@ def build(p, budget=BUDGET) -> Result:
     room than the best so far isn't tried. Last, it tries every shelf as far west as the
     bus lets it (_attempt's west), and keeps that if smaller. Out of time, it keeps the
     best so far."""
+    _gated(p)
     _refuse(p)
     deadline = time.monotonic() + budget
     candidates = {tuple(map(tuple, shelve(p, wide))) for wide in widths(p["rows"])}
@@ -162,13 +166,46 @@ def _fitted(p, shelves, bus_far, beat=math.inf, deadline=math.inf):
     return got, heights
 
 
-def _refuse(p):
-    from generators.production import CRACKING
+def _gated(p):
+    """Each cracking block's oil through a gate, as on the bus: a storage tank on the oil
+    line and a pump below it into the block's outermost line (the oil's), wired to run
+    while the tank holds more than factory.GATE_LEVEL, so the oil's other users come
+    first. The gate stands north of the block, in its row; the row's oil port is the
+    tank's north-west corner, fed from the west.
 
-    gated = sorted({r.step.item for r in p["rows"] if r.step.item in CRACKING})
-    if gated:
-        raise CompactError(f"cracking ({', '.join(gated)}) takes its oil through a gate the compact layout "
-                           f"doesn't build yet")
+        t-5   T T T       T: tank (3x3), NW corner fed from the west,
+        t-4   T T T          SE corner down into the pump
+        t-3   T T T
+        t-2       P o     P: pump facing south; o: a pole by it
+        t-1       P
+        t     ═══════     the block's outermost line (its port at the west end)
+    """
+    from generators.production import CRACKING
+    from tools.settings import game_settings
+
+    if p.get("_gated"):
+        return
+    p["_gated"] = True
+    for k, r in enumerate(p["rows"]):
+        if r.step.item not in CRACKING:
+            continue
+        oil = next((q for q in r.ports if q.kind == "fluid_in" and q.name != "water"), None)
+        if oil is None or oil.y != r.box[1] or oil.x != r.box[0]:
+            raise CompactError(f"{r.step.item}: the cracked oil's line isn't the block's outermost")
+        x, t = oil.x, oil.y
+        bp = deepcopy(r.bp)
+        bp.entities.append("storage-tank", tile_position=(x, t - 5), id="gate tank")
+        bp.entities.append("pump", tile_position=(x + 2, t - 2), direction=S, id="gate pump")
+        pump = bp.entities["gate pump"]
+        pump.set_circuit_condition(oil.name, ">", factory.GATE_LEVEL)
+        game_settings(pump, {"circuit_enabled": True})
+        bp.entities.append(factory.POLE, tile_position=(x + 3, t - 2))
+        ports = [replace(q, x=x, y=t - 5) if q is oil else q for q in r.ports]
+        p["rows"][k] = factory.Row(r.step, bp, r.flow, ports, (r.box[0], t - 5, max(r.box[2], x + 3), r.box[3]),
+                                   gate=oil.name, wires=[("red", "gate tank", "gate pump")])
+
+
+def _refuse(p):
     for r in p["rows"]:
         x0, y0, x1, y1 = r.box
         for q in r.ports:
@@ -225,9 +262,11 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
     yard = [(2 * n, 2 * n + 1) for n in running]
     # A shelf moves west only as far as the box needs: moved further, it just stands
     # off from the shelves it takes from.
-    span = [sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for shelf in shelves]
+    room = [FLUID_ROOM if any(q.kind.startswith("fluid") and q.side == "west" for q in rows[shelf[0]].ports) else 0
+            for shelf in shelves]
+    span = [room[s] + sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for s, shelf in enumerate(shelves)]
     edge = max(yard[s][1] + 1 + span[s] for s in range(len(shelves)))
-    x0s = [max(yard[s][1] + 1, min(yard[s][1] + 1 if west else 2 * len(raw) + 2, edge - span[s]))
+    x0s = [room[s] + max(yard[s][1] + 1, min(yard[s][1] + 1 if west else 2 * len(raw) + 2, edge - span[s]))
            for s in range(len(shelves))]
     where, shelf_box, y_out = place(rows, shelves, heights, x0s, canvas)
     x_max = max(x for x, _ in canvas.tiles) + 2
@@ -398,7 +437,7 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
 
     bp = Blueprint()
     bp.label = f"Factory: {p['rate']:g} {p['item']}/s, compact"
-    bp.description = _description(p, raw + [ln for ln in lines if ln.fluid], len(outlets))
+    bp.description = _description(p, raw, len(outlets))
     bp.icons = [p["item"]]
     for k, r in enumerate(rows):
         dx, dy = where[k]
@@ -409,6 +448,9 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
             bp.entities.append(copy, copy=False)
     for name, tile, kw in canvas.items:
         bp.entities.append(name, tile_position=tile, **kw)
+    for k, r in enumerate(rows):
+        for color, a, b in r.wires:
+            bp.add_circuit_connection(color, f"row {k} {a}", f"row {k} {b}")
     for tile in poles:
         bp.entities.append(factory.POLE, tile_position=tile)
     bp.generate_power_connections()
@@ -452,6 +494,10 @@ def _pipe_fluids(p, rows, lines, where, at, canvas, claimed, yard, band, bounds)
     fluids.spans += [span for k in range(len(rows)) for span in _row_spans(p, rows[k], where[k])]
     boxes = {(x + where[k][0], y + where[k][1]) for k, r in enumerate(rows)
              for x in range(r.box[0], r.box[2] + 1) for y in range(r.box[1], r.box[3] + 1)}
+    for k, r in enumerate(rows):  # every port's way in, its line's from the start
+        for q in r.ports:
+            if q.kind.startswith("fluid"):
+                fluids.keep(q.name, _approach(at(k, q), q.side)[0])
     x_lo, y_top, x_hi, _ = bounds
     inputs, outputs, ports, columns = [], [], [], {0: [], y_top: []}
     for ln in fluid_lines:
@@ -465,14 +511,23 @@ def _pipe_fluids(p, rows, lines, where, at, canvas, claimed, yard, band, bounds)
         for k, r in enumerate(rows):
             for q in r.ports:
                 if q.kind.startswith("fluid") and q.lines.get(q.name) is ln:
-                    terminals.append(({at(k, q)}, _approach(at(k, q), q.side)))
-                    ports.append((at(k, q), ln.name))
+                    approach = _approach(at(k, q), q.side)
+                    piped = (q.x, q.y) in {t for t, *_ in _row_local(p, r)}
+                    # A gate's tank isn't a pipe: nothing else joins the line through it, and
+                    # the line is checked at the pipe joining it.
+                    terminals.insert(len(terminals) if not piped else 0, ({at(k, q)} if piped else set(), approach))
+                    ports.append((at(k, q) if piped else approach[0], ln.name))
         target = sum(t[1][0][0] for t in terminals) / len(terminals)
 
         def end(y, inward, ident_of):
             """A pipe of the line's own at row y, the player's joining it from beyond."""
+            def clear(t):  # no piece there, kept for another line, or joining another fluid
+                return (t not in fluids.at and fluids.kept.get(t, ln.name) == ln.name
+                        and not fluids.foreign(ln.name, t, ALL))
+
             column = min((x for x in range(yard[0][1] + 1, x_hi + 1)
-                          if all(abs(x - c) > 1 for c in columns[y]) and ok(x, y) and ok(x, y + inward)),
+                          if all(abs(x - c) > 1 for c in columns[y]) and ok(x, y) and ok(x, y + inward)
+                          and clear((x, y)) and clear((x, y + inward))),
                          key=lambda x: abs(x - target), default=None)
             if column is None:
                 raise Blocked(f"{ln.name}: no room for its pipe {'in' if y == 0 else 'out'}")
@@ -517,12 +572,19 @@ def _row_local(p, r):
 
 def _row_fluids(p, rows, where) -> dict:
     """Tile -> (fluid, sides it connects toward) for every row's pipes; pipes no port names
-    get a fluid of their own row's, which nothing routed may join."""
+    get a fluid of their own row's, which nothing routed may join (behind a gate's pump,
+    the oil the pump lets in). A gate's tank connects at its north-west corner, north and
+    west, and at its south-east corner, east and south (as on the bus)."""
     got = {}
     for k, r in enumerate(rows):
         dx, dy = where[k]
         for (x, y), name, d, fluid in _row_local(p, r):
             got[(x + dx, y + dy)] = (fluid or f"row {k}", sides(name, d))
+        for e in r.bp.entities:
+            if e.name == "storage-tank":
+                x, y = int(e.tile_position[0]) + dx, int(e.tile_position[1]) + dy
+                got[(x, y)] = (r.gate, {(0, -1), (-1, 0)})
+                got[(x + 2, y + 2)] = (r.gate, {(1, 0), (0, 1)})
     return got
 
 
@@ -559,12 +621,21 @@ class _BusLine:
 
 
 def _description(p, raw, outlets) -> str:
-    supplied = [f"{ln.name} {ln.demand:.3g}/s{' (pipe)' if ln.fluid else ''}" for ln in raw]
+    """raw: the bus's lines, west to east."""
+    lines = [ln for named in p["lines"].values() for ln in named]
+    supplied = [f"{ln.name} {ln.demand:.3g}/s" for ln in raw]
+    piped = [f"{ln.name} {ln.demand:.3g}/s" for ln in lines if ln.fluid and ln.supplied]
+    left = [ln.name for ln in lines if ln.fluid and ln.top == "surplus"]
+    gates = (" Cracking takes oil only while the tank by its pump holds over %d." % factory.GATE_LEVEL
+             if any(r.gate for r in p["rows"]) else "")
     text = (f"{len(p['rows'])} rows on shelves, products handed over directly. Inputs enter at the bottom of the "
-            f"west bus, west to east: {', '.join(supplied)}. The product leaves at the top"
-            f"{' on ' + str(outlets) + ' belts' if outlets > 1 else ''}. Connect any pole to your grid.")
-    if len(text.encode()) > 500:
-        text = (f"{len(p['rows'])} rows on shelves. Inputs ({len(raw)} belts) enter at the bottom of the west bus, "
+            f"west bus, west to east: {', '.join(supplied) or 'none'}"
+            f"{'; by pipe: ' + ', '.join(piped) if piped else ''}. The product leaves at the top"
+            f"{' on ' + str(outlets) + ' belts' if outlets > 1 else ''}"
+            f"{', with ' + ', '.join(left) + ' left over (use or store it, or refining stops)' if left else ''}."
+            f"{gates} Connect any pole to your grid.")
+    if len(text.encode()) > factory.TEXT_LIMITS["description"]:
+        text = (f"{len(p['rows'])} rows on shelves. Inputs ({len(raw) + len(piped)} lines) enter at the bottom, "
                 f"the product leaves at the top. Connect any pole to your grid.")
     return text
 
