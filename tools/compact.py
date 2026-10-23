@@ -47,13 +47,14 @@ from generators import factory
 from tools import belts
 from tools.belts import Blocked, Conn
 from tools.route import N, route_all, tunnels_of
-from tools.shelves import MIN_CHANNEL, far, least_area, localize, place, restore, shelve, widths
+from tools.shelves import GAP, MIN_CHANNEL, far, least_area, localize, place, restore, shelve, width, widths
 
 MAX_EXTRA = 14  # rows added to every channel before a width is given up
 # Seconds a search may take by default: every request measured reached its best layout
-# within it (the slowest, electronic circuits at 15/s, at 29.9 s; docs/layout-optimizer.md).
-# A search ends when it's done, so small factories don't wait for it.
-BUDGET = 30.0
+# within it (the slowest, electronic circuits at 15/s, at 30.7 s on the machine measured;
+# docs/layout-optimizer.md), with room for a slower one. A search ends when it's done, so
+# small factories don't wait for it.
+BUDGET = 40.0
 # A negotiation that routes took 0.1 to 1 s on every request measured; the ones that
 # never route ran to 15 to 38 s first. Cut there.
 NEGOTIATION = 4.0
@@ -72,6 +73,8 @@ class Result:
     height: int
     channels_used: list  # per channel, the rows anything but the rows used
     ports: list = field(default_factory=list)  # ("in", tile, items it takes) and ("out", tile, item)
+    bus: list = field(default_factory=list)  # (item, column, northmost row) per raw line, west to east
+    shelves: list = field(default_factory=list)  # (west column, south row, north row) per shelf
 
 
 def build(p, budget=BUDGET) -> Result:
@@ -81,7 +84,9 @@ def build(p, budget=BUDGET) -> Result:
     until it routes, then cut to the rows it used. The best of those then loses a
     channel row at a time while it still routes and gets no bigger. Shelves are tried
     least room first, and a channel height whose rows and gaps alone already take more
-    room than the best so far isn't tried. Out of time, it keeps the best so far."""
+    room than the best so far isn't tried. Last, it tries every shelf as far west as the
+    bus lets it (_attempt's west), and keeps that if smaller. Out of time, it keeps the
+    best so far."""
     _refuse(p)
     deadline = time.monotonic() + budget
     candidates = {tuple(map(tuple, shelve(p, wide))) for wide in widths(p["rows"])}
@@ -98,16 +103,29 @@ def build(p, budget=BUDGET) -> Result:
             raise CompactError(f"no layout routed within its budget of {budget:g} s")
         raise CompactError("the rows don't route in any shelf width tried")
     got, heights, shelves, bus_far = best
+    got, heights = _trimmed(p, shelves, heights, bus_far, deadline, got)
+    if time.monotonic() <= deadline:
+        try:
+            west = _attempt(p, shelves, heights, bus_far, deadline, west=True)
+        except Blocked:
+            return got
+        west, _ = _trimmed(p, shelves, heights, bus_far, deadline, west, west=True)
+        got = min(got, west, key=lambda g: g.area)
+    return got
+
+
+def _trimmed(p, shelves, heights, bus_far, deadline, got, west=False):
+    """(layout, heights): each channel a row thinner at a time while it still routes."""
     for c in range(len(heights)):
         while heights[c] > MIN_CHANNEL and time.monotonic() <= deadline:
             trial = heights[:c] + [heights[c] - 1] + heights[c + 1:]
             try:
-                smaller = _attempt(p, shelves, trial, bus_far, deadline)
+                smaller = _attempt(p, shelves, trial, bus_far, deadline, west)
             except Blocked:
                 break
             heights = trial
             got = min(got, smaller, key=lambda g: g.area)
-    return got
+    return got, heights
 
 
 def _fitted(p, shelves, bus_far, beat=math.inf, deadline=math.inf):
@@ -144,7 +162,9 @@ def _refuse(p):
                 raise CompactError(f"{r.step.item}: a port off the row's south or north edge")
 
 
-def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf) -> Result:
+def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -> Result:
+    """One layout of these shelves and channel heights, or Blocked. west: every shelf as
+    far west as the lines running beside it let it, not only as far as the box needs."""
     rows, belt = p["rows"], p["belt"]
     restore(p)
     underground, splitter = factory.KITS[belt]
@@ -153,8 +173,6 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf) -> Result:
     shelf_of = {k: s for s, shelf in enumerate(shelves) for k in shelf}
     raw = [ln for ln in lines if ln.supplied]
     raw += [ln for ln in lines if bus_far and not ln.supplied and not ln.top and far(ln, rows, shelf_of)]
-    Y1, Y2 = 2 * len(raw), 2 * len(raw) + 1  # yard columns between the bus and the rows
-    X0 = Y2 + 1
     canvas = factory.Canvas()
     claimed = {}  # goal tiles: (x, y) -> the connection allowed onto it
     conns = []
@@ -172,7 +190,28 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf) -> Result:
                 if q.kind == "in":
                     for ln in q.feeds.values():
                         sinks_in[s].add(id(ln))
-    where, shelf_box, y_out = place(rows, shelves, heights, X0, canvas)
+
+    def source(ln):  # the shelf of a made line's rows
+        return max(shelf_of[k] for k, r in enumerate(rows) for q in r.ports if q.kind == "out" and ln in q.outs)
+
+    def tapped(ln):  # the shelves a raw line taps into
+        got = [s for s in range(len(shelves)) if id(ln) in sinks_in[s]]
+        return got if ln.supplied else [s for s in got if s > source(ln)]
+
+    # A ragged bus: each line ends at its last tap, and lines reaching further north sit
+    # further west, so a shelf above a line's last tap starts in its columns. Each
+    # channel's yard is the two columns east of the lines still running in it.
+    last_channel = {id(ln): max(tapped(ln), default=0) for ln in raw}
+    raw.sort(key=lambda ln: -last_channel[id(ln)])
+    running = [sum(1 for ln in raw if last_channel[id(ln)] >= c) for c in range(len(shelves) + 1)]
+    yard = [(2 * n, 2 * n + 1) for n in running]
+    # A shelf moves west only as far as the box needs: moved further, it just stands
+    # off from the shelves it takes from.
+    span = [sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for shelf in shelves]
+    edge = max(yard[s][1] + 1 + span[s] for s in range(len(shelves)))
+    x0s = [max(yard[s][1] + 1, min(yard[s][1] + 1 if west else 2 * len(raw) + 2, edge - span[s]))
+           for s in range(len(shelves))]
+    where, shelf_box, y_out = place(rows, shelves, heights, x0s, canvas)
     x_max = max(x for x, _ in canvas.tiles) + 2
 
     def at(k, q):
@@ -238,7 +277,7 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf) -> Result:
             continue
         if ln.top == "product":
             column = next((x for d in range(x_max) for x in (trunk[0] + d, trunk[0] - d)
-                           if Y1 <= x <= x_max and free(x, y_out)), None)
+                           if yard[-1][0] <= x <= x_max and free(x, y_out)), None)
             if column is None:
                 raise Blocked("no room for an outlet")
             goal = (column, y_out)
@@ -263,32 +302,38 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf) -> Result:
     bus = []
     for i, ln in enumerate(raw):
         c = 2 * i
-        shelves_used = [s for s in range(len(shelves)) if id(ln) in sinks_in[s]]
+        shelves_used = tapped(ln)
         if ln.supplied:
             events = {0}
             ident = f"in {ln.name} {i}"
             canvas.put(belt, c, 0, "input", direction=N, id=ident)
             inputs.append((ident, ln.name))
         else:  # made here: from its rows west onto the bus, in the channel above them
-            src = max(shelf_of[k] for k, r in enumerate(rows) for q in r.ports if q.kind == "out" and ln in q.outs)
-            ye = belts.entry(canvas, free, taps, channel_rows(src + 1), c, Y1, Y2, bus_entry[id(ln)], claimed,
+            src = source(ln)
+            ye = belts.entry(canvas, free, taps, channel_rows(src + 1), c, *yard[src + 1], bus_entry[id(ln)], claimed,
                              conns, belt, ln.name)
             events = {ye}
-            shelves_used = [s for s in shelves_used if s > src]
         for n, s in enumerate(shelves_used):
             last = n == len(shelves_used) - 1
             mine = [g for g in goals.get(id(ln), []) if channel_rows(s)[0] >= g[1] >= channel_rows(s)[-1]]
-            yb = belts.tap(canvas, free, taps, channel_rows(s), c, Y1, Y2, last, mine, belt, splitter, conns, ln.name)
+            yb = belts.tap(canvas, free, taps, channel_rows(s), c, *yard[s], last, mine, belt, splitter, conns, ln.name)
             events.add(yb if last else yb + 1)
         bus.append(_BusLine(ln.name, c, events))
     tunnels = []
     for cn in conns:  # a route's first tile is its own, as its last is
         if claimed.setdefault(cn.start, cn.owner) != cn.owner:
             raise Blocked(f"{cn.owner}: starts on {claimed[cn.start]}'s tile")
-    bounds = (Y1, y_out, x_max, -1)
+    # Routes keep east of the lines still running at each row: a band is a channel and the shelf above it.
+    band = {0: 0}
+    for s in range(len(shelves) + 1):
+        band.update({y: s for y in channel_rows(s)})
+        if s < len(shelves):
+            band.update({y: s for y in range(shelf_box[s][1], shelf_box[s][0] + 1)})
+    bounds = (min(x for x, _ in yard), y_out, x_max, -1)
     spec = [(cn.start, cn.heading, cn.goal, cn.facing, lambda x, y, cn=cn: claimed.get((x, y), cn.owner) == cn.owner)
             for cn in conns]
-    paths = route_all(spec, canvas.free, reach, bounds, deadline=min(deadline, time.monotonic() + NEGOTIATION))
+    paths = route_all(spec, lambda x, y: canvas.free(x, y) and x >= yard[band.get(y, 0)][0], reach, bounds,
+                      deadline=min(deadline, time.monotonic() + NEGOTIATION))
     if paths is None:
         raise Blocked("the belts don't route without sharing a tile")
     for cn, path in zip(conns, paths):
@@ -335,14 +380,15 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf) -> Result:
     for s in range(len(shelves) + 1):
         span = channel_rows(s)
         taken = {y for (x, y), owner in canvas.tiles.items()
-                 if y in span and x >= Y1 and not str(owner).startswith("row")}
+                 if y in span and x >= yard[s][0] and not str(owner).startswith("row")}
         # Rows from the channel's north end down to the southmost one used: what's north of it can't go.
         used.append(span[0] - min(span) + 1 if not taken else max(taken) - min(span) + 1 if s < len(shelves) else
                     span[0] - min(taken) + 1)
     ports = [("in", at(k, q), set(q.lanes.values())) if q.kind == "in" else ("out", at(k, q), q.name)
              for k, r in enumerate(rows) for q in r.ports if q.kind in ("in", "out")]
     return Result(bp, area, inputs, [(ident, name) for _, ident, name in outlets], max(ys) - min(ys) + 1, used,
-                  ports)
+                  ports, [(line.name, line.column, min(line.events)) for line in bus],
+                  [(x0s[s], *shelf_box[s]) for s in range(len(shelves))])
 
 
 @dataclass

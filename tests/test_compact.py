@@ -69,6 +69,21 @@ class Compact(unittest.TestCase):
         self.assertEqual({f.item for f in flow.feed}, {"iron-plate", "copper-plate"})
         self.assertEqual(flow.expect, {"electronic-circuit": 5.0})
 
+    def test_the_bus_ends_at_each_lines_last_tap_and_shelves_above_take_its_columns(self):
+        # A raw line ends where its last channel taps it; lines reaching further north sit
+        # further west, so a shelf above a line's last tap starts in its columns (and a
+        # shelf never stands on a line still running beside it).
+        moved = False
+        for params in ITEMS:
+            _, got, _ = laid_out(**params)
+            norths = [north for _, _, north in got.bus]
+            self.assertEqual(norths, sorted(norths), params)  # westmost reaches furthest
+            for x0, south, north in got.shelves:
+                running = [c for _, c, end in got.bus if end <= south]  # still running at the shelf's foot
+                self.assertTrue(all(c + 1 < x0 for c in running), (params, x0, running))
+                moved |= x0 < 2 * len(got.bus) + 2
+        self.assertTrue(moved)  # automation science's gear shelf starts above iron's last tap
+
     def test_a_search_with_no_time_left_falls_back_saying_why(self):
         # budget=: seconds for the whole search; with none left it lays nothing out.
         with warnings.catch_warnings():

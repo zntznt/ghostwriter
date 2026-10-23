@@ -73,8 +73,8 @@ def least_area(p, shelved, heights=None) -> int:
     return wide * (tall + sum(heights or [MIN_CHANNEL] * (len(shelved) + 1)))
 
 
-def place(rows, shelved, heights, x0, canvas):
-    """Rows on their shelves from x0 east, south to north from y = -1, with heights[s]
+def place(rows, shelved, heights, x0s, canvas):
+    """Rows on their shelves, shelf s from column x0s[s] east, south to north from y = -1, with heights[s]
     channel rows south of shelf s and heights[-1] above the last. Takes the rows'
     tiles in canvas, and keeps empty the tile in front of any row belt that runs off
     the row: the top of each input belt would side-load anything passing there.
@@ -84,7 +84,7 @@ def place(rows, shelved, heights, x0, canvas):
     for s, shelf in enumerate(shelved):
         y -= heights[s]
         bottom = top = y
-        x = x0
+        x = x0s[s]
         for k in shelf:
             r = rows[k]
             dx, dy = x - r.box[0], bottom - r.box[3]
