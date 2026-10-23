@@ -324,7 +324,9 @@ class Validator(unittest.TestCase):
 
     def test_compact_factory_reaches_its_rate(self):
         # Rows on shelves, products handed straight to the rows above: the same flow test.
-        for params in ({"item": "automation-science-pack", "rate": 1}, {"item": "electronic-circuit", "rate": 5}):
+        # Plastic: a fluid row on supplied petroleum gas, its coal on one lane of the product's belt.
+        for params in ({"item": "automation-science-pack", "rate": 1}, {"item": "electronic-circuit", "rate": 5},
+                       {"item": "plastic-bar", "rate": 5}):
             bp = factory.build(**params, layout="compact")
             self.assertIn("compact", bp.label)
             data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}

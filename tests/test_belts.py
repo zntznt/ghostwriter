@@ -22,6 +22,25 @@ class Comb(unittest.TestCase):
         self.assertIsNone(belts.comb(lambda x, y: (x, y) != (5, 0), (0, 0), E, self.TARGETS))
 
 
+class Adapter(unittest.TestCase):
+    def test_a_port_taking_one_lane_is_side_loaded_from_that_side_with_a_stub_behind(self):
+        # A fluid row's product belt carries coal on its near lane only: fed from below, the
+        # coal would take both lanes and block the product. From the side, with a stub
+        # belt pointing in from behind, it goes onto that lane alone (NOTES.md).
+        for lane, side, facing in (("right", (6, -7), belts.W), ("left", (4, -7), E)):
+            canvas, claimed, line = factory.Canvas(), {}, object()
+            got = belts.adapter(canvas, canvas.free, 5, -8, -1, {lane: line}, "transport-belt", claimed, "row")
+            self.assertEqual(got, [(line, (*side, facing, f"row {lane}"))], lane)
+            placed = {tile: kw["direction"] for name, tile, kw in canvas.items}
+            self.assertEqual(placed, {(5, -7): N, (5, -6): N}, lane)  # (5, -6) the stub
+
+    def test_a_port_taking_both_lanes_of_one_line_is_fed_from_below(self):
+        canvas, claimed, line = factory.Canvas(), {}, object()
+        got = belts.adapter(canvas, canvas.free, 5, -8, -1, {"left": line, "right": line}, "transport-belt",
+                            claimed, "row")
+        self.assertEqual(got, [(line, (5, -7, N, "row"))])
+
+
 class Merge(unittest.TestCase):
     def test_rows_merge_through_stacked_splitters_with_one_output_empty(self):
         canvas, claimed, conns = factory.Canvas(), {}, []
