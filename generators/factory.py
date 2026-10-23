@@ -38,7 +38,9 @@ pipe network over 320 tiles stops. Poles join every row into one network.
 target rate: the whole factory, as a player would build it.
 """
 
+import inspect
 import math
+import sys
 from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -469,9 +471,42 @@ class Canvas:
 
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL) -> Blueprint:
-    """fill: the share of a belt a line made here may carry before it's split."""
-    return _build(plan(item, rate, machine, belt, smelt, furnace, raw, oil, fill))[0]
+          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="bus") -> Blueprint:
+    """fill: the share of a belt a line made here may carry before it's split.
+    layout: "bus" (every row on one bus), or "compact" (rows on shelves with their
+    products handed over directly, tools/compact.py); compact falls back to the bus,
+    saying why, for what it can't lay out yet."""
+    params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
+                  fill=fill)
+    compact = _compact(layout, params, say=True)
+    return compact[1].bp if compact else _build(plan(**params))[0]
+
+
+_COMPACT = {}  # params -> (parts, compact.Result) or the reason it isn't compact: build and flow_tests share one search
+
+
+def _compact(layout, params, say=False):
+    """(parts, compact.Result), or None for the bus layout."""
+    if layout not in ("bus", "compact"):
+        raise ValueError("layout is bus or compact")
+    if layout == "bus":
+        return None
+    from tools import compact
+
+    defaults = {k: v.default for k, v in inspect.signature(rows_and_lines).parameters.items()}
+    key = tuple(sorted({**defaults, **params}.items()))
+    if key not in _COMPACT:
+        p = rows_and_lines(**params)
+        try:
+            _COMPACT[key] = (p, compact.build(p))
+        except compact.CompactError as e:
+            _COMPACT[key] = str(e)
+    got = _COMPACT[key]
+    if isinstance(got, str):
+        if say:
+            print(f"factory: laid out on the bus, not compact: {got}", file=sys.stderr)
+        return None
+    return got
 
 
 def _build(p):
@@ -883,9 +918,14 @@ def _description(p) -> str:
     return text
 
 
-def flow_tests(**params):
+def flow_tests(layout="bus", **params):
     from validator.flow import Feed, Flow, FluidFeed
 
+    compact = _compact(layout, params)
+    if compact:
+        from tools.compact import flow_tests as compact_flow_tests
+
+        return compact_flow_tests(*compact)
     bp, p = _build(plan(**params))
     feeds, drains, fluids = [], [], []
     for line in (ln for named in p["lines"].values() for ln in named):

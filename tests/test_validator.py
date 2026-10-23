@@ -322,6 +322,16 @@ class Validator(unittest.TestCase):
             report = self.run_flow(data, factory.flow_tests(**params), ids)
             self.assertTrue(report.ok, (params, report.lines()))
 
+    def test_compact_factory_reaches_its_rate(self):
+        # Rows on shelves, products handed straight to the rows above: the same flow test.
+        for params in ({"item": "automation-science-pack", "rate": 1}, {"item": "electronic-circuit", "rate": 5}):
+            bp = factory.build(**params, layout="compact")
+            self.assertIn("compact", bp.label)
+            data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+            self.assertPasses(data)
+            report = self.run_flow(data, factory.flow_tests(**params, layout="compact"), ids)
+            self.assertTrue(report.ok, (params, report.lines()))
+
     def test_factory_with_a_cut_line_fails(self):
         # Without the first splitter on the copper line, nothing north of it gets copper.
         bp = factory.build(item="electronic-circuit", rate=5)

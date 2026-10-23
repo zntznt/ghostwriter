@@ -350,3 +350,18 @@ def _description(p, raw, outlets) -> str:
                 f"the product leaves at the top. Connect any pole to your grid.")
     return text
 
+
+def flow_tests(p, result):
+    """Feed the bus inputs at the bottom, drain the top: the whole factory at its rate."""
+    from validator.flow import Feed, Flow
+
+    from tools import rates
+
+    feeds = [Feed(ident, lane, item) for ident, item in result.inputs for lane in ("left", "right")]
+    drains = [ident for ident, item in result.outputs if item == p["item"]]
+    warmup = sum(max(r.flow.warmup for r in p["rows"] if r.step is s) for s in p["steps"])
+    warmup += rates.travel_seconds(p["belt"], result.height)
+    window = max(r.flow.window for r in p["rows"])
+    return [Flow(f"compact factory of {len(p['rows'])} rows: {p['rate']:g} {p['item']}/s", feeds, drains,
+                 {p["item"]: float(p["rate"])}, warmup=warmup, window=window, at_least=True,
+                 settle=factory.SETTLE)]

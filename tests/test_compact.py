@@ -60,12 +60,23 @@ class Compact(unittest.TestCase):
                 bus = factory.build(**params).to_dict()["blueprint"]
             self.assertLess(got.area, area(bus), params)
 
-    def test_rows_with_fluids_are_refused_saying_why(self):
+    def test_flow_test_feeds_the_bus_and_drains_the_outlets(self):
+        params = ITEMS[0]
+        p, got, _ = laid_out(**params)
+        (flow,) = compact.flow_tests(p, got)
+        ids = {e.id for e in got.bp.entities if e.id}
+        self.assertLessEqual({f.entity for f in flow.feed} | set(flow.drain), ids)
+        self.assertEqual({f.item for f in flow.feed}, {"iron-plate", "copper-plate"})
+        self.assertEqual(flow.expect, {"electronic-circuit": 5.0})
+
+    def test_fluids_fall_back_to_the_bus_saying_why(self):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             p = factory.rows_and_lines(item="advanced-circuit", rate=1, oil=1)
             with self.assertRaisesRegex(compact.CompactError, "fluids"):
                 compact.build(p)
+            bp = factory.build(item="advanced-circuit", rate=1, oil=1, layout="compact")
+        self.assertNotIn("compact", bp.label)  # the bus layout's
 
 
 if __name__ == "__main__":

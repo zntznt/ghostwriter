@@ -3,7 +3,9 @@
 The aim: layouts that use space as well as they use throughput, like a perfect
 game of Tetris. This note measures where today's generators spend their tiles
 (`python -m tools.bp density`), names what's structurally wasteful, and proposes
-how to optimise it. Nothing here is built yet.
+how to optimise it. The first step, a constructive compact layout, is built
+(`factory ... layout=compact`); what it gained and where the space still goes is
+in [The constructive layout](#the-constructive-layout-built).
 
 All numbers are from `gen NAME ... --validate` on Factorio 2.1.23 (flow tests,
 and chain tests for books, all passing) and `bp density` on the result. Empty
@@ -122,5 +124,81 @@ empty, and most of that is inserter-column tiles a 3-tall machine can't avoid.
 
 - **First target: `factory`.** It holds 83 to 86% of a connected factory's area outside its rows, against at most 21% inside a row.
 - **First step: the constructive layout above,** measured with `bp density` and validated with the factory's flow test, to size the gain before adding `ortools`.
-- **Expected gain, untested.** If the connections took as much area as the rows instead of 5 to 6 times as much, electronic circuits at 5/s would go from 1,560 tiles to about 520: three times smaller. That's an estimate from the measurements above, not a result.
+- **Expected gain, untested.** If the connections took as much area as the rows instead of 5 to 6 times as much, electronic circuits at 5/s would go from 1,560 tiles to about 520: three times smaller. That's an estimate from the measurements above, not a result. The constructive layout reached 880 (below).
 - **Alongside: a `research=` option for inserter capacity on the row generators.** It shrinks every row and lifts the processing-unit refusal.
+
+## The constructive layout (built)
+
+`gen factory ... layout=compact` (`tools/compact.py`, with `tools/shelves.py`,
+`tools/belts.py` and the router `tools/route.py`). No solver: rows go on shelves,
+a row above every row it takes from; raw inputs ride a bus on the west, tapped in
+each channel; products go straight from their rows to the rows above that use
+them, merged through splitters and split by combs; a negotiated-congestion grid
+router (PathFinder, as FPGA routers use) joins the pieces, undergrounds included.
+It searches shelf widths, and whether items used far from their rows ride the
+bus, growing every channel until it routes and cutting each to what it used.
+
+### Measured
+
+Every request below passed `gen factory ... layout=compact --validate` on
+Factorio 2.1.23 (macOS) at its rated rate. Bus is the default layout.
+
+| Request | Bus: area, empty, tiles per item/s | Compact: area, empty, tiles per item/s | Smaller by | Compact in game | Build |
+|---|---|---|---|---|---|
+| electronic-circuit 5/s | 1,560, 60%, 312 | 880, 44%, 176 | 44% | 6.01/s | 0.4 s |
+| electronic-circuit 15/s | 4,462, 54%, 297 | 2,847, 49%, 190 | 36% | 14.9/s (window 2 of 4) | about 100 s |
+| automation-science-pack 1/s | 738, 63%, 738 | 500, 57%, 500 | 32% | 1.2/s | 0.3 s |
+| logistic-science-pack 1/s | 2,373, 65%, 2,373 | 1,364, 52%, 1,364 | 43% | 1.25/s | about 18 s |
+| advanced-circuit 1/s, oil | 3,825 | falls back to the bus | | | |
+| chemical-science-pack 0.5/s, oil | 6,832 | falls back to the bus | | | |
+
+Outside the audit, also passing in game: electronic circuits at 5/s from ore
+(`smelt=1`, 5.34/s), at 10/s on fast belts (12/s), and inserters at 1/s (1.5/s).
+
+**Rows with fluids aren't laid out compact yet.** Oil processing, cracking,
+plastic and sulfur rows have pipe ports, and the compact layout has no pipe
+routing or pump and tank rules: those requests get the bus layout and the
+message `factory: laid out on the bus, not compact: rows with fluids (...)`.
+
+### Where the space still goes
+
+Compact still takes 2.8 to 4.6 times its rows' area, short of the 2x target:
+
+| Request | Rows | West bus strip | Channels | Beside rows (gaps, ragged shelves) |
+|---|---|---|---|---|
+| electronic-circuit 5/s (880) | 260 | 264 | 336 | 20 |
+| electronic-circuit 15/s (2,847) | 624 | 584 | 1,519 | 120 |
+| automation-science-pack 1/s (500) | 177 | 150 | 140 | 33 |
+| logistic-science-pack 1/s (1,364) | 367 | 372 | 496 | 129 |
+
+- **Channels** (38 to 53% of the box): rows take inputs at the bottom and send products out of the top, so every shelf needs a channel below it, as wide as the factory, for taps, combs, merges and adapters, plus room for crossing belts to dive under.
+- **The west bus** (20 to 30%): two columns per raw line (one spare, for its splitters) and two yard columns, the full height of the factory, though each line is only used up to its last shelf.
+- **Beside the rows** (2 to 9%): the 3-column gaps and shelves of unequal width. This is the only part that placement alone controls.
+
+### Would the CP-SAT floorplan help?
+
+Not much on its own. A rectangle floorplanner recovers the "beside rows" column,
+20 to 129 tiles here. The rest is routing space. To win there, the floorplan needs
+a routing-aware objective: connection length and crossings, and channel capacity,
+so rows whose products meet sit close and channels can be thin; otherwise it packs
+rows the router can't join. Cheaper steps, in order of the space they target:
+
+1. **Mirrored rows sharing a channel:** a shelf of rows flipped (inputs on top) faces the shelf above it across one channel, so two shelves share it. That's a row variant the design above already lists.
+2. **A ragged bus:** stop each raw line at its last tap and let the yard and the rows use the columns above it.
+3. **Then the floorplan,** with variants and a wirelength term, once the router gives a per-channel capacity to plan against.
+
+### Negative results
+
+- **Giving up a negotiation earlier.** The router stops when its count of shared tiles hasn't improved in 4 rounds, counting a tie as improvement. Counting only strict improvement (after 4 or 8 rounds) cut the 15/s search from about 100 s to 46 to 56 s, but logistic science grew from 1,364 to 1,890 tiles: its best layout resolves after a long plateau. Kept the tie rule.
+- **Every far-used item on the bus.** Sending all items used beyond the next shelf over the bus grew logistic science from 1,632 to 2,574 tiles; both policies are now tried per width.
+- **Claiming comb branches before routing** made no difference to any area, and was dropped.
+- **A belt end beside a route.** The first version let routes pass in front of the top of a row's input belt; that belt end side-loads onto them, and circuits at 5/s fell to 4.5/s, 15/s to 8/s, logistic science to 0/s. Keeping that tile empty fixed all three (NOTES.md).
+
+### Should compact be the default?
+
+Not yet. It's smaller on every item request measured and meets the same flow
+tests, but (1) every factory with oil falls back to the bus, so the default would
+change only some requests, with a fallback message on the rest; (2) the search
+takes up to about 100 s where the bus is instant; (3) the evidence is seven item
+requests. Make it the default once fluid rows lay out compact and the search has
+a time bound, and after a wider sweep of requests in game.
