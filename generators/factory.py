@@ -132,19 +132,25 @@ class Job:
     last: set = field(default_factory=set)  # ids of the lines it is the last user of
 
 
-def plan(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-         furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL):
-    """Rows, lines and corridor jobs, with every row and line placed."""
+def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
+                   furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL):
+    """Rows and their lines (which line feeds each port), before they're laid out."""
     if belt not in KITS:
         raise ValueError(f"belt is one of {list(KITS)}")
     steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil)
     rows = [_row(s) for s in steps for _ in range(s.rows)]
     lines = _lines(rows, inputs, item, rate, belt, fill)
-    jobs = _jobs(rows, lines)
-    layout = _allocate(rows, jobs, lines)
-    _columns(lines)
-    return {"steps": steps, "inputs": inputs, "rows": rows, "lines": lines, "jobs": jobs, "belt": belt,
-            "item": item, "rate": rate, **layout}
+    return {"steps": steps, "inputs": inputs, "rows": rows, "lines": lines, "belt": belt, "item": item, "rate": rate}
+
+
+def plan(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
+         furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL):
+    """Rows, lines and corridor jobs, with every row and line placed."""
+    p = rows_and_lines(item, rate, machine, belt, smelt, furnace, raw, oil, fill)
+    jobs = _jobs(p["rows"], p["lines"])
+    layout = _allocate(p["rows"], jobs, p["lines"])
+    _columns(p["lines"])
+    return {**p, "jobs": jobs, **layout}
 
 
 def _row(step: production.Step) -> Row:
