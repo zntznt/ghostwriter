@@ -69,6 +69,46 @@ class Compact(unittest.TestCase):
         self.assertEqual({f.item for f in flow.feed}, {"iron-plate", "copper-plate"})
         self.assertEqual(flow.expect, {"electronic-circuit": 5.0})
 
+    def test_the_bus_ends_at_each_lines_last_tap_and_shelves_above_take_its_columns(self):
+        # A raw line ends where its last channel taps it; lines reaching further north sit
+        # further west, so a shelf above a line's last tap starts in its columns (and a
+        # shelf never stands on a line still running beside it).
+        moved = False
+        for params in ITEMS:
+            _, got, _ = laid_out(**params)
+            norths = [north for _, _, north in got.bus]
+            self.assertEqual(norths, sorted(norths), params)  # westmost reaches furthest
+            for x0, south, north in got.shelves:
+                running = [c for _, c, end in got.bus if end <= south]  # still running at the shelf's foot
+                self.assertTrue(all(c + 1 < x0 for c in running), (params, x0, running))
+                moved |= x0 < 2 * len(got.bus) + 2
+        self.assertTrue(moved)  # automation science's gear shelf starts above iron's last tap
+
+    def test_a_search_with_no_time_left_falls_back_saying_why(self):
+        # budget=: seconds for the whole search; with none left it lays nothing out.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(**ITEMS[0])
+            with self.assertRaisesRegex(compact.CompactError, "budget"):
+                compact.build(p, budget=0)
+            bp = factory.build(**ITEMS[0], layout="compact", budget=0)
+        self.assertNotIn("compact", bp.label)  # the bus layout's
+
+    def test_a_search_keeps_to_its_budget(self):
+        # The slowest request measured (about 95 s unbounded, 78 of them in negotiations
+        # that never routed): bounded, it returns within its budget and a negotiation's cap.
+        import time
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="electronic-circuit", rate=15)
+            t = time.monotonic()
+            try:
+                compact.build(p, budget=3)
+            except compact.CompactError:
+                pass
+        self.assertLess(time.monotonic() - t, 3 + compact.NEGOTIATION + 2)
+
     def test_fluids_fall_back_to_the_bus_saying_why(self):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

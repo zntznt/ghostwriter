@@ -23,7 +23,7 @@ class Shelves(unittest.TestCase):
         p = factory.rows_and_lines(item="electronic-circuit", rate=5)
         shelved = shelve(p, max(widths(p["rows"])))
         canvas = factory.Canvas()
-        where, _, _ = place(p["rows"], shelved, [MIN_CHANNEL] * (len(shelved) + 1), 6, canvas)
+        where, _, _ = place(p["rows"], shelved, [MIN_CHANNEL] * (len(shelved) + 1), [6] * len(shelved), canvas)
         for k, r in enumerate(p["rows"]):
             dx, dy = where[k]
             for q in r.ports:
@@ -33,7 +33,7 @@ class Shelves(unittest.TestCase):
     def test_rows_on_a_shelf_stand_on_one_line_apart(self):
         p = factory.rows_and_lines(item="electronic-circuit", rate=15)
         shelved = shelve(p, max(widths(p["rows"])))
-        where, shelf_box, top = place(p["rows"], shelved, [MIN_CHANNEL] * (len(shelved) + 1), 6, factory.Canvas())
+        where, shelf_box, top = place(p["rows"], shelved, [MIN_CHANNEL] * (len(shelved) + 1), [6] * len(shelved), factory.Canvas())
         for s, shelf in enumerate(shelved):
             bottoms = {p["rows"][k].box[3] + where[k][1] for k in shelf}
             self.assertEqual(bottoms, {shelf_box[s][0]})

@@ -74,6 +74,15 @@ class RouteAll(unittest.TestCase):
         tiles = [(x, y) for p in paths for _, x, y, _ in p]
         self.assertEqual(len(tiles), len(set(tiles)))
 
+    def test_a_negotiation_past_its_deadline_gives_up(self):
+        # The crossing above routes, but not once its time is up.
+        import time
+
+        conns = [((0, 3), E, (9, 3), E), ((0, 5), E, (9, 5), E), ((4, 9), N, (4, 0), N)]
+        spec = [(s, h, g, f, lambda x, y: True) for s, h, g, f in conns]
+        self.assertIsNone(route_all(spec, lambda x, y: True, reach=5, bounds=BOX, deadline=time.monotonic() - 1))
+        self.assertIsNotNone(route_all(spec, lambda x, y: True, reach=5, bounds=BOX, deadline=time.monotonic() + 60))
+
 
 class Reaches(unittest.TestCase):
     def entity(self, name, x, y, d, **kw):

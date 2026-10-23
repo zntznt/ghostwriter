@@ -183,18 +183,22 @@ def reaches(blueprint: dict, start: tuple[int, int]) -> set[tuple[int, int]]:
     return got
 
 
-def route_all(conns, free, reach, bounds, rounds=30):
+def route_all(conns, free, reach, bounds, rounds=30, deadline=None):
     """Several belts that mustn't share a tile, by negotiated congestion (PathFinder,
     as FPGA routers do): each round routes every belt again with the tiles others
     hold costing more, and tiles fought over in earlier rounds costing more still,
     until no tile is shared. conns: (start, heading, goal, facing, free_for) where
-    free_for(x, y) adds the belt's own limits to free. Returns their paths, or None."""
+    free_for(x, y) adds the belt's own limits to free. deadline: a time.monotonic()
+    past which it gives up. Returns their paths, or None."""
+    import time
     from collections import Counter, defaultdict
 
     use, history, paths = Counter(), defaultdict(float), [None] * len(conns)
     pressure, best, stale = 0.5, None, 0
     for _ in range(rounds):
         for n, (start, heading, goal, facing, mine) in enumerate(conns):
+            if deadline is not None and time.monotonic() > deadline:
+                return None
             if paths[n]:
                 use.subtract(_tiles(paths[n]))
             others = [t for m, p in enumerate(paths) if p and m != n for t in tunnels_of(p)]
