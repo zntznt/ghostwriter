@@ -375,6 +375,17 @@ class FluidBlock(unittest.TestCase):
                 self.assertLessEqual(named, ids, params)
 
 class Production(unittest.TestCase):
+    def test_an_item_only_supplied_is_refused_with_what_would_make_it(self):
+        # Steel without smelt=1 was an input to supply, so the "factory" was a belt
+        # carrying it through, and the compact layout crashed on no rows at all.
+        for item, kw, why in (("steel-plate", {}, "smelt=1"), ("iron-plate", {}, "smelt=1"),
+                              ("petroleum-gas", {}, "oil=1"), ("iron-gear-wheel", {"raw": "iron-gear-wheel"}, "raw="),
+                              ("iron-ore", {}, "no recipe")):
+            with self.subTest(item), self.assertRaisesRegex(ValueError, why):
+                production.solve(item, 1, **kw)
+        steps, _ = production.solve("steel-plate", 1, smelt=1)
+        self.assertEqual(steps[-1].item, "steel-plate")
+
     def test_green_circuits(self):
         steps, inputs = production.solve("electronic-circuit", 5)
         self.assertEqual(inputs, {"iron-plate": 5, "copper-plate": 7.5})
