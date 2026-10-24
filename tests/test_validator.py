@@ -334,6 +334,7 @@ class Validator(unittest.TestCase):
 
     def test_compact_factory_reaches_its_rate(self):
         # Rows on shelves, products handed straight to the rows above: the same flow test.
+        # Circuits: a cell, the cable machines handing cable to the circuit machines by inserter.
         # Plastic: a fluid row on supplied petroleum gas, its coal on one lane of the product's belt.
         # Advanced circuits from crude oil: refining, and cracking through its gate.
         for params in ({"item": "automation-science-pack", "rate": 1}, {"item": "electronic-circuit", "rate": 5},

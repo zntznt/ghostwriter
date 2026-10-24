@@ -130,6 +130,11 @@ rates, since a chest takes anything and a machine only what it needs, and
 flow tests check the result. `test_inserter_rates_were_measured_on_this_version`
 fails after a game update until it is re-run.
 
+`python -m validator.measure --handover` measures only `machine_to_machine`: each
+tier handing copper cable from one assembling machine 3 straight into a circuit
+machine, circuits counted. `gen cell` sizes its handovers from these. It leaves the
+belt rates as they are, so rows and filed blueprints keep their inserter counts.
+
 ## Tests for library blueprints
 
 A filed blueprint keeps its tests in a file next to it, since imported ones
