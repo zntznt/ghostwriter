@@ -184,6 +184,14 @@ class Rates(unittest.TestCase):
         fast = rates.inserter_rate("fast-inserter", "transport-belt", True)
         self.assertGreater(fast, 2 * rates.inserter_rate("inserter", "transport-belt", True))
 
+    def test_handover_rates_are_measured_machine_to_machine(self):
+        # From one machine's output straight into another's input (validator.measure --handover).
+        fast = rates.handover_rate("fast-inserter")
+        self.assertGreater(fast, 2 * rates.handover_rate("inserter"))
+        self.assertLess(rates.handover_rate("long-handed-inserter"), fast)
+        with self.assertRaisesRegex(ValueError, "no measured"):
+            rates.handover_rate("stack-inserter")
+
     def test_inserter_rates_match_settings_registry_version(self):
         version = json.loads(rates.INSERTER_RATES.read_text())["game_version"]
         self.assertEqual(version, registry()["game_version"])

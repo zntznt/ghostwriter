@@ -110,8 +110,20 @@ def lane_rate(belt: str) -> float:
 
 
 @cache
+def _inserter_file() -> dict:
+    return json.loads(INSERTER_RATES.read_text())
+
+
 def _inserter_table() -> dict:
-    return json.loads(INSERTER_RATES.read_text())["rates"]
+    return _inserter_file()["rates"]
+
+
+def handover_rate(inserter: str) -> float:
+    """Items/s one inserter moves from a machine's output straight into another's input, measured in game."""
+    table = _inserter_file().get("machine_to_machine", {})
+    if inserter not in table:
+        raise ValueError(f"no measured handover rate for {inserter} (python -m validator.measure --handover)")
+    return table[inserter]
 
 
 def inserter_rate(inserter: str, belt: str, from_belt: bool) -> float:
