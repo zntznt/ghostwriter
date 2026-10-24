@@ -337,8 +337,12 @@ class Validator(unittest.TestCase):
         # Circuits: a cell, the cable machines handing cable to the circuit machines by inserter.
         # Plastic: a fluid row on supplied petroleum gas, its coal on one lane of the product's belt.
         # Advanced circuits from crude oil: refining, and cracking through its gate.
+        # Logistic science: gears shared by inserters and belts, fused into a cell with each.
+        shared = {"item": "logistic-science-pack", "rate": 1}
+        steps = {s.item: s for s in factory._compact("compact", shared)[0]["steps"]}
+        self.assertEqual({steps[i].params.get("producer") for i in ("inserter", "transport-belt")}, {"iron-gear-wheel"})
         for params in ({"item": "automation-science-pack", "rate": 1}, {"item": "electronic-circuit", "rate": 5},
-                       {"item": "plastic-bar", "rate": 5}, {"item": "advanced-circuit", "rate": 1, "oil": 1}):
+                       {"item": "plastic-bar", "rate": 5}, {"item": "advanced-circuit", "rate": 1, "oil": 1}, shared):
             bp = factory.build(**params, layout="compact")
             self.assertIn("compact", bp.label)
             data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}

@@ -18,6 +18,9 @@ FLUID_ROWS = [{"item": "plastic-bar", "rate": 5}, {"item": "advanced-circuit", "
 BLOCKS = [{"item": "sulfuric-acid", "rate": 10}, {"item": "lubricant", "rate": 10}]
 # Oil processed here, cracking through a gate: a pump that runs while a tank on the oil line holds some.
 OIL = [{"item": "advanced-circuit", "rate": 1, "oil": 1}]
+# Shared products fused (production.fuse(shared=True)): cable into circuit cells while a cable
+# row feeds the advanced circuits, and gears into both inserter and belt cells.
+SHARED = [{"item": "advanced-circuit", "rate": 1, "cells": 2}, {"item": "logistic-science-pack", "rate": 1, "cells": 2}]
 FLUIDS = {"plastic-bar": {"petroleum-gas"}, "advanced-circuit": {"petroleum-gas"},
           "sulfuric-acid": {"water", "petroleum-gas", "sulfuric-acid"}, "lubricant": {"heavy-oil", "lubricant"}}
 OIL_FLUIDS = {"water", "crude-oil", "heavy-oil", "light-oil", "petroleum-gas"}
@@ -43,8 +46,18 @@ def area(bp) -> int:
 
 
 class Compact(unittest.TestCase):
+    def test_shared_cells_keep_a_row_for_the_rest(self):
+        # The cells take their consumers' share; the cable row is still there for the advanced
+        # circuits, and the gear row is gone in green science.
+        steps = {s.item: s for s in laid_out(**SHARED[0])[0]["steps"]}
+        self.assertEqual(steps["electronic-circuit"].generator, "cell")
+        self.assertEqual(steps["copper-cable"].generator, "assembly_row")
+        steps = {s.item: s for s in laid_out(**SHARED[1])[0]["steps"]}
+        self.assertNotIn("iron-gear-wheel", steps)
+        self.assertEqual({steps[i].generator for i in ("inserter", "transport-belt")}, {"cell"})
+
     def test_checks_clean_powered_and_nothing_overlaps(self):
-        for params in ITEMS + FLUID_ROWS + BLOCKS + OIL:
+        for params in ITEMS + FLUID_ROWS + BLOCKS + OIL + SHARED:
             _, got, bp = laid_out(**params)
             self.assertEqual(check({"blueprint": bp}), [], params)
             assert_powered(self, bp, params)
@@ -56,7 +69,7 @@ class Compact(unittest.TestCase):
         # Followed belt by belt from each input and each row's product: a port is reached
         # by every item it takes, and by no item it doesn't. A row's product belt that also
         # carries leftovers (plastic and coal) passes a filter splitter that keeps the coal.
-        for params in ITEMS + FLUID_ROWS + BLOCKS:
+        for params in ITEMS + FLUID_ROWS + BLOCKS + SHARED:
             _, got, bp = laid_out(**params)
             tile_of = {e.id: (int(e.tile_position[0]), int(e.tile_position[1])) for e in got.bp.entities if e.id}
             sources = [(tile_of[ident], item) for ident, item in got.inputs]

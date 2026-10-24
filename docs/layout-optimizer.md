@@ -614,3 +614,79 @@ circuits but still don't route compact, so stay on the bus.
 - **Emptier boxes.** A cell is itself 17 to 30% empty (the gap rows between machines
   hold only the handover inserters), so a factory with cells is smaller but its box
   emptier: circuits at 5/s 47% empty without, 58% with.
+
+## Shared products (built)
+
+Direct insertion fused a producer only when one row used its product. Copper cable
+also feeds advanced circuits, processing units and chemical science, so those
+factories fused nothing. `production.fuse(shared=True)` now fuses a shared product
+into every consumer row that takes a cell (the cell's own refusals decide that),
+sized to that consumer's share, and keeps a row, sized as rows are (the same 5%
+slack), for the rest of the demand. The compact search tries it as a third
+candidate after the rows as solved and one-user cells, only when it has cells and
+isn't the same steps as one before, and keeps the smallest; `cells=0` still skips
+all of them.
+
+### Where it applies
+
+Of the 34 requests, 10 fuse differently: cable into circuits while a cable row
+feeds the advanced circuits (advanced circuits, chemical science, processing units,
+production science), and in logistic science also gears into both the inserter and
+the transport belt rows, leaving no gear row. Advanced circuits can't take a cable
+cell themselves: plastic, circuits and copper would share one input belt.
+
+### Measured
+
+Each candidate laid out with the whole 40 s budget (areas in tiles):
+
+| Request | Bus | Rows as solved | One-user cells | Shared cells |
+|---|---|---|---|---|
+| logistic-science-pack 1/s | 2,373 | 1,239 | 1,302 | **1,062** |
+| logistic-science-pack 0.5/s, fast belts, assembling machine 3 | 1,691 | 704 | 799 | 752 |
+| advanced-circuit 1/s | 2,244 | 1,242 | | 1,430 |
+| advanced-circuit 1/s, oil=1 | 3,825 | 2,116 | | 2,200 |
+| chemical-science-pack 0.5/s | 5,070 | 4,268 | | 4,440 |
+| chemical-science-pack 0.5/s, oil=1 | 6,832 | 6,318 | | **4,850** |
+| processing-unit 0.5/s | 8,505 | 11,505 | | **4,400** |
+| processing-unit 0.5/s, oil=1 | 10,556 | 13,689 | | **6,318** |
+| production-science-pack 0.2/s | 4,784 | doesn't route | | **3,634** |
+
+What the default search (`gen factory`) gives, and in game (`--validate`, 2.1.23):
+
+| Request | Before (#71) | Now | Build | In game |
+|---|---|---|---|---|
+| logistic-science-pack 1/s | 1,239 | **1,062 (-14%)** | 27 s | 1.25/s |
+| chemical-science-pack 0.5/s, oil=1 | 6,318 | 6,318 to 5,600 | 59 s | 0.608/s |
+| processing-unit 0.5/s | bus, 8,505 | **5,000 (-41%)** | 53 s | 0.556/s |
+| processing-unit 0.5/s, oil=1 | bus, 10,556 | **6,734 (-36%)** | 54 s | 0.577/s |
+| production-science-pack 0.2/s | bus, 4,784 | **3,864 (-19%)** | 42 s | 0.197/s (window 4) |
+
+Processing units and production science now lay out compact; of the 34, only flying
+robot frames from crude oil stay on the bus (their rows still don't route). The
+other 29 requests come out as before. The search
+gives the rows as solved the whole budget and each cell candidate what's left but
+at least a quarter, so where the rows as solved take it all (processing units,
+chemical science) shared cells get 10 s and find less than with 40 s: 5,000 tiles
+against 4,400 for processing units. Chemical science from crude oil is
+budget-bound both ways and lands between 5,600 and 6,318 from run to run.
+
+### Not needed: a cell with consumers of two kinds
+
+Every consumer that still keeps a producer row is refused a cell for what it takes
+in, not for sharing: advanced circuits and engine units need three items on one
+input belt, processing units take sulfuric acid. A producer handing to two kinds
+of consumer wouldn't fuse any of them, so it isn't built.
+
+### Negative results (this step)
+
+- **An equal share of the budget for each candidate.** Splitting the 40 s evenly
+  (the time a candidate doesn't use passed on) kept the total within the budget
+  (circuits at 15/s in 22 s against 33) and gave shared cells more time where the
+  rows as solved are slowest (chemical science from crude oil 5,600, processing
+  units 4,825), but cut the rows as solved short where they win: chemical science
+  0.5/s came out at 4,972 tiles against about 4,268. Not kept: the old rule never
+  makes a request worse than before.
+- **Where shared cells lose.** Splitting a producer between cells and a row adds a
+  row's worth of channel and line: advanced circuits 1,430 against 1,242, chemical
+  science 4,440 against 4,268, logistic science on fast belts 752 against 704. The
+  search keeps the rows there.

@@ -507,6 +507,41 @@ class Production(unittest.TestCase):
         self.assertEqual(kinds["electronic-circuit"], ("cell", "copper-cable"))
         self.assertNotIn("copper-cable", kinds)
 
+    def test_a_shared_product_fuses_into_each_consumer_that_takes_a_cell(self):
+        def consumed(s, product):  # what a step's demand takes of a product
+            r = rates.recipe_any(s.params["recipe"])
+            return s.demand * r.ingredients.get(product, 0) / r.results[s.item]
+
+        # Cable feeds circuits and advanced circuits, the factory's product. Advanced circuits
+        # can't take a cell (plastic, circuits and copper on one belt), so they keep a cable row
+        # sized for their share; the circuits take theirs in a cell.
+        steps, inputs = production.solve("advanced-circuit", 1)
+        single = production.fuse(steps, "advanced-circuit", "transport-belt")
+        self.assertNotIn("cell", [s.generator for s in single])  # cable has two users
+        shared = production.fuse(steps, "advanced-circuit", "transport-belt", shared=True)
+        kinds = {s.item: s for s in shared}
+        self.assertEqual((kinds["electronic-circuit"].generator, kinds["electronic-circuit"].params["producer"]),
+                         ("cell", "copper-cable"))
+        cable = kinds["copper-cable"]
+        self.assertEqual(cable.generator, "assembly_row")
+        before = {s.item: s for s in steps}
+        left = consumed(before["advanced-circuit"], "copper-cable")
+        self.assertAlmostEqual(cable.demand, left)  # the rest of the demand, the old way
+        self.assertAlmostEqual(cable.demand + consumed(before["electronic-circuit"], "copper-cable"),
+                               before["copper-cable"].demand)  # the shares add up
+        self.assertGreaterEqual(cable.rows * cable.rate, left * production.SLACK - 1e-9)  # slack kept
+        # Gears feed inserters and belts in green science: both take a cell, so no gear row is left.
+        green = production.fuse(production.solve("logistic-science-pack", 1)[0], "logistic-science-pack",
+                                "transport-belt", shared=True)
+        kinds = {s.item: (s.generator, s.params.get("producer")) for s in green}
+        self.assertNotIn("iron-gear-wheel", kinds)
+        self.assertEqual(kinds["inserter"], ("cell", "iron-gear-wheel"))
+        self.assertEqual(kinds["transport-belt"], ("cell", "iron-gear-wheel"))
+        # Where a product has one user, it fuses as before.
+        self.assertEqual([(s.generator, s.params.get("producer")) for s in production.fuse(
+            production.solve("electronic-circuit", 5)[0], "electronic-circuit", "transport-belt", shared=True)],
+            [("cell", "copper-cable")])
+
     def test_an_item_only_supplied_is_refused_with_what_would_make_it(self):
         # Steel without smelt=1 was an input to supply, so the "factory" was a belt
         # carrying it through, and the compact layout crashed on no rows at all.
@@ -713,6 +748,37 @@ class Factory(unittest.TestCase):
         self.assertEqual([fused for fused, _ in given], [False, True])
         self.assertGreaterEqual(given[1][1], 1.5 / 4)
         self.assertEqual(got[1].area, laid[1].area)
+
+    def test_the_search_tries_shared_cells_where_they_differ(self):
+        # Cable feeds circuits and advanced circuits: one-user fusion finds nothing, so only the
+        # rows as solved and the shared cells are laid out; in green science gears feed inserters
+        # and belts, so all three are, each cell search with at least a quarter of the budget.
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from tools import compact
+
+        def tried(params, areas):
+            given = []
+
+            def build(p, budget):
+                cells = tuple(sorted(f"{s.params['producer']}>{s.item}" for s in p["steps"] if s.generator == "cell"))
+                given.append((cells, budget))
+                return SimpleNamespace(area=areas[len(given) - 1], bp=None)
+
+            with warnings.catch_warnings(), mock.patch.object(compact, "build", build):
+                warnings.simplefilter("ignore")
+                got = factory._compact("compact", params, budget=1.25)  # a budget no other test asks for
+            return given, got
+
+        given, got = tried({"item": "advanced-circuit", "rate": 1}, [900, 800])
+        self.assertEqual([cells for cells, _ in given], [(), ("copper-cable>electronic-circuit",)])
+        self.assertGreaterEqual(given[1][1], 1.25 / 4)
+        self.assertEqual(got[1].area, 800)  # the smaller kept
+        given, got = tried({"item": "logistic-science-pack", "rate": 1}, [900, 700, 800])
+        self.assertEqual([len(cells) for cells, _ in given], [0, 1, 3])
+        self.assertTrue(all(budget >= 1.25 / 4 for _, budget in given[1:]))
+        self.assertEqual(got[1].area, 700)
 
     def test_checks_clean_powered_and_nothing_overlaps(self):
         for params in FACTORIES:

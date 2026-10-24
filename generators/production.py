@@ -244,15 +244,19 @@ def _rated(kind, params) -> float:
     return p.sides * p.per_side
 
 
-def fuse(steps: list[Step], item: str, belt: str) -> list[Step]:
+def fuse(steps: list[Step], item: str, belt: str, shared=False) -> list[Step]:
     """The steps with each producer row whose product only one consumer row uses
     fused into a cell with it (generators/cell.py): the item handed over by
-    inserter, no row or belt between them. Others, and pairs no cell fits, stay."""
+    inserter, no row or belt between them. Others, and pairs no cell fits, stay.
+    shared: a producer whose product several rows use also fuses, into each of them
+    that takes a cell, and keeps a row, sized as rows are, for the rest of the demand."""
     users = {}
     for s in steps:
         r = rates.recipe_any(s.params["recipe"])
         for i in [*r.ingredients, *r.fluids]:
             users.setdefault(i, []).append(s)
+    if shared:
+        return _fuse_shared(steps, item, belt, users)
     gone, cells = set(), {}
     for c in steps:
         if c.generator != "assembly_row":
@@ -267,6 +271,34 @@ def fuse(steps: list[Step], item: str, belt: str) -> list[Step]:
             gone |= {id(p), id(c)}
             break
     return [cells.get(id(s), s) for s in steps if id(s) not in gone or id(s) in cells]
+
+
+def _fuse_shared(steps: list[Step], item: str, belt: str, users: dict) -> list[Step]:
+    """fuse(shared=True): producers in build order, each into every consumer that takes a
+    cell and has none yet; what the cells don't take stays a row, resized to the rest."""
+    cells, left = {}, {}
+    for p in steps:
+        if p.generator != "assembly_row" or p.item == item or id(p) in cells:
+            continue
+        for c in users.get(p.item, []):
+            if c.generator != "assembly_row" or id(c) in cells:
+                continue
+            try:
+                cells[id(c)] = _cell_step(p, c, belt)
+            except ValueError:
+                continue
+            r = rates.recipe_any(c.params["recipe"])
+            left[id(p)] = left.get(id(p), p.demand) - c.demand * r.ingredients[p.item] / r.results[c.item]
+    out = []
+    for s in steps:
+        if id(s) in cells:
+            out.append(cells[id(s)])
+        elif id(s) not in left:
+            out.append(s)
+        elif left[id(s)] > 1e-9 * max(1.0, s.demand):  # the rest, made the old way
+            out.append(_size(s.item, left[id(s)], ("assembly_row", rates.recipe(s.item, fluids=True)),
+                             s.params["belt"], None, [s.params["machine"]]))
+    return out
 
 
 def _cell_step(p: Step, c: Step, belt: str) -> Step:
