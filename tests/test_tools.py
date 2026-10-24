@@ -488,6 +488,25 @@ class FluidBlock(unittest.TestCase):
                 self.assertLessEqual(named, ids, params)
 
 class Production(unittest.TestCase):
+    def test_a_producer_only_one_row_uses_fuses_into_a_cell_with_it(self):
+        # Cable goes only into circuits: one cell hands it over, and the inputs don't change.
+        steps, inputs = production.solve("electronic-circuit", 5)
+        fused = production.fuse(steps, "electronic-circuit", "transport-belt")
+        self.assertEqual([(s.generator, s.item) for s in fused], [("cell", "electronic-circuit")])
+        self.assertEqual(fused[0].params["producer"], "copper-cable")
+        self.assertGreaterEqual(fused[0].rows * fused[0].rate, 5 * production.SLACK - 1e-9)
+        # Gears go into red science only: fused. In green science they go into inserters and
+        # belts, so they stay a row, while cable still fuses into the circuits for the inserters.
+        red = production.fuse(production.solve("automation-science-pack", 1)[0], "automation-science-pack",
+                              "transport-belt")
+        self.assertEqual([(s.generator, s.params.get("producer")) for s in red], [("cell", "iron-gear-wheel")])
+        green = production.fuse(production.solve("logistic-science-pack", 1)[0], "logistic-science-pack",
+                                "transport-belt")
+        kinds = {s.item: (s.generator, s.params.get("producer")) for s in green}
+        self.assertEqual(kinds["iron-gear-wheel"], ("assembly_row", None))
+        self.assertEqual(kinds["electronic-circuit"], ("cell", "copper-cable"))
+        self.assertNotIn("copper-cable", kinds)
+
     def test_an_item_only_supplied_is_refused_with_what_would_make_it(self):
         # Steel without smelt=1 was an input to supply, so the "factory" was a belt
         # carrying it through, and the compact layout crashed on no rows at all.
@@ -637,6 +656,38 @@ def footprint(e) -> list[tuple[int, int]]:
 
 
 class Factory(unittest.TestCase):
+    def test_rows_with_cells_take_the_producers_ingredients(self):
+        # Fused, the circuits' rows take copper plates and iron; no cable row or line is left.
+        p = factory.rows_and_lines(item="electronic-circuit", rate=5, cells=1)
+        self.assertEqual({r.step.generator for r in p["rows"]}, {"cell"})
+        self.assertNotIn("copper-cable", p["lines"])
+        demand = Counter()
+        for r in p["rows"]:
+            for port in r.ports:
+                demand.update(port.demand)
+        self.assertAlmostEqual(demand["copper-plate"] / demand["iron-plate"], 1.5)
+        self.assertIn("copper-cable", factory.rows_and_lines(item="electronic-circuit", rate=5)["lines"])
+
+    def test_the_compact_search_keeps_cells_only_where_smaller(self):
+        from tools.density import density
+
+        def laid(**params):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                got = factory._compact("compact", params, cells=params.pop("cells", 1))
+                return got[0]["steps"], got[1].area
+
+        steps, area = laid(item="electronic-circuit", rate=5)
+        plain_steps, plain = laid(item="electronic-circuit", rate=5, cells=0)
+        self.assertEqual([s.generator for s in steps], ["cell"])
+        self.assertNotIn("cell", [s.generator for s in plain_steps])
+        self.assertLess(area, plain)
+        steps, _ = laid(item="automation-science-pack", rate=1)  # its cell would be larger
+        self.assertNotIn("cell", [s.generator for s in steps])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.assertEqual(density(factory.build(item="electronic-circuit", rate=5).to_dict())[0]["area"], area)
+
     def test_checks_clean_powered_and_nothing_overlaps(self):
         for params in FACTORIES:
             _, _, bp = factory_built(**params)
