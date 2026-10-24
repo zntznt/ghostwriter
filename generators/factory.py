@@ -139,12 +139,13 @@ class Job:
 def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
                    furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, cells=0):
     """Rows and their lines (which line feeds each port), before they're laid out.
-    cells: fuse each producer only one row uses into a cell with it (production.fuse)."""
+    cells: 1 fuses each producer only one row uses into a cell with it, 2 also each
+    shared producer into every row that takes a cell (production.fuse)."""
     if belt not in KITS:
         raise ValueError(f"belt is one of {list(KITS)}")
     steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil)
     if cells:
-        steps = production.fuse(steps, item, belt)
+        steps = production.fuse(steps, item, belt, shared=cells == 2)
     rows = [_row(s) for s in steps for _ in range(s.rows)]
     lines = _lines(rows, inputs, item, rate, belt, fill)
     return {"steps": steps, "inputs": inputs, "rows": rows, "lines": lines, "belt": belt, "item": item, "rate": rate}
@@ -485,8 +486,9 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     saying why, for what it can't lay out or lays out no smaller. budget: seconds the
     compact search may take (default compact.BUDGET); it keeps the best layout found in
     that time. cells: compact also tries each producer only one row uses as a cell with
-    that row (generators/cell.py), in the budget left but at least a quarter of it, and
-    keeps the smaller; 0 skips it."""
+    that row (generators/cell.py), then shared producers in a cell with every row that
+    takes one, each in the budget left but at least a quarter of it, and keeps the
+    smallest; 0 skips them."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill)
     compact = _compact(layout, params, budget, say=True, cells=cells)
@@ -510,15 +512,18 @@ def _compact(layout, params, budget=None, say=False, cells=1):
     defaults = {k: v.default for k, v in inspect.signature(rows_and_lines).parameters.items()}
     key = tuple(sorted({**defaults, **params, "budget": budget, "cells": int(cells)}.items()))
     if key not in _COMPACT:
-        # Rows as solved first, with the whole budget; then, in what's left but at least a
-        # quarter of it, with each producer only one row uses fused into a cell with it.
-        # The smaller is kept.
-        start, laid, errors = time.monotonic(), [], []
-        for fused in (0, 1) if cells else (0,):
+        # Rows as solved first, with the whole budget; then, each in what's left but at least
+        # a quarter of it, with each producer only one row uses fused into a cell with it,
+        # and with shared producers fused too: each only if it has cells and isn't the same
+        # steps as one before. The smallest is kept.
+        start, laid, errors, seen = time.monotonic(), [], [], []
+        for fused in (0, 1, 2) if cells else (0,):
             left = max(budget - (time.monotonic() - start), budget / 4 if fused else 0)
             p = rows_and_lines(**params, cells=fused)
-            if fused and not any(s.generator == "cell" for s in p["steps"]):
-                break
+            steps = [(s.generator, s.item, s.rows, sorted(s.params.items())) for s in p["steps"]]
+            if fused and (not any(s.generator == "cell" for s in p["steps"]) or steps in seen):
+                continue
+            seen.append(steps)
             try:
                 laid.append((p, compact.build(p, left)))
             except compact.CompactError as e:
