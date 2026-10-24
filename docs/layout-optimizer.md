@@ -690,3 +690,59 @@ of consumer wouldn't fuse any of them, so it isn't built.
   row's worth of channel and line: advanced circuits 1,430 against 1,242, chemical
   science 4,440 against 4,268, logistic science on fast belts 752 against 704. The
   search keeps the rows there.
+
+## Cells with more inputs (built as an option, not in the default search)
+
+A cell's consumers took everything but the handed-over product from one input
+belt, two items at most, so advanced circuits (cable, circuits, plastic) and engine
+units (gears, steel, pipes, iron) never fused. `gen cell ... belts=2` adds a second
+input belt beyond the first, as assembly rows do: the producers' ingredients stay
+on the near belt and the consumers' other items go on the far one, reached by
+long-handed inserters (1.249/s machine to machine against a basic inserter's 0.847/s,
+enough at these recipes' rates). An item both need, or more than two on either
+belt, is still refused. In game (`--validate`, 2.1.23) advanced circuits from cable
+make 3 of 3/s (24 machines), engine units from gears 1.8 of 1.8/s (24) and on one
+side 0.9 of 0.9/s (12). `test_cells_reach_rated_output` runs a one-sided
+advanced-circuit cell, about 5 s.
+
+### In the compact search (measured, not kept)
+
+Offered to `production.fuse`, two-belt cells change 4 of the 34 requests, the
+others laying out as before (the same areas, in the same run):
+
+| Request | Without | With two-belt cells | Cells fused |
+|---|---|---|---|
+| processing-unit 0.5/s | 5,000 (51% empty) | 5,496 (51%), +10% | cable into circuits and into advanced circuits |
+| electric-engine-unit 0.5/s, oil=1 | 2,231 (49%) | 2,461 (51%), +10% | none (was cable into circuits) |
+| production-science-pack 0.2/s | 3,864 (65%) | bus, 4,784 (58%), +24% | none (was cable into circuits) |
+| processing-unit 0.5/s, oil=1 | 6,734 (55%) | 6,475 (53%), -4% | cable into circuits and into advanced circuits; 0.56 of 0.5/s in game |
+
+Tiles per item/s follow the areas (processing units 10,000 against 10,992). Build
+time rises where the search tries a two-belt cell and keeps the rows: electric
+engines at 0.5/s 22 s against 44 s, chemical science 58 s against 68 s (the same
+layouts). So `belts` defaults to 1, `production.fuse` never asks for 2, and the
+default factory search is exactly as before.
+
+### Negative results (this step)
+
+- **A producer feeds only its neighbours.** The consumers that newly take a cell are
+  slow: on assembling machines 2 a cable machine makes 3 cable/s and its two
+  advanced-circuit neighbours (6 s a circuit) take 1.33/s; a gear machine makes
+  1.5/s and its two engine-unit neighbours (10 s an engine) take 0.15/s. So the cell
+  needs far more producers than a row does: engine units at 1/s laid out as rows in
+  860 tiles, as a cell in 1,386; advanced circuits at 1/s in 1,242 and 1,562 (shared
+  cells, each with the whole 40 s).
+- **Fusing more displaces better candidates.** Fusion is greedy: each candidate
+  fuses every consumer that takes a cell. A newly fusable consumer doesn't add a
+  candidate, it changes one, so where its cell is larger the layout that won before
+  is lost: electric engines from crude oil lose their circuit cell, production
+  science falls back to the bus. Offering the two-belt cells as a separate candidate
+  would keep those, but the search is already budget-bound on the requests they
+  help (processing units take the whole 40 s), so the only gain measured, 4% on
+  processing units from crude oil, is within what such requests vary run to run.
+- **Fluid ingredients in a cell, not built.** Processing units (circuits, advanced
+  circuits, sulfuric acid) are the main consumer left, and their ratio would suit
+  a cell (a circuit machine and a processing-unit machine draw about the same), but
+  a fluid row's pipe face sits where a cell keeps its handover and output inserter
+  columns, so it needs pipes threaded through the chain: a new layout, not an
+  option on this one.
