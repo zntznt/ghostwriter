@@ -12,7 +12,7 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
-from generators import assembly_row, factory, fluid_block, fluid_row, platform, production, smelting_column
+from generators import assembly_row, cell, factory, fluid_block, fluid_row, platform, production, smelting_column
 from generators.gated_requester import build
 from tools import pipes, rates
 from tools.check import check
@@ -255,6 +255,111 @@ class AssemblyRow(unittest.TestCase):
             assembly_row.build(recipe="processing-unit")
 
 
+
+
+CELL_VARIANTS = [
+    {},  # copper cable straight into electronic circuits, assembling machine 2
+    {"recipe": "inserter", "producer": "iron-gear-wheel"},  # circuits and iron on the belt, gears handed over
+    {"recipe": "transport-belt", "producer": "iron-gear-wheel", "sides": 1, "consumers": 2},  # iron on both lanes
+]
+# An inserter's blueprint direction is the side it picks up from (NOTES.md): pickup, then drop.
+REACH = {0: ((0, -1), (0, 1)), 4: ((1, 0), (-1, 0)), 8: ((0, 1), (0, -1)), 12: ((-1, 0), (1, 0))}
+
+
+def cell_bp(**params) -> dict:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return cell.build(**params).to_dict()["blueprint"]
+
+
+def inserter_ends(bp: dict):
+    """(inserter, entity it picks from, entity it drops into) for each inserter, by covered tile."""
+    from tools.density import footprint
+
+    at = {t: e for e in bp["entities"] for t in footprint(e)}
+    for e in bp["entities"]:
+        if e["name"].endswith("inserter"):
+            x, y = math.floor(e["position"]["x"]), math.floor(e["position"]["y"])
+            (px, py), (dx, dy) = REACH[e.get("direction", 0)]
+            yield e, at.get((x + px, y + py)), at.get((x + dx, y + dy))
+
+
+class Cell(unittest.TestCase):
+    def test_the_chain_follows_the_recipe_ratio(self):
+        # Assembling machine 2 makes 3 cable/s and a circuit machine uses 4.5: a producer at
+        # each end of the chain and between every two consumers, which hand over by inserter.
+        p = cell.plan(consumers=2)
+        self.assertEqual(p.chain.count("P") - p.chain.count("C"), 1)
+        self.assertTrue(all(a != b for a, b in zip(p.chain, p.chain[1:])))
+        made = p.chain.count("P") * p.p_crafts * p.producer.results["copper-cable"]
+        used = p.chain.count("C") * p.c_crafts * p.consumer.ingredients["copper-cable"]
+        self.assertGreaterEqual(made, used - 1e-9)
+        self.assertEqual(p.lanes, {"left": "copper-plate", "right": "iron-plate"})
+        self.assertEqual(cell.plan(recipe="transport-belt", producer="iron-gear-wheel").lanes,
+                         {"left": "iron-plate", "right": "iron-plate"})
+
+    def test_longer_chains_join_groups_and_belts_carry_what_consumers_draw(self):
+        # Three circuit consumers: a group of two and a group of one, five producers,
+        # whose 7.5 copper plates/s just fill a yellow lane.
+        self.assertEqual(cell.plan(consumers=3).chain, "PCPCPPCP")
+        # A gear machine makes ten times what a red science machine uses: one producer
+        # between each two consumers, drawing only what they take, so the belt carries more.
+        p = cell.plan(recipe="automation-science-pack", producer="iron-gear-wheel")
+        self.assertGreater(p.chain.count("C"), 4)
+        self.assertEqual(p.chain.count("C"), 2 * p.chain.count("P"))
+
+    def test_variants_check_clean_powered_and_unoverlapped(self):
+        from tools.density import footprint
+
+        for params in CELL_VARIANTS:
+            bp = cell_bp(**params)
+            self.assertEqual(check({"blueprint": bp}), [], params)
+            assert_powered(self, bp, params)
+            tiles = [t for e in bp["entities"] for t in footprint(e)]
+            self.assertEqual(len(tiles), len(set(tiles)), params)
+
+    def test_every_inserter_joins_what_it_should(self):
+        for params in CELL_VARIANTS:
+            p = cell.plan(**params)
+            bp = cell_bp(**params)
+            seen = Counter()
+            for e, src, dst in inserter_ends(bp):
+                self.assertIsNotNone(src, (params, e))
+                self.assertIsNotNone(dst, (params, e))
+                kinds = (src.get("recipe") or src["name"], dst.get("recipe") or dst["name"])
+                if kinds == (p.producer.name, p.consumer.name):
+                    seen["handover"] += 1
+                elif dst.get("recipe") and src["name"] == p.belt:
+                    seen["feed"] += 1
+                elif kinds == (p.consumer.name, p.belt):
+                    seen["out"] += 1
+                else:
+                    self.fail((params, "an inserter joins", kinds))
+            consumers = p.sides * p.chain.count("C")
+            self.assertGreaterEqual(seen["handover"], consumers, params)  # every consumer gets the item
+            self.assertEqual(seen["out"], consumers * p.output[1], params)
+
+    def test_flow_tests_name_built_belts(self):
+        for params in CELL_VARIANTS:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                ids = {e.id for e in cell.build(**params).entities if e.id}
+            for flow in cell.flow_tests(**params):
+                self.assertLessEqual({f.entity for f in flow.feed} | set(flow.drain), ids, params)
+                p = cell.plan(**params)
+                self.assertAlmostEqual(flow.expect[p.product], p.sides * p.per_side)
+
+    def test_impossible_cells_say_why(self):
+        with self.assertRaisesRegex(ValueError, "doesn't use"):
+            cell.plan(recipe="iron-gear-wheel", producer="copper-cable")
+        with self.assertRaisesRegex(ValueError, "fluid"):
+            cell.plan(recipe="processing-unit", producer="electronic-circuit")
+        with self.assertRaisesRegex(ValueError, "items on one input belt"):
+            cell.plan(recipe="engine-unit", producer="iron-gear-wheel")  # steel, pipes and iron
+
+    def test_ingredients_per_craft_count_what_the_producers_use(self):
+        # A circuit takes 3 cable, which take 1.5 copper plates.
+        self.assertEqual(cell.ingredients(), {"iron-plate": 1, "copper-plate": 1.5})
 
 
 FLUID_VARIANTS = [

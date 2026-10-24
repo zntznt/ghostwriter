@@ -13,7 +13,7 @@ from draftsman.constants import Direction
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import (assembly_row, factory, fluid_block, fluid_row, gated_requester, platform, production,
+from generators import (assembly_row, cell, factory, fluid_block, fluid_row, gated_requester, platform, production,
                         smelting_column)
 from tools.codec import decode, encode
 from tools import rates
@@ -270,6 +270,16 @@ class Validator(unittest.TestCase):
             data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
             self.assertPasses(data)
             report = self.run_flow(data, assembly_row.flow_tests(**params), ids)
+            self.assertTrue(report.ok, (params, report.lines()))
+
+    def test_cells_reach_rated_output(self):
+        # Producers handing straight to consumers by inserter: cable into circuits
+        # (groups of a producer between two consumers), and gears into inserters.
+        for params in ({}, {"recipe": "inserter", "producer": "iron-gear-wheel"}):
+            bp = cell.build(**params)
+            data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+            self.assertPasses(data)
+            report = self.run_flow(data, cell.flow_tests(**params), ids)
             self.assertTrue(report.ok, (params, report.lines()))
 
     def test_production_book_rows_reach_their_rates(self):
