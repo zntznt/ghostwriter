@@ -12,6 +12,13 @@ they drop onto is the limit. Writes tools/inserter_rates.json.
 A chest takes whatever comes; a machine only takes what its recipe needs,
 so treat these as upper bounds and keep a margin. Flow tests check the
 real row.
+
+    python -m validator.measure --handover
+
+measures only machine_to_machine, keeping the belt rates: items/s an inserter
+moves from a machine's output straight into another machine's input. The rig
+is copper cable in assembling-machine-3 handing over to electronic circuits in
+another (each faster than any inserter), so circuits/s x 3 is cable/s moved.
 """
 
 import argparse
@@ -86,11 +93,71 @@ def measure(server: Server, inserter: str, belt: str, from_belt: bool) -> float:
         server.call("flow_teardown")
 
 
+HANDOVER_MACHINE = "assembling-machine-3"
+
+
+def handover_rig(inserter: str) -> tuple[dict, dict[str, int]]:
+    """Copper belt -> cable machine -> the inserter -> circuit machine <- iron belt; circuits
+    leave on a belt. Two fast inserters for each other job, so only the handover limits."""
+    N, E, W = Direction.NORTH, Direction.EAST, Direction.WEST
+    bp = Blueprint()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for y in range(5):
+            bp.entities.append("transport-belt", tile_position=(0, y), direction=N, **({"id": "cu"} if y == 4 else {}))
+            bp.entities.append("transport-belt", tile_position=(10, y), direction=N, **({"id": "fe"} if y == 4 else {}))
+        for y in (0, 1):
+            bp.entities.append("fast-inserter", tile_position=(1, y), direction=W)
+            bp.entities.append("fast-inserter", tile_position=(9, y), direction=E)
+        bp.entities.append(HANDOVER_MACHINE, tile_position=(2, 0), recipe="copper-cable")
+        bp.entities.append(HANDOVER_MACHINE, tile_position=(6, 0), recipe="electronic-circuit")
+        # At x=5 facing west a regular inserter reaches 4 -> 6, a long-handed one 3 -> 7: both machines.
+        bp.entities.append(inserter, tile_position=(5, 1), direction=W)
+        for x in (6, 7):
+            bp.entities.append("fast-inserter", tile_position=(x, 3), direction=N)
+        for x in range(6, 9):
+            bp.entities.append("transport-belt", tile_position=(x, 4), direction=E, **({"id": "out"} if x == 8 else {}))
+        for x, y in ((1, 3), (5, 3), (9, 4)):
+            bp.entities.append("medium-electric-pole", tile_position=(x, y))
+        bp.generate_power_connections()
+    return bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+
+
+def measure_handover(server: Server, inserter: str) -> float:
+    data, ids = handover_rig(inserter)
+    _ok(server.call("flow_setup", json.dumps({"blueprint": encode(data), "speed": SPEED})))
+    try:
+        feeds = [{"entity": ids[belt], "lane": lane, "item": item}
+                 for belt, item in (("cu", "copper-plate"), ("fe", "iron-plate")) for lane in ("left", "right")]
+        _ok(server.call("flow_start", json.dumps({"feeds": feeds, "drains": [ids["out"]]})))
+        _wait_ticks(server, WARMUP * 60, timeout=60)
+        _ok(server.call("flow_count"))
+        _wait_ticks(server, WINDOW * 60, timeout=WINDOW + 60)
+        got = server.call("flow_read")
+        return 3 * (got["counts"] or {}).get("electronic-circuit", 0) / (got["ticks"] / 60)
+    finally:
+        server.call("flow_teardown")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--factorio")
     ap.add_argument("--out", default=str(OUT))
+    ap.add_argument("--handover", action="store_true", help="measure only machine-to-machine handovers")
     args = ap.parse_args(argv)
+    if args.handover:
+        data = json.loads(Path(args.out).read_text())
+        with Server(args.factorio) as server:
+            if server.version != data["game_version"]:
+                sys.exit(f"the belt rates are from {data['game_version']}, the server is {server.version}: "
+                         "measure everything first")
+            data["machine_to_machine"] = {}
+            for inserter in INSERTERS:
+                data["machine_to_machine"][inserter] = round(measure_handover(server, inserter), 3)
+                print(f"{inserter:22s} {data['machine_to_machine'][inserter]}", file=sys.stderr)
+        Path(args.out).write_text(dump_json(data))
+        print(f"-> {args.out}", file=sys.stderr)
+        return
     rates = {}
     with Server(args.factorio) as server:
         for inserter in INSERTERS:

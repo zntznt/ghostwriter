@@ -74,5 +74,11 @@
         "to_belt": 2.503
       }
     }
+  },
+  "machine_to_machine": {
+    "inserter": 0.847,
+    "fast-inserter": 2.5,
+    "long-handed-inserter": 1.249,
+    "bulk-inserter": 2.508
   }
 }
