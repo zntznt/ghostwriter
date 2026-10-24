@@ -443,3 +443,174 @@ is in the code.
   - **The margins must grow before anything routes.** At south 4 and north 3 the box is already 848 tiles, and at 5 and 3 it's 928, more than shelves.
   - **So the lever is routing, not placement.** A floorplan beats shelves only with pieces that pack a channel tighter than shelves fit it.
 - **Cheaper, and still open.** The west strip (bus and yard) is 16 to 30% of the box. Raw lines riding beside the rows, a column each with no yard, would take back part of it without new pieces. The three requests still on the bus (processing units, production science, robot frames from crude oil) weren't tried, since simpler requests didn't route.
+
+## Direct insertion (built)
+
+A producer whose product only one row uses can hand it straight to that row's
+machines by inserter: no belt out of the producer's row, no channel crossing, no
+merge or comb. `gen cell recipe=CONSUMER producer=PRODUCER` builds that block, and
+the compact search tries it.
+
+### Machine to machine, measured (2.1.23)
+
+`python -m validator.measure --handover` hands copper cable from an assembling
+machine 3 straight into a circuit machine through one inserter of each tier, no
+research, and counts circuits (3 cable each). It writes `machine_to_machine` in
+`tools/inserter_rates.json` and leaves the belt rates alone.
+
+| Inserter | Machine to machine | Onto and off belts |
+|---|---|---|
+| inserter | 0.847/s | 0.86 to 0.94/s |
+| fast-inserter | 2.5/s | 2.5 to 2.8/s |
+| long-handed-inserter | 1.249/s | 1.18 to 1.25/s |
+| bulk-inserter | 2.508/s | the same as fast |
+
+- **One producer feeds two.** Two fast inserters taking from one cable machine (5
+  cable/s) moved all of it between them, 5.003/s.
+- **A consumer doesn't hoard.** A circuit machine that can't craft takes 12 cable at
+  most; while crafting it holds 2 at most.
+- **Backpressure is clean.** With the consumer full, the producer stops at
+  `full_output` holding 12 cable, the inserter waits for source items, and nothing
+  is lost.
+
+### The cell
+
+West to east: an input belt, its inserters, a chain of machines, output inserters,
+the product belt, and the same mirrored. Down each chain producers (P) and consumers
+(C) alternate, and each gap between neighbours holds the inserters that hand over.
+The plan takes the shortest chain that feeds every consumer at full speed from the
+handover rates, kept 15% below them as rows are: each consumer takes first from the
+producer before it, then the one after it makes up the rest. The input belt's two
+lanes carry the producer's ingredients and the consumer's others, and the product
+belt only what the consumers make.
+
+| Cell | Chain a side | Rated | Box | Tiles per item/s | In game |
+|---|---|---|---|---|---|
+| circuits from cable, assembling machine 2 | PCPCPPCP | 9/s | 13 x 31 | 44.8 | 8.99/s |
+| the same, assembling machine 3 | PCPCP | 10/s | 13 x 19 | 24.7 | 10/s |
+| the same, assembling machine 1 | PCPCPPCPCPPCP | 10/s | 13 x 51 | 66.3 | 9.99/s |
+| inserters from gears | PC | 3/s | 13 x 7 | 30.3 | 3/s |
+| transport belts from gears | PCPC | 12/s | 13 x 15 | 16.2 | 12/s |
+| automation science from gears | CPC six times | 3.6/s | 13 x 71 | 256.4 | 3.62/s |
+
+It refuses, saying why: a consumer that doesn't use the product, a fluid (processing
+units from circuits), or more than two items on the input belt (engine units from
+gears need steel, pipes and the gears' iron).
+
+A cell is about as dense as the rows it replaces: circuits at 6/s in 247 tiles,
+against 260 for the cable and circuit rows. What it saves is the connection
+between them.
+
+### In the compact search
+
+- **Fusing** (`production.fuse`): each item row whose product only one other item
+  row uses, and isn't the factory's product, joins that row as a cell, sized to its
+  demand with the same 5% slack: one cell while one holds it, the demand split evenly
+  over more otherwise, one side when one side's enough.
+- **Kept only if smaller.** `factory` lays the rows out as solved first, with the
+  whole budget, then the fused rows in what's left but at least a quarter of it,
+  keeps the smaller, and still compares with the bus. So the default is never
+  larger than without cells. `cells=0` skips the second search.
+- **Why the quarter.** On a loaded machine the rows as solved took the whole budget
+  for circuits at 15/s (3,192 tiles), and the cells, which lay it out in 1,710 in
+  about 3 s, were never tried. With the quarter, a run where the rows again took
+  the whole budget (42 s) found 1,710.
+
+### The sweep (34 requests, in game)
+
+Areas from `bp density`, each request built with cells (the default), with
+`cells=0`, and with `layout=bus`. Every request where cells won passed `gen factory
+... --validate` on Factorio 2.1.23 (macOS) at its rate; where they didn't, the layout
+is the one without cells, which the #66 sweep validated (budget-bound searches
+aside, below). Build is `gen` alone, compact including the bus it
+compares with.
+
+| Request | Bus | Without cells | With cells | Change | Empty share: bus, without, with | Tiles per item/s, with | In game, with cells | Build: without, with |
+|---|---|---|---|---|---|---|---|---|
+| electronic-circuit 5/s | 1,560 | 880 | 600 | **-32%** | 60%, 47%, 58% | 120 | 5.99/s | 1 s, 1 s |
+| electronic-circuit 15/s | 4,462 | 2,847 | 1,710 | **-40%** | 54%, 51% (at 2,964), 57% | 114 | 15/s (window 2) | 32 s, 33 s |
+| electronic-circuit 5/s, assembling machine 3 | 1,480 | 800 | 600 | **-25%** | 62%, 50%, 58% | 120 | 6.01/s | 1 s, 1 s |
+| electronic-circuit 2/s, assembling machine 1 | 756 | 475 | 475 |  | 62%, 53%, 53% | 238 |  | 0 s, 0 s |
+| electronic-circuit 10/s, fast belts | 1,840 | 1,160 | 1,000 | **-14%** | 57%, 45%, 56% | 100 | 12/s | 1 s, 2 s |
+| electronic-circuit 20/s, express belts | 2,520 | 1,880 | 1,640 | **-13%** | 51%, 44%, 56% | 82 | 21/s | 2 s, 2 s |
+| electronic-circuit 5/s, smelt=1 | 2,640 | 1,564 | 1,280 | **-18%** | 59%, 49%, 47% | 256 | 5.83/s | 4 s, 5 s |
+| automation-science-pack 1/s | 738 | 450 | 450 |  | 63%, 52%, 52% | 450 |  | 1 s, 1 s |
+| automation-science-pack 1/s, smelt=1 | 1,463 | 900 | 900 |  | 63%, 52%, 52% | 900 |  | 2 s, 3 s |
+| logistic-science-pack 1/s | 2,373 | 1,239 | 1,239 |  | 65%, 41%, 41% | 1,239 |  | 14 s, 25 s |
+| logistic-science-pack 0.5/s, fast belts, assembling machine 3 | 1,691 | 704 | 704 |  | 69%, 51%, 51% | 1,408 |  | 3 s, 5 s |
+| military-science-pack 0.5/s | 2,424 | 1,196 | 1,196 |  | 62%, 50%, 50% | 2,392 |  | 6 s, 6 s |
+| inserter 1/s | 1,407 | 609 | 576 | **-5%** | 68%, 52%, 62% | 576 | 1.5/s | 2 s, 2 s |
+| iron-gear-wheel 1/s | 154 | 88 | 88 |  | 71%, 67%, 67% | 88 |  | 0 s, 0 s |
+| engine-unit 1/s | 1,512 | 860 | 860 |  | 59%, 44%, 44% | 860 |  | 3 s, 3 s |
+| battery 2/s | 1,752 | 1,073 | 1,073 |  | 64%, 55%, 55% | 536 |  | 2 s, 2 s |
+| electric-engine-unit 0.5/s | 3,200 | 1,540 | 1,540 |  | 64%, 46%, 46% | 3,080 |  | 12 s, 21 s |
+| sulfur 5/s | 506 | 234 | 234 |  | 72%, 53%, 53% | 47 |  | 0 s, 0 s |
+| plastic-bar 5/s | 527 | 272 | 272 |  | 68%, 57%, 57% | 54 |  | 0 s, 0 s |
+| sulfuric-acid 10/s | 406 | 228 | 228 |  | 62%, 48%, 48% | 23 |  | 0 s, 0 s |
+| lubricant 10/s | 144 | 99 | 99 |  | 68%, 54%, 54% | 10 |  | 0 s, 0 s |
+| advanced-circuit 1/s | 2,244 | 1,242 | 1,242 |  | 60%, 47%, 47% | 1,242 |  | 4 s, 4 s |
+| chemical-science-pack 0.5/s | 5,070 | 4,268 | 4,268 |  | 59%, 64% (at 4,444), 65% (at 4,488) | 8,536 |  | 45 s, 46 s |
+| processing-unit 0.5/s | 8,505 | the bus | the bus |  | 58%, 58%, 58% | 17,010 |  | 43 s, 44 s |
+| plastic-bar 5/s, oil=1 | 1,968 | 1,078 | 1,078 |  | 68%, 52%, 52% | 216 |  | 2 s, 2 s |
+| sulfuric-acid 10/s, oil=1 | 1,248 | 792 | 792 |  | 64%, 53%, 53% | 79 |  | 1 s, 1 s |
+| lubricant 10/s, oil=1 | 1,127 | 700 | 700 |  | 68%, 51%, 51% | 70 |  | 1 s, 1 s |
+| battery 1/s, oil=1 | 2,553 | 1,566 | 1,566 |  | 64%, 56%, 56% | 1,566 |  | 6 s, 6 s |
+| advanced-circuit 1/s, oil=1 | 3,825 | 2,116 | 2,116 |  | 64%, 51%, 51% | 2,116 |  | 7 s, 8 s |
+| chemical-science-pack 0.5/s, oil=1 | 6,832 | 6,318 | 6,318 |  | 62%, 67% (at 6,426), 66% | 12,636 |  | 45 s, 47 s |
+| electric-engine-unit 0.5/s, oil=1 | 4,401 | 2,461 | 2,231 | **-9%** | 64%, 51%, 49% | 4,462 | 0.6/s | 22 s, 40 s |
+| flying-robot-frame 0.2/s, oil=1 | 7,028 | the bus | the bus |  | 63%, 63%, 63% | 35,140 |  | 5 s, 6 s |
+| processing-unit 0.5/s, oil=1 | 10,556 | the bus | the bus |  | 60%, 60%, 60% | 21,112 |  | 44 s, 44 s |
+| production-science-pack 0.2/s | 4,784 | the bus | the bus |  | 58%, 58%, 58% | 23,920 |  | 6 s, 7 s |
+
+The three searches that use their whole budget (circuits at 15/s, chemical science)
+land on different layouts from run to run when the machine is busy: chemical science
+came out between 4,224 (#66) and 4,840 tiles in six runs. Their empty shares are
+from the run named.
+
+### Where the space goes now
+
+Counted as before (each row of the box once: a shelf's band or a channel's, east of
+the shelf's west column; the west strip is what lies west of it):
+
+| Request (box without, with) | Rows | West strip | Channels | Beside rows |
+|---|---|---|---|---|
+| electronic-circuit 5/s (880, 600) | 260 to 247 | 264 (30%) to 180 (30%) | 336 (38%) to 154 (26%) | 20 (2%) to 19 (3%) |
+| electronic-circuit 15/s (2,847, 1,710) | 624 to 806 | 584 (21%) to 360 (21%) | 1,519 (53%) to 420 (25%) | 120 (4%) to 124 (7%) |
+| electronic-circuit 5/s, assembling machine 3 (800, 600) | 208 to 247 | 240 (30%) to 180 (30%) | 336 (42%) to 154 (26%) | 16 (2%) to 19 (3%) |
+| electronic-circuit 10/s, fast belts (1,160, 1,000) | 442 to 507 | 348 (30%) to 300 (30%) | 336 (29%) to 154 (15%) | 34 (3%) to 39 (4%) |
+| electronic-circuit 20/s, express belts (1,880, 1,640) | 884 to 923 | 564 (30%) to 492 (30%) | 364 (19%) to 154 (9%) | 68 (4%) to 71 (4%) |
+| electronic-circuit 5/s, smelt=1 (1,564, 1,280) | 524 to 511 | 248 (16%) to 466 (36%) | 632 (40%) to 260 (20%) | 160 (10%) to 43 (3%) |
+| inserter 1/s (609, 576) | 133 to 168 | 134 (22%) to 164 (28%) | 311 (51%) to 182 (32%) | 31 (5%) to 62 (11%) |
+| electric-engine-unit 0.5/s, oil=1 (2,461, 2,231) | 699 to 709 | 874 (36%) to 596 (27%) | 570 (23%) to 534 (24%) | 318 (13%) to 392 (18%) |
+
+Channels fall from 19 to 53% of the box to 9 to 32% on the item factories: the cable
+line, its merges and the comb into the circuit rows are gone, 129 to 1,099 tiles. The
+west strip keeps its share, except from ores (248 to 466 tiles, 16 to 36%) and for
+inserters (134 to 164). Electric engines from crude oil save in the west strip
+instead (874 to 596 tiles); their channels stay about the same.
+
+### Where it applies
+
+Of the 34 requests, 15 have a producer only one row uses, and 8 lay out smaller
+with it fused. All 8 fuse copper cable into circuits, and inserters at 1/s also
+gears into inserters: cable feeds nothing else in those factories, three cable
+machines feed two circuit machines, and a chain of five producers and three
+consumers a side (PCPCPPCP) comes close to that. Where cable also feeds another
+row (advanced circuits, processing units, chemical science) nothing fuses. Fused but kept as rows (larger with the cell):
+circuits at 2/s on assembling machines 1, automation science (both), logistic science
+(both) and electric engines from supplied oil. Robot frames from crude oil fuse
+circuits but still don't route compact, so stay on the bus.
+
+### Negative results (this step)
+
+- **A producer that outpaces its consumers.** One gear machine (1.5/s) feeds eight
+  automation science machines (0.15/s each), but in a cell a producer reaches only
+  its two neighbours, so eight consumers need four producers: 12 machines in 299
+  tiles of rows against 9 in 177, and the factory 680 tiles against 450.
+- **Rounding multiplied.** A cell feeds every consumer flat out, so rounding consumers
+  up rounds producers up too: circuits at 2/s on assembling machines 1 take 4 circuit
+  machines either way, but the cell needs 6 cable machines where rows need 4 (sized
+  to the 2/s drawn), 247 tiles of rows against 156 and 600 tiles against 475.
+- **Emptier boxes.** A cell is itself 17 to 30% empty (the gap rows between machines
+  hold only the handover inserters), so a factory with cells is smaller but its box
+  emptier: circuits at 5/s 47% empty without, 58% with.

@@ -12,6 +12,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 --validate      # rows on shelves, all connected, products handed straight over (budget=SECONDS, default 40)
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 layout=bus --validate   # the same rows on a main bus
 .venv/bin/python -m tools.bp gen production item=electronic-circuit rate=5 --validate   # the same rows as a book
+.venv/bin/python -m tools.bp gen cell recipe=electronic-circuit producer=copper-cable --validate   # cable machines handing cable straight to circuit machines
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 | .venv/bin/python -m tools.bp density - --rate 5   # how it spends its tiles
 .venv/bin/python -m tools.bp plan platform railguns=16 guns=16 thrusters=1 cargo_bays=24 fuel=1 reserve=1 power=2 promethium=1 ammo_feed=1   # a platform's promethium trip: where to turn, what to load
 .venv/bin/python -m tools.bp plan platform ... --verify 8 --shock 8   # fly the plan whole 8 times, 8 railguns killed as each turns
@@ -24,7 +25,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 |---|---|
 | `.claude/skills/blueprint/` | Claude Code skill: how to generate, check, file |
 | `tools/` | codec, checks, library/book builder, CLI (`python -m tools.bp`), data dump; `rates.py` (recipes, machines, belts, measured inserters) and `layout.py` (inserter facing, pole placement) for generators; `compact.py` (the compact factory layout) with `shelves.py`, `belts.py` and `route.py` (a grid belt router) |
-| `generators/` | parametric designs, `build(**params)`: `factory` (ITEM at RATE/s, every row connected: packed on shelves, or `layout=bus` on a main bus), `production` (the same rows as a book), `assembly_row` (item recipes in assemblers), `fluid_row` (recipes with one fluid: chemical plants, fluid assemblers), `fluid_block` (several fluids: oil processing, cracking, sulfur, acid, lubricant), `smelting_column`, `gated_requester` |
+| `generators/` | parametric designs, `build(**params)`: `factory` (ITEM at RATE/s, every row connected: packed on shelves, or `layout=bus` on a main bus; with each producer only one row uses tried as a cell with it, `cells=0` to skip), `production` (the same rows as a book), `assembly_row` (item recipes in assemblers), `cell` (producers handing their product straight to consumers by inserter), `fluid_row` (recipes with one fluid: chemical plants, fluid assemblers), `fluid_block` (several fluids: oil processing, cracking, sulfur, acid, lubricant), `smelting_column`, `gated_requester` |
 | `library/` | decoded JSON, one file per blueprint; folders are books; a platform's `NAME.plan.json` is its trip plan |
 | `validator/` | in-game validation: headless server, RCON, Lua harness, diff (`bp validate`) |
 | `site/` | library browser: `template.html`, built by `python -m tools.site` into `site/dist/` (gitignored) |

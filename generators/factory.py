@@ -137,11 +137,14 @@ class Job:
 
 
 def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-                   furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL):
-    """Rows and their lines (which line feeds each port), before they're laid out."""
+                   furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, cells=0):
+    """Rows and their lines (which line feeds each port), before they're laid out.
+    cells: fuse each producer only one row uses into a cell with it (production.fuse)."""
     if belt not in KITS:
         raise ValueError(f"belt is one of {list(KITS)}")
     steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil)
+    if cells:
+        steps = production.fuse(steps, item, belt)
     rows = [_row(s) for s in steps for _ in range(s.rows)]
     lines = _lines(rows, inputs, item, rate, belt, fill)
     return {"steps": steps, "inputs": inputs, "rows": rows, "lines": lines, "belt": belt, "item": item, "rate": rate}
@@ -173,6 +176,8 @@ def _row(step: production.Step) -> Row:
     recipe = rates.recipe_any(step.params["recipe"])
     # Oil steps count crafts; the rest count their product.
     crafts = (step.demand / recipe.results[step.item] if step.item in recipe.results else step.demand) / step.rows
+    # A cell's belt also carries its producers' ingredients.
+    per_craft_of = gen.ingredients(**step.params) if hasattr(gen, "ingredients") else recipe.ingredients
     ports, lane_count = {}, {}
     for f in flow.feed:
         port = ports.setdefault(f.entity, Port("in", *at(f.entity)))
@@ -180,7 +185,7 @@ def _row(step: production.Step) -> Row:
         lane_count[f.item] = lane_count.get(f.item, 0) + 1
     for port in ports.values():
         for lane, name in port.lanes.items():
-            per_craft = recipe.ingredients.get(name) or _fuel(step, recipe, name)
+            per_craft = per_craft_of.get(name) or _fuel(step, recipe, name)
             port.demand[name] = port.demand.get(name, 0) + crafts * per_craft / lane_count[name]
     out = [p for p in flow.expect if p not in fluid_data.raw]
     # A fluid row's near-lane ingredient rides on out with the product.
@@ -473,42 +478,57 @@ class Canvas:
 
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="compact", budget=None) -> Blueprint:
+          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="compact", budget=None, cells=1) -> Blueprint:
     """fill: the share of a belt a line made here may carry before it's split.
     layout: "compact" (rows on shelves with their products handed over directly,
     tools/compact.py), or "bus" (every row on one bus); compact falls back to the bus,
     saying why, for what it can't lay out or lays out no smaller. budget: seconds the
     compact search may take (default compact.BUDGET); it keeps the best layout found in
-    that time."""
+    that time. cells: compact also tries each producer only one row uses as a cell with
+    that row (generators/cell.py), in the budget left but at least a quarter of it, and
+    keeps the smaller; 0 skips it."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill)
-    compact = _compact(layout, params, budget, say=True)
+    compact = _compact(layout, params, budget, say=True, cells=cells)
     return compact[1].bp if compact else _build(plan(**params))[0]
 
 
 _COMPACT = {}  # params -> (parts, compact.Result) or the reason it isn't compact: build and flow_tests share one search
 
 
-def _compact(layout, params, budget=None, say=False):
+def _compact(layout, params, budget=None, say=False, cells=1):
     """(parts, compact.Result), or None for the bus layout (asked for, or no larger)."""
     if layout not in ("bus", "compact"):
         raise ValueError("layout is bus or compact")
     if layout == "bus":
         return None
+    import time
+
     from tools import compact
 
     budget = compact.BUDGET if budget is None else float(budget)
     defaults = {k: v.default for k, v in inspect.signature(rows_and_lines).parameters.items()}
-    key = tuple(sorted({**defaults, **params, "budget": budget}.items()))
+    key = tuple(sorted({**defaults, **params, "budget": budget, "cells": int(cells)}.items()))
     if key not in _COMPACT:
-        p = rows_and_lines(**params)
-        try:
-            _COMPACT[key] = (p, compact.build(p, budget))
-        except compact.CompactError as e:
-            _COMPACT[key] = str(e)
+        # Rows as solved first, with the whole budget; then, in what's left but at least a
+        # quarter of it, with each producer only one row uses fused into a cell with it.
+        # The smaller is kept.
+        start, laid, errors = time.monotonic(), [], []
+        for fused in (0, 1) if cells else (0,):
+            left = max(budget - (time.monotonic() - start), budget / 4 if fused else 0)
+            p = rows_and_lines(**params, cells=fused)
+            if fused and not any(s.generator == "cell" for s in p["steps"]):
+                break
+            try:
+                laid.append((p, compact.build(p, left)))
+            except compact.CompactError as e:
+                errors.append(str(e))
+        if not laid:
+            _COMPACT[key] = errors[0]
         else:  # kept only if smaller: one tall row can set both boxes (processing units)
             from tools.density import density
 
+            _COMPACT[key] = min(laid, key=lambda got: got[1].area)
             bus = density(_build(plan(**params))[0].to_dict())[0]["area"]
             if bus <= _COMPACT[key][1].area:
                 _COMPACT[key] = f"the bus layout is smaller ({bus:,} tiles, compact {_COMPACT[key][1].area:,})"
@@ -929,10 +949,10 @@ def _description(p) -> str:
     return text
 
 
-def flow_tests(layout="compact", budget=None, **params):
+def flow_tests(layout="compact", budget=None, cells=1, **params):
     from validator.flow import Feed, Flow, FluidFeed
 
-    compact = _compact(layout, params, budget)
+    compact = _compact(layout, params, budget, cells=cells)
     if compact:
         from tools.compact import flow_tests as compact_flow_tests
 

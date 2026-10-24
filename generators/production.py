@@ -23,13 +23,13 @@ from dataclasses import dataclass
 from draftsman.blueprintable import BlueprintBook
 from draftsman.data import recipes
 
-from generators import assembly_row, fluid_block, fluid_row, smelting_column
+from generators import assembly_row, cell, fluid_block, fluid_row, smelting_column
 from tools import rates
 from tools.check import TEXT_LIMITS
 
 MACHINES = ("assembling-machine-3", "assembling-machine-2", "assembling-machine-1")
 GENERATORS = {"assembly_row": assembly_row, "fluid_row": fluid_row, "smelting_column": smelting_column,
-              "fluid_block": fluid_block}
+              "fluid_block": fluid_block, "cell": cell}
 OIL = ("heavy-oil", "light-oil", "petroleum-gas")
 BUFFER_SECONDS, BUFFER_MIN = 20, 5  # chain tests: output pooled before a product backs up
 # Rows are sized for this much more than the demand: a chain sized exactly runs
@@ -242,6 +242,48 @@ def _crafts(machine, r) -> bool:
 def _rated(kind, params) -> float:
     p = GENERATORS[kind].plan(**params)
     return p.sides * p.per_side
+
+
+def fuse(steps: list[Step], item: str, belt: str) -> list[Step]:
+    """The steps with each producer row whose product only one consumer row uses
+    fused into a cell with it (generators/cell.py): the item handed over by
+    inserter, no row or belt between them. Others, and pairs no cell fits, stay."""
+    users = {}
+    for s in steps:
+        r = rates.recipe_any(s.params["recipe"])
+        for i in [*r.ingredients, *r.fluids]:
+            users.setdefault(i, []).append(s)
+    gone, cells = set(), {}
+    for c in steps:
+        if c.generator != "assembly_row":
+            continue
+        for p in steps:
+            if p.generator != "assembly_row" or id(p) in gone or p.item == item or users.get(p.item) != [c]:
+                continue
+            try:
+                cells[id(c)] = _cell_step(p, c, belt)
+            except ValueError:
+                continue
+            gone |= {id(p), id(c)}
+            break
+    return [cells.get(id(s), s) for s in steps if id(s) not in gone or id(s) in cells]
+
+
+def _cell_step(p: Step, c: Step, belt: str) -> Step:
+    """One cell row type sized for the consumer's demand, as _size sizes rows: the fewest
+    full-size cells, then just enough consumers in each, in the consumer's machine."""
+    base = {"recipe": c.params["recipe"], "producer": p.params["recipe"], "machine": c.params["machine"], "belt": belt}
+    need = c.demand * SLACK
+    full = _rated("cell", {**base, "sides": 2})
+    rows = math.ceil(need / full - 1e-9)
+    share = need / rows
+    plan = cell.plan(**base)
+    per = plan.c_crafts * plan.consumer.results[plan.product]
+    if share <= per + 1e-9:
+        params = {**base, "sides": 1, "consumers": 1}
+    else:
+        params = {**base, "sides": 2, "consumers": math.ceil(share / 2 / per - 1e-9)}
+    return Step(c.item, c.demand, "cell", params, rows, _rated("cell", params))
 
 
 def parts(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
