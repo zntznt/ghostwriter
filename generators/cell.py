@@ -21,6 +21,8 @@ consumer gets what it needs from the producers beside it. Handovers are sized
 from inserters measured machine to machine (tools/inserter_rates.json, no
 research) with a 15% margin. `consumers` (per side) defaults to the most the
 belts carry. Each input belt carries at most two items, and nothing is a fluid.
+`belts=2` allows the second belt; the compact factory search doesn't use it, since
+such cells came out larger there (docs/layout-optimizer.md).
 """
 
 import math
@@ -64,9 +66,11 @@ class Plan:
 
 
 def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembling-machine-2",
-         belt="transport-belt", sides=2, consumers=0) -> Plan:
+         belt="transport-belt", sides=2, consumers=0, belts=1) -> Plan:
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
+    if belts not in (1, 2):
+        raise ValueError("belts is 1 or 2")
     pr, cr = rates.recipe(producer), rates.recipe(recipe)
     if len(pr.results) != 1 or len(cr.results) != 1:
         raise ValueError(f"{producer} into {recipe}: a cell's machines make one product each")
@@ -79,6 +83,9 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
     far = {}
     if len(on_belt) <= 2:
         lanes = _lanes(on_belt)
+    elif belts == 1:
+        raise ValueError(f"{producer} into {recipe} needs {len(on_belt)} items on one input belt "
+                         f"({', '.join(on_belt)}) where 2 fit; belts=2 adds a second")
     else:
         # More than one belt carries: the producer's ingredients on in1, the consumer's others on in2.
         for who, got in ((producer, near), (recipe, others)):
@@ -205,8 +212,8 @@ def ingredients(recipe="electronic-circuit", producer="copper-cable", **_) -> di
 
 
 def build(recipe="electronic-circuit", producer="copper-cable", machine="assembling-machine-2",
-          belt="transport-belt", sides=2, consumers=0, pole="medium-electric-pole") -> Blueprint:
-    p = plan(recipe, producer, machine, belt, sides, consumers)
+          belt="transport-belt", sides=2, consumers=0, belts=1, pole="medium-electric-pole") -> Blueprint:
+    p = plan(recipe, producer, machine, belt, sides, consumers, belts)
     s, n = p.size, len(p.chain)
     pitch = s + 1
     length = n * pitch - 1
