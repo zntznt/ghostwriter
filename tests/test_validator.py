@@ -274,8 +274,11 @@ class Validator(unittest.TestCase):
 
     def test_cells_reach_rated_output(self):
         # Producers handing straight to consumers by inserter: cable into circuits
-        # (groups of a producer between two consumers), and gears into inserters.
-        for params in ({}, {"recipe": "inserter", "producer": "iron-gear-wheel"}):
+        # (groups of a producer between two consumers), gears into inserters, and cable into
+        # advanced circuits, whose circuits and plastic come on a second belt by long-handed inserter.
+        for params in ({}, {"recipe": "inserter", "producer": "iron-gear-wheel"},
+                       {"recipe": "advanced-circuit", "producer": "copper-cable", "belts": 2, "sides": 1,
+                        "consumers": 1}):
             bp = cell.build(**params)
             data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
             self.assertPasses(data)

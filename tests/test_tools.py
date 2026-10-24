@@ -261,6 +261,8 @@ CELL_VARIANTS = [
     {},  # copper cable straight into electronic circuits, assembling machine 2
     {"recipe": "inserter", "producer": "iron-gear-wheel"},  # circuits and iron on the belt, gears handed over
     {"recipe": "transport-belt", "producer": "iron-gear-wheel", "sides": 1, "consumers": 2},  # iron on both lanes
+    {"recipe": "advanced-circuit", "producer": "copper-cable", "belts": 2},  # copper near; circuits, plastic far
+    {"recipe": "engine-unit", "producer": "iron-gear-wheel", "sides": 1, "belts": 2},  # iron near; steel, pipes far
 ]
 # An inserter's blueprint direction is the side it picks up from (NOTES.md): pickup, then drop.
 REACH = {0: ((0, -1), (0, 1)), 4: ((1, 0), (-1, 0)), 8: ((0, 1), (0, -1)), 12: ((-1, 0), (1, 0))}
@@ -281,7 +283,8 @@ def inserter_ends(bp: dict):
         if e["name"].endswith("inserter"):
             x, y = math.floor(e["position"]["x"]), math.floor(e["position"]["y"])
             (px, py), (dx, dy) = REACH[e.get("direction", 0)]
-            yield e, at.get((x + px, y + py)), at.get((x + dx, y + dy))
+            k = 2 if e["name"] == "long-handed-inserter" else 1  # it reaches two tiles each way
+            yield e, at.get((x + k * px, y + k * py)), at.get((x + k * dx, y + k * dy))
 
 
 class Cell(unittest.TestCase):
@@ -349,13 +352,31 @@ class Cell(unittest.TestCase):
                 p = cell.plan(**params)
                 self.assertAlmostEqual(flow.expect[p.product], p.sides * p.per_side)
 
+    def test_a_second_belt_takes_the_consumers_other_items(self):
+        # Three items don't fit one belt's two lanes: with belts=2 the producer's ingredients stay
+        # on the near belt, the consumer's others go on a far one, reached by long-handed inserters.
+        p = cell.plan(recipe="advanced-circuit", producer="copper-cable", belts=2)
+        self.assertEqual(p.lanes, {"left": "copper-plate", "right": "copper-plate"})
+        self.assertEqual(p.far, {"left": "electronic-circuit", "right": "plastic-bar"})
+        self.assertEqual(p.feeders["C"][0], "long-handed-inserter")
+        self.assertIn(p.feeders["P"][0], cell.REGULAR)
+        engine = cell.plan(recipe="engine-unit", producer="iron-gear-wheel", belts=2)
+        self.assertEqual((engine.lanes["left"], set(engine.far.values())), ("iron-plate", {"steel-plate", "pipe"}))
+        # Two items still fit one belt, as before, whatever belts allows.
+        self.assertEqual(cell.plan().far, {})
+        self.assertEqual(cell.plan(recipe="inserter", producer="iron-gear-wheel", belts=2).far, {})
+
     def test_impossible_cells_say_why(self):
         with self.assertRaisesRegex(ValueError, "doesn't use"):
             cell.plan(recipe="iron-gear-wheel", producer="copper-cable")
         with self.assertRaisesRegex(ValueError, "fluid"):
             cell.plan(recipe="processing-unit", producer="electronic-circuit")
-        with self.assertRaisesRegex(ValueError, "items on one input belt"):
-            cell.plan(recipe="engine-unit", producer="iron-gear-wheel")  # steel, pipes and iron
+        with self.assertRaisesRegex(ValueError, "items on one input belt .* belts=2 adds a second"):
+            cell.plan(recipe="engine-unit", producer="iron-gear-wheel")  # steel, pipes and iron: belts=1
+        with self.assertRaisesRegex(ValueError, "belts is 1 or 2"):
+            cell.plan(belts=3)
+        with self.assertRaisesRegex(ValueError, "takes 3 items"):
+            cell.plan(recipe="assembling-machine-2", producer="iron-gear-wheel", belts=2)  # steel, circuits, machines
 
     def test_ingredients_per_craft_count_what_the_producers_use(self):
         # A circuit takes 3 cable, which take 1.5 copper plates.
