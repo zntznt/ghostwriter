@@ -688,6 +688,32 @@ class Factory(unittest.TestCase):
             warnings.simplefilter("ignore")
             self.assertEqual(density(factory.build(item="electronic-circuit", rate=5).to_dict())[0]["area"], area)
 
+    def test_cells_get_a_quarter_of_the_budget_whatever_the_rows_take(self):
+        # On a loaded machine the rows as solved can take the whole budget; circuits at 15/s
+        # lay out in 1,710 tiles with cells, found in 3 s, against 2,847 without.
+        import time
+        from unittest import mock
+
+        from tools import compact
+
+        params, given = {"item": "electronic-circuit", "rate": 5}, []
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            laid = {fused: compact.build(factory.rows_and_lines(**params, cells=fused)) for fused in (0, 1)}
+
+            def build(p, budget):
+                fused = any(s.generator == "cell" for s in p["steps"])
+                given.append((fused, budget))
+                if not fused:
+                    time.sleep(budget)  # the rows as solved take it all
+                return laid[fused]
+
+            with mock.patch.object(compact, "build", build):
+                got = factory._compact("compact", params, budget=1.5)  # a budget no other test asks for
+        self.assertEqual([fused for fused, _ in given], [False, True])
+        self.assertGreaterEqual(given[1][1], 1.5 / 4)
+        self.assertEqual(got[1].area, laid[1].area)
+
     def test_checks_clean_powered_and_nothing_overlaps(self):
         for params in FACTORIES:
             _, _, bp = factory_built(**params)
