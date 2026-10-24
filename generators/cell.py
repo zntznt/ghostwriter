@@ -1,13 +1,17 @@
 """Cell: a producer's machines hand their product straight to a consumer's, by inserter.
 
-  in | ins | chain | out | product | out | chain | ins | in   (sides=2)
+  [in2 |] in1 | ins | chain | out | product | out | chain | ins | in1 [| in2]   (sides=2)
 
 Each side's chain runs north to south: producer (P) and consumer (C) machines
 with a row between each two, where inserters hand the producer's product over
 (copper cable into electronic circuits, gears into inserters), no belt between
 them. Every machine takes its own ingredients from the side's input belt: the
 producer's on one lane and the consumer's others on the other (an inserter
-takes only what its machine's recipe uses), or one item on both lanes.
+takes only what its machine's recipe uses), or one item on both lanes. When
+that's more than two items, the producer's stay on in1 and the consumer's others
+go on a second belt beyond it (in2), which consumers reach by long-handed
+inserters, as an assembly row's second belt is (copper into cable, circuits and
+plastic into advanced circuits).
 Consumers drop their product on the far lane of the middle belt, as in an
 assembly row, so the two sides fill both lanes.
 
@@ -16,13 +20,12 @@ between every two consumers, one between every pair, ...) in which every
 consumer gets what it needs from the producers beside it. Handovers are sized
 from inserters measured machine to machine (tools/inserter_rates.json, no
 research) with a 15% margin. `consumers` (per side) defaults to the most the
-belts carry. Cells need one input belt: the producer's ingredients and the
-consumer's others are at most two items, and no fluids.
+belts carry. Each input belt carries at most two items, and nothing is a fluid.
 """
 
 import math
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from draftsman.blueprintable import Blueprint
 from draftsman.constants import Direction
@@ -31,6 +34,7 @@ from tools import layout, rates
 
 MARGIN = 0.85  # use at most this share of an inserter's measured rate
 REGULAR = ("inserter", "fast-inserter")
+LONG = "long-handed-inserter"
 LANES = ("left", "right")
 MOST = 12  # consumers per side, at most
 
@@ -52,6 +56,7 @@ class Plan:
     size: int
     item: str  # handed over
     product: str
+    far: dict[str, str] = field(default_factory=dict)  # a second input belt's lanes: the consumer's others
 
     @property
     def per_side(self) -> float:
@@ -69,29 +74,40 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
     (product, out), = cr.results.items()
     if item not in cr.ingredients:
         raise ValueError(f"{recipe} doesn't use {item}")
-    on_belt = list(dict.fromkeys([*pr.ingredients, *(i for i in cr.ingredients if i != item)]))
-    if len(on_belt) > 2:
-        raise ValueError(f"{producer} into {recipe} needs {len(on_belt)} items on one input belt "
-                         f"({', '.join(on_belt)}) where 2 fit")
-    lanes = dict(zip(LANES, on_belt * 2 if len(on_belt) == 1 else on_belt))
+    near, others = list(pr.ingredients), [i for i in cr.ingredients if i != item]
+    on_belt = list(dict.fromkeys([*near, *others]))
+    far = {}
+    if len(on_belt) <= 2:
+        lanes = _lanes(on_belt)
+    else:
+        # More than one belt carries: the producer's ingredients on in1, the consumer's others on in2.
+        for who, got in ((producer, near), (recipe, others)):
+            if len(got) > 2:
+                raise ValueError(f"{producer} into {recipe}: {who} takes {len(got)} items ({', '.join(got)}) "
+                                 f"where an input belt fits 2")
+        if set(near) & set(others):
+            raise ValueError(f"{producer} into {recipe}: {', '.join(sorted(set(near) & set(others)))} would "
+                             f"be needed on both input belts")
+        lanes, far = _lanes(near), _lanes(others)
     p_crafts, c_crafts = rates.crafts_per_second(machine, pr), rates.crafts_per_second(machine, cr)
     s = rates.size(machine)
 
-    def from_belt(demand, who):
+    def from_belt(demand, who, options=REGULAR):
         if not demand:
             return REGULAR[0], 0
-        got = rates.fewest_inserters(demand, belt, True, REGULAR, MARGIN)
+        got = rates.fewest_inserters(demand, belt, True, options, MARGIN)
         if got[1] > s:
             raise ValueError(f"a {who} machine needs {got[1]} inserters from the belt where {s} fit")
         return got
 
     feeders = {"P": from_belt(p_crafts * sum(pr.ingredients.values()), producer),
-               "C": from_belt(c_crafts * sum(a for i, a in cr.ingredients.items() if i != item), recipe)}
+               "C": from_belt(c_crafts * sum(a for i, a in cr.ingredients.items() if i != item), recipe,
+                              (LONG,) if far else REGULAR)}
     output = rates.fewest_inserters(c_crafts * out, belt, False, REGULAR, MARGIN)
     if output[1] > s:
         raise ValueError(f"a {recipe} machine needs {output[1]} inserters to the belt where {s} fit")
     give, need, lane = p_crafts * made, c_crafts * cr.ingredients[item], rates.lane_rate(belt)
-    width = Counter(lanes.values())
+    width = Counter(lanes.values()) + Counter(far.values())
 
     def carried(chain):
         # Producers make only what the consumers take, so the belt carries that.
@@ -126,7 +142,12 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
             raise ValueError(f"{producer} into {recipe}: no chain is fed and fits its belts and inserters in {machine}")
     chain, handover = best
     return Plan(pr, cr, machine, belt, sides, chain, handover, lanes, feeders, output, p_crafts, c_crafts, s, item,
-                product)
+                product, far)
+
+
+def _lanes(items: list[str]) -> dict[str, str]:
+    """One item on both lanes of a belt, two on one each."""
+    return dict(zip(LANES, items * 2 if len(items) == 1 else items))
 
 
 def _chains(c: int) -> list[str]:
@@ -189,29 +210,37 @@ def build(recipe="electronic-circuit", producer="copper-cable", machine="assembl
     s, n = p.size, len(p.chain)
     pitch = s + 1
     length = n * pitch - 1
-    product_x = 3 + s
-    columns = {"left": {"belt": 0, "ins": 1, "machine": 2, "out": 2 + s}}
+    belts = [p.lanes, p.far] if p.far else [p.lanes]
+    o = len(belts) - 1
+    # Columns from the west: [in2,] in1, inserters, machine, out, product (then mirrored).
+    product_x = o + 3 + s
+    columns = {"left": {"belts": [o - b for b in range(len(belts))], "ins": o + 1, "machine": o + 2,
+                        "out": o + 2 + s}}
     if p.sides == 2:
-        columns["right"] = {"belt": 6 + 2 * s, "ins": 5 + 2 * s, "machine": 5 + s, "out": 4 + s}
+        columns["right"] = {"belts": [o + 6 + 2 * s + b for b in range(len(belts))], "ins": o + 5 + 2 * s,
+                            "machine": o + 5 + s, "out": o + 4 + s}
 
     bp = Blueprint()
     consumers_all = p.sides * p.chain.count("C")
     bp.label = f"Cell: {consumers_all} {p.machine} ({p.producer.name} into {p.consumer.name})"
-    belt_text = (f"{p.lanes['left']} on both lanes" if p.lanes["left"] == p.lanes["right"]
-                 else f"{p.lanes['left']} left lane, {p.lanes['right']} right lane")
+    belt_text = "; ".join(
+        (f"in{b + 1}: " if len(belts) > 1 else "")
+        + (f"{ls['left']} on both lanes" if ls["left"] == ls["right"] else f"{ls['left']} left lane, {ls['right']} right lane")
+        for b, ls in enumerate(belts))
     bp.description = (
         f"{p.chain} a side, north to south: {p.item} handed straight from {p.producer.name} (P) to "
         f"{p.consumer.name} (C) machines by inserter. {p.sides * p.per_side:g} {p.product}/s. Ingredients enter "
-        f"at the bottom of each side's input belt, {belt_text}. {p.product} leaves at the top. Connect any pole "
-        f"to your grid.")
+        f"at the bottom of each side's input belt{'s' if len(belts) > 1 else ''}, {belt_text}. {p.product} leaves "
+        f"at the top. Connect any pole to your grid.")
     bp.icons = [p.machine, p.product]
 
     for y in range(length):
         bp.entities.append(p.belt, tile_position=(product_x, y), direction=Direction.NORTH,
                            **({"id": "product"} if y == 0 else {}))
         for side, c in columns.items():
-            bp.entities.append(p.belt, tile_position=(c["belt"], y), direction=Direction.NORTH,
-                               **({"id": f"in1_{side}"} if y == length - 1 else {}))
+            for b, x in enumerate(c["belts"]):
+                bp.entities.append(p.belt, tile_position=(x, y), direction=Direction.NORTH,
+                                   **({"id": f"in{b + 1}_{side}"} if y == length - 1 else {}))
 
     powered, free = [], {}
     for side, c in columns.items():
@@ -258,7 +287,9 @@ def flow_tests(**params):
     from validator.flow import Feed, Flow
 
     p = plan(**{k: v for k, v in params.items() if k != "pole"})
-    feeds = [Feed(f"in1_{side}", lane, item) for side in LANES[:p.sides] for lane, item in p.lanes.items()]
+    belts = [p.lanes, p.far] if p.far else [p.lanes]
+    feeds = [Feed(f"in{b + 1}_{side}", lane, item) for side in LANES[:p.sides] for b, ls in enumerate(belts)
+             for lane, item in ls.items()]
     total = p.sides * p.per_side
     machines = len(p.chain)
     return [Flow(f"{p.sides * p.chain.count('C')} {p.consumer.name} machines fed {p.item} by hand-over: "
