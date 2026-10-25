@@ -744,6 +744,56 @@ class Factory(unittest.TestCase):
             warnings.simplefilter("ignore")
             self.assertEqual(density(factory.build(item="electronic-circuit", rate=5).to_dict())[0]["area"], area)
 
+    def test_research_never_lays_out_larger_than_without_it(self):
+        # At 7 the acid plant's one inserter leaves its pole north of the pipes, a row taller,
+        # and the factory grows from 228 to 240 tiles. The rows sized without research work
+        # for a researched player too, so the smaller layout is kept.
+        def area(**params):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return factory._compact("compact", params)[1].area
+
+        acid = {"item": "sulfuric-acid", "rate": 10}
+        self.assertLessEqual(area(**acid, research="inserter-capacity-bonus=7"), area(**acid))
+
+    def test_rows_without_research_get_only_the_budget_left(self):
+        # They're tried after the researched ones, in what's left: a search the researched
+        # rows fill takes no longer for the comparison.
+        import time
+        from unittest import mock
+
+        from tools import compact
+
+        params, given = {"item": "electronic-circuit", "rate": 5, "research": "inserter-capacity-bonus=7"}, []
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            laid = compact.build(factory.rows_and_lines(**params))
+
+            def build(p, budget):
+                researched = any("research" in s.params for s in p["steps"])
+                given.append(researched)
+                if researched:
+                    time.sleep(budget)
+                return laid
+
+            with mock.patch.object(compact, "build", build):
+                factory._compact("compact", params, budget=0.4)  # a budget no other test asks for
+        self.assertTrue(given)
+        self.assertTrue(all(given), "rows without research were laid out with no budget left")
+
+    def test_rows_research_leaves_the_same_are_laid_out_once(self):
+        from unittest import mock
+
+        from tools import compact
+
+        real, given = compact.build, []
+        with mock.patch.object(compact, "build", lambda p, budget: given.append(p) or real(p, budget)), \
+                warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            factory._compact("compact", {"item": "lubricant", "rate": 10, "research": "inserter-capacity-bonus=7"},
+                             budget=38)  # a budget no other test asks for
+        self.assertEqual(len(given), 1)
+
     def test_cells_get_a_quarter_of_the_budget_whatever_the_rows_take(self):
         # On a loaded machine the rows as solved can take the whole budget; circuits at 15/s
         # lay out in 1,710 tiles with cells, found in 3 s, against 2,847 without.
