@@ -485,14 +485,15 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     """fill: the share of a belt a line made here may carry before it's split.
     layout: "compact" (rows on shelves with their products handed over directly,
     tools/compact.py), or "bus" (every row on one bus); compact falls back to the bus,
-    saying why, for what it can't lay out or lays out no smaller. budget: seconds the
-    compact search may take (default compact.BUDGET); it keeps the best layout found in
-    that time. cells: compact also tries each producer only one row uses as a cell with
-    that row (generators/cell.py), then shared producers in a cell with every row that
-    takes one, each in the budget left but at least a quarter of it, and keeps the
-    smallest; 0 skips them. research: inserter research ("inserter-capacity-bonus=7") the
-    rows are sized for; the build moves its rate only with that researched. Compact also
-    tries the rows sized without it in the budget left, and keeps them if smaller."""
+    saying why, for what it can't lay out or lays out no smaller. The compact search is
+    bounded by steps (compact.STEPS), the same on any machine, so the same request always
+    gives the same layout; budget: seconds, only as a safety (default compact.BUDGET), past
+    which it keeps the best layout found so far. cells: compact also tries shared
+    producers in a cell with every row that takes one, and each producer only one row
+    uses as a cell with that row (generators/cell.py), and keeps the smallest; 0 skips
+    them. research: inserter research ("inserter-capacity-bonus=7") the rows are sized
+    for; the build moves its rate only with that researched. Compact also tries the rows
+    sized without it, and keeps them if smaller."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill, **({"research": research} if research else {}))
     compact = _compact(layout, params, budget, say=True, cells=cells)
@@ -511,41 +512,46 @@ def _compact(layout, params, budget=None, say=False, cells=1):
     import time
 
     from tools import compact
+    from tools.route import Work
 
     budget = compact.BUDGET if budget is None else float(budget)
     defaults = {k: v.default for k, v in inspect.signature(rows_and_lines).parameters.items()}
     key = tuple(sorted({**defaults, **params, "budget": budget, "cells": int(cells)}.items()))
     if key not in _COMPACT:
-        # Rows as solved first, with the whole budget; then, each in what's left but at least
-        # a quarter of it, with each producer only one row uses fused into a cell with it,
-        # and with shared producers fused too: each only if it has cells and isn't the same
-        # rows as one before. Asked for research, the same again with rows sized without it,
-        # which a researched player can build too, each only in what's left. The smallest is
-        # kept.
-        start, laid, errors, seen = time.monotonic(), [], [], []
+        # Shared producers fused into cells with every row that takes one first, then each
+        # producer only one row uses fused into a cell with it, then the rows as solved: cells'
+        # rows are usually the smaller (processing units 4,250 tiles against 8,346), and each
+        # search after looks only for a layout smaller than the smallest so far (beat). Each
+        # only if it has cells and isn't the same rows as one before. Asked for research, the
+        # same again with rows sized without it, which a researched player can build too. The
+        # first search has the whole of compact.STEPS, each after what's left but at least a
+        # quarter of them, so none goes without; seconds (budget) the same, as a safety. The
+        # smallest is kept; a tie keeps the researched rows, then the rows as solved.
+        start, spent, laid, errors, seen = time.monotonic(), 0, [], [], []
         asked = params.get("research", "")
         for research in dict.fromkeys((asked, "")):
-            for fused in (0, 1, 2) if cells else (0,):
-                left = budget - (time.monotonic() - start)
-                if research == asked:
-                    left = max(left, budget / 4 if fused else 0)
-                elif left <= 0:
-                    break
+            for fused in (2, 1, 0) if cells else (0,):
+                quarter = 0.25 if seen else 0
+                steps = max(compact.STEPS - spent, compact.STEPS * quarter)
+                left = max(budget - (time.monotonic() - start), budget * quarter)
                 p = rows_and_lines(**{**params, "research": research}, cells=fused)
                 rows = [r.bp.to_dict() for r in p["rows"]]
                 if fused and not any(s.generator == "cell" for s in p["steps"]) or rows in seen:
                     continue
                 seen.append(rows)
+                work = Work(steps, seconds=left)
                 try:
-                    laid.append((p, compact.build(p, left)))
+                    beat = min((got.area for _, got, _ in laid), default=math.inf)
+                    laid.append((p, compact.build(p, work, beat), (research != asked, fused)))
                 except compact.CompactError as e:
                     errors.append(str(e))
+                spent += work.spent
         if not laid:
             _COMPACT[key] = errors[0]
         else:  # kept only if smaller: one tall row can set both boxes (processing units)
             from tools.density import density
 
-            _COMPACT[key] = min(laid, key=lambda got: got[1].area)
+            _COMPACT[key] = min(laid, key=lambda got: (got[1].area, got[2]))[:2]
             bus = density(_build(plan(**params))[0].to_dict())[0]["area"]
             if bus <= _COMPACT[key][1].area:
                 _COMPACT[key] = f"the bus layout is smaller ({bus:,} tiles, compact {_COMPACT[key][1].area:,})"

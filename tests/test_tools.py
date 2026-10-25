@@ -756,10 +756,9 @@ class Factory(unittest.TestCase):
         acid = {"item": "sulfuric-acid", "rate": 10}
         self.assertLessEqual(area(**acid, research="inserter-capacity-bonus=7"), area(**acid))
 
-    def test_rows_without_research_get_only_the_budget_left(self):
-        # They're tried after the researched ones, in what's left: a search the researched
-        # rows fill takes no longer for the comparison.
-        import time
+    def test_rows_without_research_get_a_quarter_of_the_steps_whatever_the_researched_take(self):
+        # They're tried after the researched ones, so a tie keeps the researched rows; the
+        # biggest requests' researched rows take every step, and they still get compared.
         from unittest import mock
 
         from tools import compact
@@ -769,17 +768,19 @@ class Factory(unittest.TestCase):
             warnings.simplefilter("ignore")
             laid = compact.build(factory.rows_and_lines(**params))
 
-            def build(p, budget):
+            def build(p, work, beat):
                 researched = any("research" in s.params for s in p["steps"])
-                given.append(researched)
+                given.append((researched, work.steps))
                 if researched:
-                    time.sleep(budget)
+                    work.spend(work.left)  # the researched rows take every step
                 return laid
 
             with mock.patch.object(compact, "build", build):
                 factory._compact("compact", params, budget=0.4)  # a budget no other test asks for
-        self.assertTrue(given)
-        self.assertTrue(all(given), "rows without research were laid out with no budget left")
+        unresearched = [steps for researched, steps in given if not researched]
+        self.assertTrue(unresearched, "rows without research weren't laid out")
+        self.assertTrue(all(steps >= compact.STEPS / 4 for steps in unresearched))
+        self.assertEqual([researched for researched, _ in given], sorted(r for r, _ in given)[::-1])
 
     def test_rows_research_leaves_the_same_are_laid_out_once(self):
         from unittest import mock
@@ -787,17 +788,16 @@ class Factory(unittest.TestCase):
         from tools import compact
 
         real, given = compact.build, []
-        with mock.patch.object(compact, "build", lambda p, budget: given.append(p) or real(p, budget)), \
+        with mock.patch.object(compact, "build", lambda p, work, beat: given.append(p) or real(p, work, beat)), \
                 warnings.catch_warnings():
             warnings.simplefilter("ignore")
             factory._compact("compact", {"item": "lubricant", "rate": 10, "research": "inserter-capacity-bonus=7"},
                              budget=38)  # a budget no other test asks for
         self.assertEqual(len(given), 1)
 
-    def test_cells_get_a_quarter_of_the_budget_whatever_the_rows_take(self):
-        # On a loaded machine the rows as solved can take the whole budget; circuits at 15/s
-        # lay out in 1,710 tiles with cells, found in 3 s, against 2,847 without.
-        import time
+    def test_the_rows_as_solved_get_a_quarter_of_the_steps_whatever_the_cells_take(self):
+        # Cells are laid out first, as their rows are usually the smaller (processing units
+        # 4,250 tiles with shared cells against 8,346 without), and can take every step.
         from unittest import mock
 
         from tools import compact
@@ -807,49 +807,56 @@ class Factory(unittest.TestCase):
             warnings.simplefilter("ignore")
             laid = {fused: compact.build(factory.rows_and_lines(**params, cells=fused)) for fused in (0, 1)}
 
-            def build(p, budget):
+            def build(p, work, beat):
                 fused = any(s.generator == "cell" for s in p["steps"])
-                given.append((fused, budget))
-                if not fused:
-                    time.sleep(budget)  # the rows as solved take it all
+                given.append((fused, work.steps))
+                if fused:
+                    work.spend(work.left)  # the cells take every step
                 return laid[fused]
 
             with mock.patch.object(compact, "build", build):
                 got = factory._compact("compact", params, budget=1.5)  # a budget no other test asks for
-        self.assertEqual([fused for fused, _ in given], [False, True])
-        self.assertGreaterEqual(given[1][1], 1.5 / 4)
+        self.assertEqual([fused for fused, _ in given], [True, False])
+        self.assertGreaterEqual(given[1][1], compact.STEPS / 4)
         self.assertEqual(got[1].area, laid[1].area)
 
     def test_the_search_tries_shared_cells_where_they_differ(self):
         # Cable feeds circuits and advanced circuits: one-user fusion finds nothing, so only the
-        # rows as solved and the shared cells are laid out; in green science gears feed inserters
-        # and belts, so all three are, each cell search with at least a quarter of the budget.
+        # shared cells and the rows as solved are laid out; in green science gears feed inserters
+        # and belts, so all three are. Each search after the first has at least a quarter of the
+        # steps, and only looks for layouts smaller than the smallest so far (beat).
+        import math
         from types import SimpleNamespace
         from unittest import mock
 
         from tools import compact
 
-        def tried(params, areas):
+        def tried(params, areas, budget):
             given = []
 
-            def build(p, budget):
+            def build(p, work, beat):
                 cells = tuple(sorted(f"{s.params['producer']}>{s.item}" for s in p["steps"] if s.generator == "cell"))
-                given.append((cells, budget))
+                given.append((cells, work.steps, beat))
                 return SimpleNamespace(area=areas[len(given) - 1], bp=None)
 
             with warnings.catch_warnings(), mock.patch.object(compact, "build", build):
                 warnings.simplefilter("ignore")
-                got = factory._compact("compact", params, budget=1.25)  # a budget no other test asks for
+                got = factory._compact("compact", params, budget=budget)
             return given, got
 
-        given, got = tried({"item": "advanced-circuit", "rate": 1}, [900, 800])
-        self.assertEqual([cells for cells, _ in given], [(), ("copper-cable>electronic-circuit",)])
-        self.assertGreaterEqual(given[1][1], 1.25 / 4)
+        given, got = tried({"item": "advanced-circuit", "rate": 1}, [800, 900], 1.25)  # budgets no other test asks for
+        self.assertEqual([cells for cells, *_ in given], [("copper-cable>electronic-circuit",), ()])
+        self.assertEqual([beat for *_, beat in given], [math.inf, 800])
+        self.assertGreaterEqual(given[1][1], compact.STEPS / 4)
         self.assertEqual(got[1].area, 800)  # the smaller kept
-        given, got = tried({"item": "logistic-science-pack", "rate": 1}, [900, 700, 800])
-        self.assertEqual([len(cells) for cells, _ in given], [0, 1, 3])
-        self.assertTrue(all(budget >= 1.25 / 4 for _, budget in given[1:]))
+        given, got = tried({"item": "logistic-science-pack", "rate": 1}, [800, 700, 900], 1.25)
+        self.assertEqual([len(cells) for cells, *_ in given], [3, 1, 0])
+        self.assertEqual([beat for *_, beat in given], [math.inf, 800, 700])
+        self.assertTrue(all(steps >= compact.STEPS / 4 for _, steps, _ in given[1:]))
         self.assertEqual(got[1].area, 700)
+        # A tie keeps the rows as solved, as when they were laid out first.
+        _, got = tried({"item": "advanced-circuit", "rate": 1}, [800, 800], 1.26)
+        self.assertNotIn("cell", [s.generator for s in got[0]["steps"]])
 
     def test_checks_clean_powered_and_nothing_overlaps(self):
         for params in FACTORIES:

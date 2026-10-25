@@ -9,7 +9,7 @@ from generators import factory
 from tests.test_tools import assert_powered, footprint
 from tools import compact, pipes
 from tools.check import check
-from tools.route import reaches
+from tools.route import Work, reaches
 
 ITEMS = [{"item": "electronic-circuit", "rate": 5}, {"item": "automation-science-pack", "rate": 1}]
 # Fluid rows fed by a supplied fluid (petroleum gas: oil isn't processed here, oil=0).
@@ -166,9 +166,29 @@ class Compact(unittest.TestCase):
             warnings.simplefilter("ignore")
             p = factory.rows_and_lines(**ITEMS[0])
             with self.assertRaisesRegex(compact.CompactError, "budget"):
-                compact.build(p, budget=0)
+                compact.build(p, Work(compact.STEPS, seconds=0))
             bp = factory.build(**ITEMS[0], layout="compact", budget=0)
         self.assertNotIn("compact", bp.label)  # the bus layout's
+
+    def test_a_slower_machine_lays_out_the_same(self):
+        # The search is bounded by A* steps, not seconds, so a machine a thousand times
+        # slower (a clock a thousand times faster) gives the same blueprint: its seconds
+        # are only a safety, here out of reach. Cut by seconds, negotiations ended early.
+        import time
+        from unittest import mock
+
+        def blueprint():
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                p = factory.rows_and_lines(**ITEMS[1])
+                return compact.build(p, Work(compact.STEPS, seconds=10 ** 9)).bp.to_string()
+
+        real = time.monotonic
+        start = real()
+        fast = blueprint()
+        with mock.patch("time.monotonic", lambda: start + (real() - start) * 1000):
+            slow = blueprint()
+        self.assertEqual(slow, fast)
 
     def test_compact_is_the_default_and_the_bus_still_there(self):
         with warnings.catch_warnings():
@@ -187,16 +207,42 @@ class Compact(unittest.TestCase):
         from unittest import mock
 
         real, err = compact.build, io.StringIO()
-        with mock.patch.object(compact, "build", lambda p, budget: replace(real(p, budget), area=10 ** 9)), \
+        with mock.patch.object(compact, "build", lambda p, work, beat: replace(real(p, work, beat), area=10 ** 9)), \
                 contextlib.redirect_stderr(err), warnings.catch_warnings():
             warnings.simplefilter("ignore")
             bp = factory.build(**ITEMS[1], layout="compact", budget=39)  # a budget no other test asks for
         self.assertNotIn("compact", bp.label)
         self.assertIn("the bus layout is smaller", err.getvalue())
 
-    def test_a_search_keeps_to_its_budget(self):
-        # The slowest request measured (about 95 s unbounded, 78 of them in negotiations
-        # that never routed): bounded, it returns within its budget and a negotiation's cap.
+    def test_a_search_cut_by_steps_lays_out_the_same_on_any_machine(self):
+        # Recorded on macOS, checked on CI's Linux: 200,000 steps stop electric engines' rows
+        # as solved partway (their whole search takes 360,050), as compact.STEPS stops the
+        # biggest requests.
+        import hashlib
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="electric-engine-unit", rate=0.5, cells=0)
+            work = Work(200_000, seconds=10 ** 9)
+            got = compact.build(p, work)
+        self.assertEqual((got.area, hashlib.sha1(got.bp.to_string().encode()).hexdigest()[:12]),
+                         (1914, "a6eaeb376533"))
+        self.assertLess(work.spent, 360_050)
+
+    def test_a_bound_from_an_earlier_layout_loses_no_smaller_one(self):
+        # beat skips only shelves whose rows and thinnest channels already take that much.
+        # Held to it too, channels grown until the belts route lost electric engines' 1,540
+        # tiles to the 1,587 of the rows sized for research.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="electric-engine-unit", rate=0.5, cells=0)
+            self.assertEqual(compact.build(p, beat=1587).area, 1540)
+            with self.assertRaisesRegex(compact.CompactError, "no layout smaller than 100 tiles"):
+                compact.build(factory.rows_and_lines(**ITEMS[0]), beat=100)
+
+    def test_a_search_keeps_to_its_seconds(self):
+        # The safety: out of seconds, a search stops whatever steps it has left, a
+        # negotiation too.
         import time
 
         with warnings.catch_warnings():
@@ -204,10 +250,10 @@ class Compact(unittest.TestCase):
             p = factory.rows_and_lines(item="electronic-circuit", rate=15)
             t = time.monotonic()
             try:
-                compact.build(p, budget=3)
+                compact.build(p, Work(compact.STEPS, seconds=3))
             except compact.CompactError:
                 pass
-        self.assertLess(time.monotonic() - t, 3 + compact.NEGOTIATION + 2)
+        self.assertLess(time.monotonic() - t, 3 + 2)
 
 
 
