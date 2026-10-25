@@ -135,6 +135,15 @@ def route(fluids, fluid, start, heading, tree, ok, bounds, near=None, limit=6000
     def h(x, y):
         return 0.25 * near.get((x, y), math.inf)
 
+    on_line = {}  # (axis, line) -> [(low, high)]: the pairs already placed on each column and row
+    for axis, line, low, high in fluids.spans:
+        on_line.setdefault((axis, line), []).append((low, high))
+
+    def crosses(span, own):  # does a new pair overlap one placed, or one on its own way here?
+        axis, line, low, high = span
+        return any(low <= b and a <= high for a, b in on_line.get((axis, line), ())) or \
+            any(_overlaps(span, s) for s in own)
+
     first = (start[0], start[1], heading)
     seen = {first: 0.0}
     came = {}
@@ -169,7 +178,7 @@ def route(fluids, fluid, start, heading, tree, ok, bounds, near=None, limit=6000
             if not inside(ex, ey):
                 break
             span = _span((x, y), (ex, ey))
-            if not usable(ex, ey) or (ex, ey) in tiles or any(_overlaps(span, s) for s in fluids.spans + spans):
+            if not usable(ex, ey) or (ex, ey) in tiles or crosses(span, spans):
                 continue
             step = [("in", x, y, back), ("out", ex, ey, d)]
             onto = (ex + dx, ey + dy)

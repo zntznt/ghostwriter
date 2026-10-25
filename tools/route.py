@@ -27,14 +27,20 @@ def route(free, start, heading, goal, facing, reach, bounds, tunnels=(), limit=3
     """Belt tiles from start, which items enter moving `heading`, to goal, placed
     facing `facing` (and never entered from its front).
 
-    free(x, y): may a tile take a belt or an underground end. bounds: (x0, y0, x1, y1),
-    inclusive. reach: an underground pair's farthest distance (the prototype's
-    max_distance). tunnels: pairs already placed, (x, y, x2, y2) entrance to exit.
+    free(x, y): may a tile take a belt or an underground end (or the set of tiles that
+    may). bounds: (x0, y0, x1, y1), inclusive. reach: an underground pair's farthest
+    distance (the prototype's max_distance). tunnels: pairs already placed, (x, y, x2,
+    y2) entrance to exit.
     cost(x, y): what taking a tile costs (default 1), for routing several belts
     that negotiate who gets a tile (route_all).
     Returns [(kind, x, y, direction)], kind "belt", "in" or "out", or None."""
     x0, y0, x1, y1 = bounds
-    spans = [_span(t) for t in tunnels]
+    if callable(free):
+        free = {(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1) if free(x, y)}
+    on_line = {}  # (axis, line) -> [(low, high)]: the pairs already on each column and row
+    for t in tunnels:
+        axis, line, low, high = _span(t)
+        on_line.setdefault((axis, line), []).append((low, high))
 
     def inside(x, y):
         return x0 <= x <= x1 and y0 <= y <= y1
@@ -63,7 +69,7 @@ def route(free, start, heading, goal, facing, reach, bounds, tunnels=(), limit=3
                 state, step = came[state]
                 path[:0] = step
             return path if _own_tunnels_apart(path) else None
-        if not (inside(x, y) and free(x, y)):
+        if (x, y) not in free:
             continue
         moves = []
         here = tile(x, y)
@@ -71,11 +77,15 @@ def route(free, start, heading, goal, facing, reach, bounds, tunnels=(), limit=3
             dx, dy = STEP[f]
             moves.append(((x + dx, y + dy, f), here + (TURN if f != d else 0), [("belt", x, y, f)]))
         dx, dy = STEP[d]
+        axis, line, along = ("x", x, y) if dx == 0 else ("y", y, x)
+        pairs = on_line.get((axis, line), ())
         for k in range(2, reach + 1):
             ex, ey = x + k * dx, y + k * dy
             if not inside(ex, ey):
                 break
-            if not free(ex, ey) or any(_overlaps(_span((x, y, ex, ey)), s) for s in spans):
+            end = along + k * (dx + dy)
+            low, high = min(along, end), max(along, end)
+            if (ex, ey) not in free or any(low <= b and a <= high for a, b in pairs):
                 continue
             # Ties go to the shorter pair: it's in the way of fewer others on its line.
             moves.append(((ex + dx, ey + dy, d), here + tile(ex, ey) + (k - 1) * BELT + TUNNEL + 0.01 * k,
@@ -202,6 +212,9 @@ def route_all(conns, free, reach, bounds, rounds=30, deadline=None):
     import time
     from collections import Counter, defaultdict
 
+    x0, y0, x1, y1 = bounds  # each belt's tiles asked for once: asking took a fifth of the time
+    room = [(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1) if free(x, y)]
+    oks = [{t for t in room if mine(*t)} for *_, mine in conns]
     use, history, paths = Counter(), defaultdict(float), [None] * len(conns)
     pressure, best, stale = 0.5, None, 0
     for _ in range(rounds):
@@ -215,8 +228,7 @@ def route_all(conns, free, reach, bounds, rounds=30, deadline=None):
             def cost(x, y):
                 return BELT + history[(x, y)] + pressure * use[(x, y)]
 
-            path = route(lambda x, y: free(x, y) and mine(x, y), start, heading, goal, facing, reach, bounds,
-                         others, cost=cost)
+            path = route(oks[n], start, heading, goal, facing, reach, bounds, others, cost=cost)
             if path is None:
                 return None
             paths[n] = path
