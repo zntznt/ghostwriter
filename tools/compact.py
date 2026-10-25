@@ -51,7 +51,7 @@ from draftsman.blueprintable import Blueprint
 from draftsman.data import entities
 
 from generators import factory
-from tools import belts, pipes
+from tools import belts, pipes, rates
 from tools.belts import Blocked, Conn
 from tools.pipe_route import ALL, Fluids, route_line, sides
 from tools.route import E, N, S, W, Work, route_all, tunnels_of
@@ -148,7 +148,84 @@ def build(p, work=None, beat=math.inf) -> Result:
     # Last, the kept layout's channels thinner still with taps closer together (belts.Taps
     # close), from its heights: never larger than without them, whatever they'd do to the
     # search before (docs/layout-optimizer.md, "Thinner channels").
-    return _trimmed(p, shelves, heights, bus_far, work, got, west, close=True)[0]
+    got, heights = _trimmed(p, shelves, heights, bus_far, work, got, west, close=True)
+    # Then the same shelves with two supplied items on one line's lanes, where that takes
+    # fewer lines (_shared): kept only if smaller ("Two items on one belt").
+    shared = _shared(p)
+    if shared and not work.over():
+        try:
+            lanes = _attempt(shared, shelves, heights, bus_far, work, west, close=True)
+            lanes = _trimmed(shared, shelves, heights, bus_far, work, lanes, west, close=True)[0]
+            got = lanes if lanes.area < got.area else got
+        except Blocked:
+            pass
+    return got
+
+
+def _shared(p):
+    """p with two supplied items on one line, one a lane, or None where that takes no
+    fewer lines: the ports taking one of them on each lane (circuit cells: copper on the
+    left, iron on the right), as many to a line as each lane carries, and the rest of each
+    item's ports on lines of their own, as factory shares a supplied item's. p's own lines
+    are left as they are."""
+    restore(p)
+    lane = rates.lane_rate(p["belt"])
+    cap = 2 * lane
+    raw = {id(ln) for named in p["lines"].values() for ln in named if ln.supplied and not ln.fluid}
+    ports = [q for r in p["rows"] for q in r.ports if q.kind == "in"]
+    groups = {}  # (left item, right item) -> [[port, ...] a line]
+    for q in ports:
+        a, b = q.lanes.get("left"), q.lanes.get("right")
+        if len(q.lanes) != 2 or a == b or not all(id(ln) in raw for ln in q.feeds.values()):
+            continue
+        if max(q.demand[a], q.demand[b]) > lane:
+            continue
+        lines = groups.setdefault((a, b), [])
+        fits = [g for g in lines if sum(x.demand[a] for x in g) + q.demand[a] <= lane + 1e-9
+                and sum(x.demand[b] for x in g) + q.demand[b] <= lane + 1e-9]
+        if fits:
+            fits[0].append(q)
+        else:
+            lines.append([q])
+    candidates = [((a, b), g) for (a, b), lines in groups.items() for g in lines]
+
+    def units(item, chosen):  # (port, lanes, demand) of the item's ports on lines of their own
+        taken = {id(q) for _, g in chosen for q in g}
+        return [(q, tuple(s for s, i in q.lanes.items() if i == item), q.demand.get(item, 0)) for q in ports
+                if id(q) not in taken and item in q.lanes.values() and id(q.feeds[next(
+                    s for s, i in q.lanes.items() if i == item)]) in raw]
+
+    def own_lines(item, chosen):
+        got = units(item, chosen)
+        return factory._bins(got, [cap] * math.ceil(sum(d for *_, d in got) / cap - 1e-9)) if got else []
+
+    items = sorted({i for pair, _ in candidates for i in pair})
+    count = lambda chosen: len(chosen) + sum(len(own_lines(i, chosen)) for i in items)  # noqa: E731
+    chosen = []
+    for c in candidates:  # each as long as it takes no more lines
+        if count(chosen + [c]) <= count(chosen):
+            chosen.append(c)
+    if not chosen or count(chosen) >= sum(len(p["lines"][i]) for i in items):
+        return None
+    shared = {**p, "lines": dict(p["lines"])}
+    shared.pop("_planned", None)
+    for item in items:
+        shared["lines"][item] = []
+        for group in own_lines(item, chosen):
+            ln = factory.Line(item, False, True, demand=sum(d for *_, d in group))
+            for q, sides, _ in group:
+                for s in sides:
+                    q.feeds[s] = ln
+            shared["lines"][item].append(ln)
+    for (a, b), g in chosen:
+        da, db = sum(q.demand[a] for q in g), sum(q.demand[b] for q in g)
+        ln = factory.Line(f"{a}+{b}", False, True, demand=da + db, lanes={"left": (a, da), "right": (b, db)})
+        for q in g:
+            q.feeds = {"left": ln, "right": ln}
+        shared["lines"].setdefault(ln.name, []).append(ln)
+    restore(shared)  # its ports' lines as planned here
+    restore(p)
+    return shared
 
 
 def lower_bound(p) -> dict:
@@ -172,20 +249,24 @@ def lower_bound(p) -> dict:
     tallest = [r.box[3] - r.box[1] + 1 for r in rows]
     supplied = any(ln.supplied for ln, _ in demands)
     best = None
-    for shelves in sorted({tuple(map(tuple, shelve(p, wide))) for wide in widths(rows)}):
-        rows_wide = [sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for shelf in shelves]
-        rows_tall = sum(max(tallest[k] for k in shelf) for shelf in shelves)
-        # The input row and channel 0 hold the supplied lines' first tiles; above the last
-        # shelf, the product leaves from the top channel's north row.
-        tall = rows_tall + MIN_CHANNEL * len(shelves) + (1 + MIN_CHANNEL if supplied else 0)
-        for bus_far in (False, True):
-            raw, running, *_ = _bus(p, shelves, bus_far)
-            for west in (False, True):
-                _, x0s, _ = _columns(p, shelves, running, len(raw), west)
-                wide = max(x + w for x, w in zip(x0s, rows_wide)) - (0 if raw else min(x0s))
-                if best is None or wide * tall < best["shelves"]:
-                    best = {"shelves": wide * tall, "wide": wide, "tall": tall, "rows_wide": max(rows_wide),
-                            "rows_tall": rows_tall}
+    # With two supplied items on one line's lanes (build's last pass, _shared) the bus may be
+    # narrower: the least of both.
+    for lines in filter(None, (p, _shared(p))):
+        restore(lines)
+        for shelves in sorted({tuple(map(tuple, shelve(p, wide))) for wide in widths(rows)}):
+            rows_wide = [sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for shelf in shelves]
+            rows_tall = sum(max(tallest[k] for k in shelf) for shelf in shelves)
+            # The input row and channel 0 hold the supplied lines' first tiles; above the last
+            # shelf, the product leaves from the top channel's north row.
+            tall = rows_tall + MIN_CHANNEL * len(shelves) + (1 + MIN_CHANNEL if supplied else 0)
+            for bus_far in (False, True):
+                raw, running, *_ = _bus(lines, shelves, bus_far)
+                for west in (False, True):
+                    _, x0s, _ = _columns(lines, shelves, running, len(raw), west)
+                    wide = max(x + w for x, w in zip(x0s, rows_wide)) - (0 if raw else min(x0s))
+                    if best is None or wide * tall < best["shelves"]:
+                        best = {"shelves": wide * tall, "wide": wide, "tall": tall, "rows_wide": max(rows_wide),
+                                "rows_tall": rows_tall}
     for q, f in feeds:
         q.feeds = f
     for ln, d in demands:
@@ -424,7 +505,15 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False, close=Fal
     for i, ln in enumerate(raw):
         c = 2 * i
         shelves_used = tapped(ln)
-        if ln.supplied:
+        if ln.lanes:  # its first belt fed from both sides, the left item from the west (NOTES.md);
+            y0 = 0 if canvas.free(c - 1, 0) else 1  # a row further south beside another such line's
+            events = {y0}
+            canvas.put(belt, c, y0, "input", direction=N)
+            for dx, side in ((-1, "left"), (1, "right")):
+                item, ident = ln.lanes[side][0], f"in {ln.lanes[side][0]} {i}"
+                canvas.put(belt, c + dx, y0, "input", direction=E if dx < 0 else W, id=ident)
+                inputs.append((ident, item))
+        elif ln.supplied:
             events = {0}
             ident = f"in {ln.name} {i}"
             canvas.put(belt, c, 0, "input", direction=N, id=ident)
@@ -744,7 +833,8 @@ class _BusLine:
 def _description(p, raw, outlets) -> str:
     """raw: the bus's lines, west to east."""
     lines = [ln for named in p["lines"].values() for ln in named]
-    supplied = [f"{ln.name} {ln.demand:.3g}/s" for ln in raw]
+    supplied = [", ".join(f"{i} {d:.3g}/s" for i, d in ln.lanes.values()) if ln.lanes else
+                f"{ln.name} {ln.demand:.3g}/s" for ln in raw]
     piped = [f"{ln.name} {ln.demand:.3g}/s" for ln in lines if ln.fluid and ln.supplied]
     left = [ln.name for ln in lines if ln.fluid and ln.top == "surplus"]
     gates = (" Cracking takes oil only while the tank by its pump holds over %d." % factory.GATE_LEVEL

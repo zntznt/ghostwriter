@@ -122,6 +122,7 @@ class Line:
     end: int = 0  # northmost
     events: set[int] = field(default_factory=set)  # rows of its own fixed tiles
     jobs: list = field(default_factory=list)  # events in order along the bus
+    lanes: dict = field(default_factory=dict)  # compact: two supplied items on one line, lane -> (item, demand)
 
 
 @dataclass(eq=False)

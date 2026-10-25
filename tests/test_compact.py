@@ -8,10 +8,10 @@ from functools import cache
 
 from generators import factory
 from tests.test_tools import assert_powered, footprint
-from tools import compact, pipes
+from tools import compact, pipes, rates
 from tools.check import check
-from tools.route import Work, reaches
-from tools.shelves import MIN_CHANNEL, shelve, widths
+from tools.route import E, N, W, Work, reaches
+from tools.shelves import MIN_CHANNEL, restore, shelve, widths
 
 ITEMS = [{"item": "electronic-circuit", "rate": 5}, {"item": "automation-science-pack", "rate": 1}]
 # Fluid rows fed by a supplied fluid (petroleum gas: oil isn't processed here, oil=0).
@@ -28,6 +28,9 @@ FLUIDS = {"plastic-bar": {"petroleum-gas"}, "advanced-circuit": {"petroleum-gas"
 OIL_FLUIDS = {"water", "crude-oil", "heavy-oil", "light-oil", "petroleum-gas"}
 # Two ports side by side, each taking two lines: the robot frame row's corners.
 ROBOT_FRAMES = {"item": "flying-robot-frame", "rate": 0.2}
+# Two supplied items on one line's two lanes: circuit cells take copper on the left lane
+# and iron on the right, 3.75 and 2.5 a second a port, so both ports fit one yellow belt.
+LANES = {"item": "electronic-circuit", "rate": 5, "cells": 1}
 
 
 def laid_out(**params):
@@ -61,7 +64,7 @@ class Compact(unittest.TestCase):
         self.assertEqual({steps[i].generator for i in ("inserter", "transport-belt")}, {"cell"})
 
     def test_checks_clean_powered_and_nothing_overlaps(self):
-        for params in ITEMS + FLUID_ROWS + BLOCKS + OIL + SHARED:
+        for params in ITEMS + FLUID_ROWS + BLOCKS + OIL + SHARED + [LANES]:
             _, got, bp = laid_out(**params)
             self.assertEqual(check({"blueprint": bp}), [], params)
             assert_powered(self, bp, params)
@@ -79,6 +82,67 @@ class Compact(unittest.TestCase):
         tiles = Counter(t for e in bp["entities"] for t in footprint(e))
         self.assertEqual([t for t, n in tiles.items() if n > 1], [])
         self.assertEqual(area(bp), got.area)
+
+    def test_two_supplied_items_one_a_lane_ride_one_line(self):
+        # Both cells' copper (7.5 a second) and iron (5) fit one yellow belt's two lanes: one
+        # line instead of two, so one bus column and one tap a shelf instead of two.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(**LANES)
+        q = compact._shared(p)
+        restore(q)
+        raw = [ln for named in q["lines"].values() for ln in named if ln.supplied and not ln.fluid]
+        self.assertEqual([ln.lanes for ln in raw], [{"left": ("copper-plate", 7.5), "right": ("iron-plate", 5.0)}])
+        cells = [port for r in q["rows"] for port in r.ports if port.kind == "in"]
+        self.assertEqual([set(map(id, port.feeds.values())) for port in cells], [{id(raw[0])}] * 2)
+        restore(p)  # p's own lines stay as factory planned them
+        self.assertEqual(sorted(ln.name for named in p["lines"].values() for ln in named if ln.supplied),
+                         ["copper-plate", "iron-plate"])
+
+    def test_lines_share_lanes_only_where_each_item_fits_one_and_lines_get_fewer(self):
+        # At 15/s a cell port takes 5.6 copper a second: one to a lane, which would take four
+        # lines where three carry it now; on express belts the same. From ore, coal shares a
+        # line with each ore.
+        cases = [LANES, {**LANES, "rate": 15}, {**LANES, "rate": 20, "belt": "express-transport-belt"},
+                 {**LANES, "smelt": 1}, {"item": "military-science-pack", "rate": 0.5, "cells": 1}]
+        for params in cases:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                p = factory.rows_and_lines(**params)
+            q = compact._shared(p)
+            if params in cases[1:3]:
+                self.assertIsNone(q, params)
+                continue
+            self.assertIsNotNone(q, params)
+
+            def raw(x):
+                return [ln for named in x["lines"].values() for ln in named if ln.supplied and not ln.fluid]
+
+            self.assertLess(len(raw(q)), len(raw(p)), params)
+            lane = rates.lane_rate(p["belt"])
+            restore(q)
+            for r in q["rows"]:
+                for port in r.ports:
+                    for side, item in port.lanes.items() if port.kind == "in" else ():
+                        line = port.feeds[side]
+                        if line.lanes:  # a shared line feeds only ports taking its items on its lanes
+                            self.assertEqual(port.lanes, {s: i for s, (i, _) in line.lanes.items()}, params)
+                        else:
+                            self.assertEqual(line.name, item, params)
+            for line in raw(q):
+                self.assertTrue(all(d <= lane + 1e-9 for _, d in line.lanes.values()), (params, line.lanes))
+            restore(p)
+
+    def test_a_shared_line_enters_by_a_belt_onto_each_lane_and_taps_once(self):
+        # Its first belt, side-loaded from both sides (NOTES.md): copper from the west onto
+        # the left lane, iron from the east onto the right. The two inputs stay plain belts.
+        _, got, _ = laid_out(**LANES)
+        self.assertEqual([name for name, _, _ in got.bus], ["copper-plate+iron-plate"])
+        (_, column, _), = got.bus
+        at = {(int(e.tile_position[0]), int(e.tile_position[1])): e for e in got.bp.entities}
+        tile_of = {item: next(t for t, e in at.items() if e.id == ident) for ident, item in got.inputs}
+        self.assertEqual(tile_of, {"copper-plate": (column - 1, 0), "iron-plate": (column + 1, 0)})
+        self.assertEqual([at[(column + dx, 0)].direction for dx in (-1, 0, 1)], [E, N, W])
 
     def test_merges_and_splits_keep_east_of_the_bus(self):
         # A comb laid west into the bus's columns boxed in its own branches, and the bus
@@ -98,7 +162,7 @@ class Compact(unittest.TestCase):
         # Followed belt by belt from each input and each row's product: a port is reached
         # by every item it takes, and by no item it doesn't. A row's product belt that also
         # carries leftovers (plastic and coal) passes a filter splitter that keeps the coal.
-        for params in ITEMS + FLUID_ROWS + BLOCKS + SHARED + [ROBOT_FRAMES]:
+        for params in ITEMS + FLUID_ROWS + BLOCKS + SHARED + [ROBOT_FRAMES, LANES]:
             _, got, bp = laid_out(**params)
             tile_of = {e.id: (int(e.tile_position[0]), int(e.tile_position[1])) for e in got.bp.entities if e.id}
             sources = [(tile_of[ident], item) for ident, item in got.inputs]
@@ -261,8 +325,13 @@ class Compact(unittest.TestCase):
     def test_the_last_trim_takes_channels_thinner_with_taps_closer_together(self):
         # Circuits at 5/s: iron and copper tapped into channel 0, each with a comb. Closer,
         # copper's tap sits two rows south of iron's trunk, its branches running beside it:
-        # the channel is a row thinner (600 tiles with taps three rows apart).
-        _, got, _ = laid_out(**ITEMS[0], cells=1)
+        # the channel is a row thinner (600 tiles with taps three rows apart). Each on a line
+        # of its own here: on one line's two lanes they take one tap (486 tiles, LANES).
+        from unittest import mock
+
+        with mock.patch.object(compact, "_shared", lambda p: None), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            got = compact.build(factory.rows_and_lines(**LANES))
         self.assertEqual(got.area, 580)
 
     def test_a_bound_from_an_earlier_layout_loses_no_smaller_one(self):
@@ -294,7 +363,7 @@ class Compact(unittest.TestCase):
     def test_no_layout_is_smaller_than_its_lower_bound(self):
         # lower_bound: the rows' own tiles bound any layout of them at all, the shelves' any
         # layout of them this search can make; neither is ever above the area laid out.
-        for params in ITEMS + FLUID_ROWS + BLOCKS + OIL:
+        for params in ITEMS + FLUID_ROWS + BLOCKS + OIL + [LANES]:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 bound = compact.lower_bound(factory.rows_and_lines(**params))
