@@ -1,5 +1,6 @@
 """The compact factory layout (tools/compact.py): rows on shelves, belts routed between them."""
 
+import re
 import unittest
 import warnings
 from collections import Counter
@@ -282,6 +283,56 @@ class Compact(unittest.TestCase):
             except compact.CompactError:
                 pass
         self.assertLess(time.monotonic() - t, 3 + 2)
+
+    def test_no_layout_is_smaller_than_its_lower_bound(self):
+        # lower_bound: the rows' own tiles bound any layout of them at all, the shelves' any
+        # layout of them this search can make; neither is ever above the area laid out.
+        for params in ITEMS + FLUID_ROWS + BLOCKS + OIL:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                bound = compact.lower_bound(factory.rows_and_lines(**params))
+            _, got, bp = laid_out(**params)
+            self.assertEqual(bound["shelves"], bound["wide"] * bound["tall"], params)
+            self.assertLessEqual(bound["rows"], bound["shelves"], params)
+            self.assertLessEqual(bound["shelves"], got.area, params)
+            self.assertEqual(got.area, area(bp), params)
+
+    def test_the_shelf_bound_is_met_where_nothing_routes_past_the_least_channels(self):
+        # Iron gears at 1/s: one row on one shelf, its channels at their least; the bound
+        # is the box laid out, so no bound on shelves can be higher.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="iron-gear-wheel", rate=1)
+            bound = compact.lower_bound(p)
+            got = compact.build(p)
+        self.assertEqual(bound["shelves"], got.area)
+
+    def test_lower_bound_leaves_the_rows_lines_as_laid_out(self):
+        p, _, _ = laid_out(**ITEMS[0])
+        before = [(id(q), {lane: id(ln) for lane, ln in q.feeds.items()}) for r in p["rows"] for q in r.ports]
+        compact.lower_bound(p)
+        self.assertEqual([(id(q), {lane: id(ln) for lane, ln in q.feeds.items()}) for r in p["rows"] for q in r.ports],
+                         before)
+
+    def test_a_compact_factory_says_how_close_to_its_lower_bound(self):
+        import contextlib
+        import io
+
+        from tools.density import density
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            bp = factory.build(**ITEMS[1], budget=37)  # a budget no other test asks for
+        line = next(ln for ln in err.getvalue().splitlines() if ln.startswith("factory: compact"))
+        got = [int(n.replace(",", "")) for n in re.findall(r"\d[\d,]*", line)]
+        tiles, least, wide, tall, rows_wide, rows_tall, bus, channels, gap, own = got
+        self.assertRegex(line, r"^factory: compact, [\d,]+ tiles; at least [\d,]+ on shelves \(\d+ by \d+: rows \d+ by "
+                               r"\d+, bus \d+, channels \d+\), within \d+%; the rows' own tiles [\d,]+$")
+        self.assertEqual(tiles, density(bp.to_dict())[0]["area"])
+        self.assertEqual((least, rows_wide + bus, rows_tall + channels), (wide * tall, wide, tall))
+        self.assertEqual(gap, round(100 * (tiles / least - 1)))
+        self.assertLessEqual(own, least)
 
 
 

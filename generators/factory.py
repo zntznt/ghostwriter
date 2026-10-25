@@ -527,7 +527,7 @@ def _compact(layout, params, budget=None, say=False, cells=1):
         # first search has the whole of compact.STEPS, each after what's left but at least a
         # quarter of them, so none goes without; seconds (budget) the same, as a safety. The
         # smallest is kept; a tie keeps the researched rows, then the rows as solved.
-        start, spent, laid, errors, seen = time.monotonic(), 0, [], [], []
+        start, spent, laid, errors, seen, bounds = time.monotonic(), 0, [], [], [], []
         asked = params.get("research", "")
         for research in dict.fromkeys((asked, "")):
             for fused in (2, 1, 0) if cells else (0,):
@@ -541,6 +541,7 @@ def _compact(layout, params, budget=None, say=False, cells=1):
                 seen.append(rows)
                 work = Work(steps, seconds=left)
                 try:
+                    bounds.append(compact.lower_bound(p))
                     beat = min((got.area for _, got, _ in laid), default=math.inf)
                     laid.append((p, compact.build(p, work, beat), (research != asked, fused)))
                 except compact.CompactError as e:
@@ -552,6 +553,8 @@ def _compact(layout, params, budget=None, say=False, cells=1):
             from tools.density import density
 
             _COMPACT[key] = min(laid, key=lambda got: (got[1].area, got[2]))[:2]
+            # No layout of any of the rows tried is under the least of their bounds.
+            _COMPACT[key][1].bound = {**min(bounds, key=lambda b: b["shelves"]), "rows": min(b["rows"] for b in bounds)}
             bus = density(_build(plan(**params))[0].to_dict())[0]["area"]
             if bus <= _COMPACT[key][1].area:
                 _COMPACT[key] = f"the bus layout is smaller ({bus:,} tiles, compact {_COMPACT[key][1].area:,})"
@@ -560,6 +563,12 @@ def _compact(layout, params, budget=None, say=False, cells=1):
         if say:
             print(f"factory: laid out on the bus, not compact: {got}", file=sys.stderr)
         return None
+    if say:
+        area, b = got[1].area, got[1].bound
+        print(f"factory: compact, {area:,} tiles; at least {b['shelves']:,} on shelves ({b['wide']} by {b['tall']}: "
+              f"rows {b['rows_wide']} by {b['rows_tall']}, bus {b['wide'] - b['rows_wide']}, channels "
+              f"{b['tall'] - b['rows_tall']}), within {area / b['shelves'] - 1:.0%}; the rows' own tiles {b['rows']:,}",
+              file=sys.stderr)
     return got
 
 
