@@ -1,7 +1,7 @@
 # Build the library browser and publish it to GitHub Pages.
-# Every build first runs the whole test suite, including in-game validation
-# of library/ in a Factorio headless server, so only passing strings are
-# published. Pull requests build and test; only main deploys.
+# Every build first runs the whole test suite, split over 4 runners at once,
+# including in-game validation of library/ in a Factorio headless server, so
+# only passing strings are published. Pull requests build and test; only main deploys.
 name: Library site
 
 on:
@@ -19,10 +19,16 @@ env:
   GHOSTWRITER_REQUIRE_FACTORIO: "1"  # validator tests fail rather than skip
 
 jobs:
-  build:
+  # The suite in 4 shards on separate runners, each test in exactly one
+  # (tests/shard.py, balanced on recorded times). Each shard starts its own server.
+  test:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v7
 
@@ -44,8 +50,23 @@ jobs:
         if: steps.factorio.outputs.cache-hit != 'true'
         run: python -m validator.fetch "$FACTORIO_VERSION"
 
-      - name: Test, including in-game validation of library/
-        run: python -m unittest discover -v tests
+      - name: Test shard ${{ matrix.shard }} of 4, including in-game validation of library/
+        run: python -m tests.shard ${{ matrix.shard }} 4
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
 
       - name: Build site
         run: python -m tools.site --out _site/index.html

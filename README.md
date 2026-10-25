@@ -42,7 +42,8 @@ https://zntznt.com/ghostwriter/ on every push to `main`. The account's Pages
 custom domain is `zntznt.com`, so zntznt.github.io/ghostwriter/ redirects there. Pull requests
 run the same build without deploying. Each build runs the full test suite,
 including in-game validation of `library/` in a Factorio headless server
-(cached between runs). A failing blueprint blocks the deploy, so only passing
+(cached between runs), as 4 shards on separate runners at once
+(`python -m tests.shard INDEX 4`; together they're every test, each once). A failing blueprint blocks the deploy, so only passing
 strings are published.
 
 One-time setup: **Settings → Pages → Build and deployment → Source: GitHub
