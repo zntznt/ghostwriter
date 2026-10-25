@@ -1138,3 +1138,158 @@ fast, then the bus).
   (`raw=` or a faster belt gets round it). That's the row generator's, not the layout's.
 - **A turn for a pair in the middle of a row.** Only a corner port turns in; no row
   measured has two two-line ports side by side anywhere else.
+
+## How close to optimal (built)
+
+Until now a layout could be "smaller than before", never "within X% of the best
+possible". `factory` now says, with every compact layout, how far it is from a proven
+lower bound (`compact.lower_bound`):
+
+```
+factory: compact, 600 tiles; at least 456 on shelves (19 by 24: rows 13 by 19, bus 6, channels 5), within 32%; the rows' own tiles 220
+```
+
+### Two bounds, each for the model it holds in
+
+- **The rows' own tiles: any layout of these rows at all.** A row's entities take their
+  own tiles and nothing may overlap them, so no box is smaller than the rows' tiles
+  added up: the area bound of rectangle packing (the continuous bound, L0 in Martello,
+  Monaci and Vigo, "An exact approach to the strip-packing problem", INFORMS Journal on
+  Computing, 2003). The box also holds the widest and the tallest row, so it's at least
+  their product; the bound is the larger. It holds whatever the belts, pipes and
+  placement (rows as they stand, unrotated), and it's weak: 10 to 48% of the box.
+- **On shelves: any layout this search can make of these rows.** For each way the search
+  shelves them (`shelve` at each of `widths`), with or without far lines on the bus, and
+  each shelf as far west as the box needs or the bus lets it, the box is at least:
+  - as wide as each shelf's rows and gaps east of the bus lines still running beside it
+    and their yard (`_bus`, `_columns`, the rules `_attempt` lays out by; a line on the
+    bus puts column 0 in the box), and
+  - as tall as the input row, every shelf's tallest row and every channel at
+    `MIN_CHANNEL` rows: the search never makes a channel thinner, the supplied lines
+    enter at row 0, and the product leaves from the top channel's north row.
+
+  The least of those boxes is the bound. It's a bound of the model, not of every
+  layout: one without shelves, or with thinner channels, could be smaller.
+- **Over every set of rows tried.** `factory` lays out several sets of rows (cells or
+  not, sized for research or not), and reports the least of each bound over all of
+  them, so it holds whichever it keeps.
+
+### Measured
+
+The 34 requests without research. Every blueprint is byte-identical to the one before
+the bound (the 34 at research 0 and 7, and the 16 survey requests that lay out); the
+bound is never above the area.
+
+| Request | Laid out | On shelves | Gap | Box (the bound's) | Rows' own tiles |
+|---|---|---|---|---|---|
+| iron-gear-wheel 1/s | 88 | 88 | 0% | 11 by 8 (11 by 8) | 21 |
+| sulfuric-acid 10/s, oil=1 | 792 | 792 | 0% | 12 by 66 (12 by 66) | 201 |
+| sulfuric-acid 10/s | 228 | 209 | 9% | 12 by 19 (11 by 19) | 63 |
+| plastic-bar 5/s, oil=1 | 1,078 | 968 | 11% | 22 by 49 (22 by 44) | 362 |
+| lubricant 10/s, oil=1 | 700 | 630 | 11% | 20 by 35 (18 by 35) | 271 |
+| electronic-circuit 20/s, express belts | 1,640 | 1,435 | 14% | 20 by 82 (35 by 41) | 730 |
+| battery 1/s, oil=1 | 1,566 | 1,363 | 15% | 29 by 54 (29 by 47) | 416 |
+| logistic-science-pack 0.5/s, fast belts, assembling machine 3 | 704 | 600 | 17% | 16 by 44 (15 by 40) | 184 |
+| automation-science-pack 1/s | 450 | 374 | 20% | 18 by 25 (17 by 22) | 156 |
+| electronic-circuit 10/s, fast belts | 1,000 | 836 | 20% | 20 by 50 (19 by 44) | 368 |
+| logistic-science-pack 1/s | 1,062 | 867 | 22% | 18 by 59 (17 by 51) | 321 |
+| sulfur 5/s | 234 | 192 | 22% | 18 by 13 (16 by 12) | 112 |
+| electric-engine-unit 0.5/s, oil=1 | 2,231 | 1,804 | 24% | 23 by 97 (22 by 82) | 590 |
+| engine-unit 1/s | 860 | 684 | 26% | 20 by 43 (19 by 36) | 339 |
+| electric-engine-unit 0.5/s | 1,540 | 1,210 | 27% | 22 by 70 (22 by 55) | 431 |
+| electronic-circuit 15/s | 1,710 | 1,332 | 28% | 38 by 45 (37 by 36) | 522 |
+| lubricant 10/s | 99 | 77 | 29% | 9 by 11 (7 by 11) | 42 |
+| electronic-circuit 5/s, smelt=1 | 1,280 | 988 | 30% | 20 by 64 (19 by 52) | 405 |
+| electronic-circuit 5/s | 600 | 456 | 32% | 20 by 30 (19 by 24) | 220 |
+| electronic-circuit 5/s, assembling machine 3 | 600 | 456 | 32% | 20 by 30 (19 by 24) | 168 |
+| electronic-circuit 2/s, assembling machine 1 | 475 | 361 | 32% | 19 by 25 (19 by 19) | 134 |
+| battery 2/s | 1,073 | 814 | 32% | 29 by 37 (22 by 37) | 306 |
+| military-science-pack 0.5/s | 1,196 | 875 | 37% | 26 by 46 (25 by 35) | 231 |
+| advanced-circuit 1/s, oil=1 | 2,116 | 1,512 | 40% | 23 by 92 (21 by 72) | 545 |
+| inserter 1/s | 576 | 399 | 44% | 18 by 32 (21 by 19) | 121 |
+| processing-unit 0.5/s, oil=1 | 5,382 | 3,720 | 45% | 26 by 207 (24 by 155) | 1,182 |
+| automation-science-pack 1/s, smelt=1 | 900 | 608 | 48% | 20 by 45 (19 by 32) | 208 |
+| advanced-circuit 1/s | 1,242 | 840 | 48% | 23 by 54 (21 by 40) | 349 |
+| processing-unit 0.5/s | 4,250 | 2,829 | 50% | 25 by 170 (23 by 123) | 965 |
+| plastic-bar 5/s | 272 | 180 | 51% | 16 by 17 (15 by 12) | 77 |
+| chemical-science-pack 0.5/s, oil=1 | 4,700 | 2,737 | 72% | 50 by 94 (23 by 119) | 925 |
+| production-science-pack 0.2/s | 2,852 | 1,620 | 76% | 46 by 62 (27 by 60) | 417 |
+| chemical-science-pack 0.5/s | 3,652 | 2,001 | 83% | 44 by 83 (23 by 87) | 729 |
+| flying-robot-frame 0.2/s, oil=1 | 4,420 | 2,323 | 90% | 52 by 85 (23 by 101) | 639 |
+
+- **The median gap is 29%,** 0 to 90%. At research 7 the median is the same, 0 to 86%,
+  and four move by more than 10 points (circuits at 15/s 28 to 43%, inserters 44 to 16%,
+  processing units 50 to 62%, production science 76 to 46%). The survey's 16 run from
+  12% (rocket fuel from crude oil) to 162% (utility science from crude oil), median 44%.
+- **Where the space goes.**
+  - **Most: channel rows.** Most are within two columns of the bound's width and 3 to
+    20 rows taller: channels past their least.
+  - **The biggest: width.** The bound of chemical science, production science, robot
+    frames and utility science comes from the narrowest shelving (every shelf one row
+    wide, 15 columns of rows), and the layout kept is a wider one (5 shelves, 19 to 38
+    columns wider): most of their gap is between the two shelvings.
+  - **The rows themselves** are 10 to 48% of the box; everything else is connection.
+
+### Channel density: measured, not a bound here
+
+In VLSI channel routing a channel needs at least its density in tracks: the most nets
+that must cross one column boundary, and the left-edge algorithm meets it when no net
+must stay above another (Hashimoto and Stevens, "Wire routing by optimizing channel
+assignment within large apertures", DAC 1971). Here a net is an item between its
+terminals in a channel (its ports on the shelf above, its makers' outputs on the shelf
+below, its bus column), and with one tier of undergrounds a channel row carries at
+most two nets across a column, one on the surface and one under. So a channel would
+need half its density in rows, if every run stayed in its channel.
+
+- **It adds nothing to the bound.** Over the 313 channels of all the requests the most
+  is 5, and half of it rounded up passes `MIN_CHANNEL` in one channel. It isn't valid
+  for these layouts either: the router may take a run out of its channel through a
+  shelf's gaps.
+- **What it shows.** Channels take far more rows than their density, about two past
+  their least per net crossing: 0.8 rows on average at density 0, 2.1 at 1, 4.4 at 2,
+  4.0 at 3, 7.0 at 4 and 10 at 5 (one channel). Left-edge would need half a row per net. The rows go to the
+  pieces (a tap's splitter and branch, a comb's splitters, an adapter's side feeds),
+  not to runs crossing: a channel packs tighter only with smaller pieces, not a better
+  router.
+
+### Calibration: the exact optimum on shelves
+
+How tight is the bound? An exact search on shelves for the smallest requests: every
+shelving the search tries, the bus either way, each shelf placed either way, and every
+channel height, branch and bound (no box is smaller than the shelving's width by its
+exact height, so a combination that can't beat the best so far isn't laid out). Exact
+up to the router: a combination PathFinder doesn't route in `NEGOTIATION` steps counts
+as not routing. On the rows the search kept:
+
+| Request | Search | Exact on shelves | Bound | Layouts tried | Seconds |
+|---|---|---|---|---|---|
+| iron-gear-wheel 1/s | 88 | 88 | 88 | 0 | 0 |
+| sulfuric-acid 10/s | 228 | 228 | 209 | 16 | 0 |
+| plastic-bar 5/s | 272 | 272 | 180 | 112 | 1 |
+| automation-science-pack 1/s | 450 | 450 | 374 | 140 | 2 |
+| inserter 1/s | 576 | 576 | 425 (399 over every set of rows) | 660 | 4 |
+| electronic-circuit 5/s | 600 | 600 | 456 | 144 | 2 |
+| engine-unit 1/s | 860 | 860 | 684 | 1,570 | 14 |
+| logistic-science-pack 1/s | 1,062 | 1,062 | 867 | 8,878 | 47 |
+| battery 2/s | 1,073 | **1,012** | 814 | 1,557 | 10 |
+
+- **The search is the exact optimum on shelves for 8 of 9:** their gap to the bound is
+  the bound's slack (channels need more than their least), not the search's.
+- **Battery at 2/s is 6% off.** Channel heights 2, 9, 4 and 2 on one shelving lay out
+  in 1,012 tiles; the search grows every channel together, then thins one at a time,
+  and never reaches them.
+
+### Negative results and not built
+
+- **Not built: a search held to the exact optimum.** The exact channel-height search is
+  cheap on these (up to 47 s) and found battery 6% smaller; it changes layouts, so it
+  isn't in this step.
+- **Not built: pruning with the new bound.** `least_area`, which the search prunes
+  with, leaves out the bus and the input row. A tighter bound skips more candidates,
+  which changes what each step budget reaches, so the layouts would change.
+- **Not built: a tighter bound on shelves.** A channel's least rows from the pieces it
+  must hold (an adapter row under a shelf's ports, a tap's branch, a comb) would close
+  most of the slack the calibration shows; it needs the pieces' own geometry.
+- **Not built: a tighter bound for any layout.** Routing lower bounds (cut capacity,
+  Steiner trees, multicommodity flow) would add the connections to the rows' own tiles;
+  the rows alone are 10 to 48% of the box.
