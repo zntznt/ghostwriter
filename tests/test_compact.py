@@ -10,6 +10,7 @@ from tests.test_tools import assert_powered, footprint
 from tools import compact, pipes
 from tools.check import check
 from tools.route import Work, reaches
+from tools.shelves import MIN_CHANNEL, shelve, widths
 
 ITEMS = [{"item": "electronic-circuit", "rate": 5}, {"item": "automation-science-pack", "rate": 1}]
 # Fluid rows fed by a supplied fluid (petroleum gas: oil isn't processed here, oil=0).
@@ -24,6 +25,8 @@ SHARED = [{"item": "advanced-circuit", "rate": 1, "cells": 2}, {"item": "logisti
 FLUIDS = {"plastic-bar": {"petroleum-gas"}, "advanced-circuit": {"petroleum-gas"},
           "sulfuric-acid": {"water", "petroleum-gas", "sulfuric-acid"}, "lubricant": {"heavy-oil", "lubricant"}}
 OIL_FLUIDS = {"water", "crude-oil", "heavy-oil", "light-oil", "petroleum-gas"}
+# Two ports side by side, each taking two lines: the robot frame row's corners.
+ROBOT_FRAMES = {"item": "flying-robot-frame", "rate": 0.2}
 
 
 def laid_out(**params):
@@ -65,11 +68,36 @@ class Compact(unittest.TestCase):
             self.assertEqual([t for t, n in tiles.items() if n > 1], [], params)
             self.assertEqual(area(bp), got.area, params)
 
+    def test_two_ports_side_by_side_taking_two_lines_each_lay_out(self):
+        # A row on both sides of its machines (flying robot frames' four ingredients) has
+        # two such ports at each corner; they fell back to the bus, as did everything
+        # made from them (utility science, construction robots).
+        _, got, bp = laid_out(**ROBOT_FRAMES)
+        self.assertEqual(check({"blueprint": bp}), [])
+        assert_powered(self, bp, ROBOT_FRAMES)
+        tiles = Counter(t for e in bp["entities"] for t in footprint(e))
+        self.assertEqual([t for t, n in tiles.items() if n > 1], [])
+        self.assertEqual(area(bp), got.area)
+
+    def test_merges_and_splits_keep_east_of_the_bus(self):
+        # A comb laid west into the bus's columns boxed in its own branches, and the bus
+        # couldn't run there either: utility science's plastic, whose comb must instead lead
+        # north past the taller rows beside it (belts.split) and go east.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="utility-science-pack", rate=0.2, cells=2)
+            compact._gated(p)
+            shelves = next(s for s in sorted({tuple(map(tuple, shelve(p, w))) for w in widths(p["rows"])})
+                           if len(s) == 7)
+            got = compact._attempt(p, shelves, [MIN_CHANNEL + 9] * (len(shelves) + 1), False,
+                                   Work(compact.NEGOTIATION))  # Blocked, before
+        self.assertEqual(check({"blueprint": got.bp.to_dict()["blueprint"]}), [])
+
     def test_every_port_gets_what_it_takes_and_nothing_else(self):
         # Followed belt by belt from each input and each row's product: a port is reached
         # by every item it takes, and by no item it doesn't. A row's product belt that also
         # carries leftovers (plastic and coal) passes a filter splitter that keeps the coal.
-        for params in ITEMS + FLUID_ROWS + BLOCKS + SHARED:
+        for params in ITEMS + FLUID_ROWS + BLOCKS + SHARED + [ROBOT_FRAMES]:
             _, got, bp = laid_out(**params)
             tile_of = {e.id: (int(e.tile_position[0]), int(e.tile_position[1])) for e in got.bp.entities if e.id}
             sources = [(tile_of[ident], item) for ident, item in got.inputs]

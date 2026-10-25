@@ -10,7 +10,9 @@ input has nothing pointing into it.
 
 from dataclasses import dataclass, field
 
-from tools.route import E, N, W
+from tools.route import E, N, S, W
+
+LEAD = 24  # tiles a split's lead may run north before its comb: past the tallest row (19) and a channel
 
 
 class Blocked(Exception):
@@ -38,14 +40,33 @@ def put_across(canvas, splitter, x, y, owner, d):
     canvas.put(splitter, x, y, owner, direction=d)
 
 
-def adapter(canvas, free, xi, yp, south, feeds, belt, claimed, owner):
+def adapter(canvas, free, xi, yp, south, feeds, belt, claimed, owner, turn=None):
     """Belts under the port at (xi, yp), up to 4 and not south of south, and where its
     lines are to arrive: one line onto both lanes from below; two onto the last belt's
     sides, the left lane's from the west and the right's from the east; one onto one
     lane from that side, with a stub belt pointing in from behind so it's a side-load,
-    not a turn (NOTES.md). Returns [(line, (x, y, facing, owner))]."""
+    not a turn (NOTES.md). turn (W or E), for two lines: first try turning in from that
+    side, from a belt there fed from both sides, which keeps its lanes through the turn
+    (a port beside another taking two lines, whose belt below takes this one's sides).
+    Returns [(line, (x, y, facing, owner))]."""
     fed = list({id(ln): ln for ln in feeds.values()}.values())
     one_lane = len(feeds) == 1
+    if turn is not None and len(fed) > 1:
+        dx = -1 if turn == W else 1
+        bend, tee, above, below = (xi, yp + 1), (xi + dx, yp + 1), (xi + dx, yp), (xi + dx, yp + 2)
+        if yp + 2 <= south and all(free(*t) for t in (bend, tee, above, below)):
+            heading = E if turn == W else W
+            canvas.put(belt, *bend, owner, direction=N)
+            canvas.put(belt, *tee, owner, direction=heading)
+            # Side-loaded onto the lane on its side: heading east, the north one is the left.
+            sides = {"left": (above, S), "right": (below, N)} if heading == E else \
+                {"left": (below, N), "right": (above, S)}
+            got = []
+            for lane in ("left", "right"):
+                (gx, gy), facing = sides[lane]
+                claimed[(gx, gy)] = f"{owner} {lane}"
+                got.append((feeds[lane], (gx, gy, facing, f"{owner} {lane}")))
+            return got
     for e in range(4):
         ya = yp + 1 + e
         tiles = [(xi, yy) for yy in range(yp + 1, ya + 1)]
@@ -185,7 +206,9 @@ def lay_comb(canvas, got, belt, splitter, conns, owner):
 
 def split(canvas, free, trunk, targets, belt, splitter, conns, name):
     """One line, heading north from trunk, to its ports: straight to a single one,
-    else up a few tiles and along a comb toward them (east or west)."""
+    else up a few tiles and along a comb toward them (east or west). A short row's comb
+    leads up past the taller rows beside it on its shelf (utility science's plastic,
+    beside 19-tile circuit cells), as far as LEAD."""
     if not targets:
         return
     if len(targets) == 1:
@@ -194,7 +217,7 @@ def split(canvas, free, trunk, targets, belt, splitter, conns, name):
         return
     x, y = trunk
     mean = sum(t[0] for t in targets) / len(targets)
-    for lead in range(6):
+    for lead in range(LEAD):
         r = y - lead
         lead_in = [(x, yy) for yy in range(y, r - 1, -1)]
         if not all(free(*tt) for tt in lead_in):

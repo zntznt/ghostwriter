@@ -54,7 +54,7 @@ from generators import factory
 from tools import belts, pipes
 from tools.belts import Blocked, Conn
 from tools.pipe_route import ALL, Fluids, route_line, sides
-from tools.route import N, S, W, Work, route_all, tunnels_of
+from tools.route import E, N, S, W, Work, route_all, tunnels_of
 from tools.shelves import GAP, MIN_CHANNEL, far, least_area, localize, place, restore, shelve, width, widths
 
 MAX_EXTRA = 14  # rows added to every channel before a width is given up
@@ -305,15 +305,27 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
         north = shelf_box[s][0] + 1 if s < len(shelves) else y_out
         return list(range(south, north - 1, -1))
 
+    # Routes, merges and splits keep east of the lines still running at each row: a band is a
+    # channel and the shelf above it.
+    band = {0: 0}
+    for s in range(len(shelves) + 1):
+        band.update({y: s for y in channel_rows(s)})
+        if s < len(shelves):
+            band.update({y: s for y in range(shelf_box[s][1], shelf_box[s][0] + 1)})
+
     # Adapters: under each port, a belt fed from below (one line) or from both sides (two).
+    # Two ports side by side taking two lines each (a row on both sides of its machines)
+    # can't both: the outer one turns in from beside the row, placed first.
     goals = {}  # id(line) -> [(x, y, facing, owner)]
     for s, shelf in enumerate(shelves):
         ports = [(k, q) for k in shelf for q in rows[k].ports if q.kind == "in"]
-        ports.sort(key=lambda kq: (len(set(map(id, kq[1].feeds.values()))) > 1, at(*kq)[0]))
+        turns = {id(q): _turn(rows[k], q) for k, q in ports}
+        ports.sort(key=lambda kq: (turns[id(kq[1])] is None, _lines(kq[1]) > 1, at(*kq)[0]))
         south = channel_rows(s)[0]
         for k, q in ports:
             owner = f"row {k} port {q.x}"
-            for ln, goal in belts.adapter(canvas, free, *at(k, q), south, q.feeds, belt, claimed, owner):
+            for ln, goal in belts.adapter(canvas, free, *at(k, q), south, q.feeds, belt, claimed, owner,
+                                          turn=turns[id(q)]):
                 goals.setdefault(id(ln), []).append(goal)
 
     # Made items: out of each row's top, merged into their lines, split to their users.
@@ -346,7 +358,7 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
     held = {(x, y - dy): ln_id for ln_id, hs in handles.items() for x, y in hs for dy in (0, 1)}
 
     def free_for(ln):
-        return lambda x, y: free(x, y) and held.get((x, y), id(ln)) == id(ln)
+        return lambda x, y: free(x, y) and held.get((x, y), id(ln)) == id(ln) and x >= yard[band.get(y, 0)][0]
 
     outlets = []
     bus_entry = {}  # id(line) -> its merged rows' handle, for lines made here that ride the bus
@@ -405,7 +417,8 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
             events = {ye}
         for n, s in enumerate(shelves_used):
             last = n == len(shelves_used) - 1
-            mine = [g for g in goals.get(id(ln), []) if channel_rows(s)[0] >= g[1] >= channel_rows(s)[-1]]
+            # The channel's goals, and those beside its shelf's ports (a turned adapter's).
+            mine = [g for g in goals.get(id(ln), []) if channel_rows(s)[0] >= g[1] >= channel_rows(s)[-1] - 1]
             yb = belts.tap(canvas, free, taps, channel_rows(s), c, *yard[s], last, mine, belt, splitter, conns, ln.name)
             events.add(yb if last else yb + 1)
         bus.append(_BusLine(ln.name, c, events))
@@ -413,12 +426,6 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
     for cn in conns:  # a route's first tile is its own, as its last is
         if claimed.setdefault(cn.start, cn.owner) != cn.owner:
             raise Blocked(f"{cn.owner}: starts on {claimed[cn.start]}'s tile")
-    # Routes keep east of the lines still running at each row: a band is a channel and the shelf above it.
-    band = {0: 0}
-    for s in range(len(shelves) + 1):
-        band.update({y: s for y in channel_rows(s)})
-        if s < len(shelves):
-            band.update({y: s for y in range(shelf_box[s][1], shelf_box[s][0] + 1)})
     bounds = (min(x for x, _ in yard), y_out, x_max, -1)
     fluid_inputs, fluid_outputs, fluid_ports = _pipe_fluids(p, rows, lines, where, at, canvas, claimed, yard, band,
                                                             bounds)
@@ -490,6 +497,24 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
                   ports, [(line.name, line.column, min(line.events)) for line in bus],
                   [(x0s[s], *shelf_box[s]) for s in range(len(shelves))], leftovers, fluid_inputs, fluid_ports,
                   fluid_outputs)
+
+
+def _lines(q) -> int:
+    """The lines feeding an input port."""
+    return len(set(map(id, q.feeds.values())))
+
+
+def _turn(r, q):
+    """W or E for a port taking two lines at a corner of its row, beside another that does:
+    it turns in from beside the row (belts.adapter), or None."""
+    if _lines(q) < 2:
+        return None
+    beside = {p.x for p in r.ports if p.kind == "in" and p is not q and p.y == q.y and _lines(p) > 1}
+    if q.x == r.box[0] and q.x + 1 in beside:
+        return W
+    if q.x == r.box[2] and q.x - 1 in beside:
+        return E
+    return None
 
 
 def _hemmed(r) -> bool:
