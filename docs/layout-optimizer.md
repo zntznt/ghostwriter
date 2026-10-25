@@ -927,3 +927,129 @@ same researched rows as before.
 - **Some rigs cap the reading.** A fast inserter onto a transport belt stops at 3.75/s
   at both levels, and handovers of about 5/s are the rig's cable machine (NOTES.md):
   sizing at those rates can place an inserter more than needed, never fewer.
+
+## A search bounded by steps (built)
+
+The compact search stopped on the clock: 40 s for the whole search (`budget=`) and 4 s
+for each router negotiation. The biggest requests used all of it, so the same request
+gave a different layout from run to run and from machine to machine: chemical science
+at 0.5/s was 4,224 tiles in one sweep, 4,268 in another and 4,576 when validated, and
+processing units 4,475 and 4,800. A library needs the same blueprint for the same
+request on any machine.
+
+### Where the time went
+
+Profiled on main with the default budget, this Mac, the requests that filled it (each
+search: its time, the share of it routing belts, and negotiations cut at 4 s):
+
+| Request | Rows as solved | Cells | Kept |
+|---|---|---|---|
+| electronic-circuit 15/s | 30.5 s, 90% routing, 3 cut (12.2 s): 2,847 | one-user, 0.9 s: 1,710 | 1,710 |
+| chemical-science-pack 0.5/s | 40.1 s, 85%, 3 cut: 4,224 | shared, 10 s, 2 cut: none | 4,224 |
+| processing-unit 0.5/s | 40 s, 81%, the longest that routed 3.7 s: 11,505 | shared, 10 s: 5,000 | 5,000 |
+| chemical-science-pack 0.5/s, oil=1 | 40 s, 84%, 3 cut: 6,318 | shared, 10 s, 2 cut: none | 6,318 |
+| processing-unit 0.5/s, oil=1 | 40 s, 76%: 13,728 | shared, 10.2 s: 6,734 | 6,734 |
+| production-science-pack 0.2/s | 4.1 s, 1 cut: none | shared, 34.3 s, the longest that routed 3.65 s: 3,864 | 3,864 |
+| electric-engine-unit 0.5/s, oil=1 | 18.9 s, 18%: 2,461 | one-user, 16 s, 31%: 2,231 | 2,231 |
+
+- **A negotiation that routes came close to its cut.** Processing units and
+  production science each had one route in 3.7 s against the 4 s cut: on a slower
+  machine, or a busier one, it's cut and the search lays out something else.
+- **Negotiations that never route.** Recorded round by round, they settle 1 to 7
+  shared tiles short and stay there to the 30th round, as a tie counts as progress.
+  Each ran to the cut.
+- **Building blueprints nobody kept.** Outside routing, an attempt built the whole
+  blueprint (Draftsman) to check its pipes and measure it: electric engines from crude
+  oil spent 15 of its 19 s there and in the pipe router's scan of every
+  pipe-to-ground pair.
+- **The rows as solved come first and lose.** Circuits at 15/s spent 30.5 s on 2,847
+  tiles before the cells found 1,710 in 0.9 s; processing units spent 40 s on 11,505
+  before shared cells found 5,000 in the 10 s left.
+
+### The fix
+
+- **Faster steps, the same layouts.** The router looks up the pairs on a tile's own
+  line instead of scanning them all, and takes each belt's free tiles once a
+  negotiation; the pipe router indexes its pairs too; a blueprint is built only for
+  the layout kept, its pipes checked from the layout itself. The 27 of the 34
+  requests whose search ended inside its budget lay out the same blueprint, most
+  faster (logistic science 26 to 15 s, electric engines from crude oil 44 to 25 s).
+- **Steps, not seconds.** A search spends A* steps (tiles the router expands,
+  `route.Work`): the same request takes the same steps on any machine, so it ends
+  the same way. A negotiation stops after 300,000 steps (`compact.NEGOTIATION`): the
+  most one that routed took on the 34 requests was 160,041, and the ones that never
+  route ran on to 1.5 million. The whole factory search stops after 5 million
+  (`compact.STEPS`). `budget=` stays, in seconds, as a safety only, now 300 s by
+  default: past it a search keeps the best so far, which then depends on the machine.
+- **Cells first, then only smaller.** Shared cells are laid out first, then one-user
+  cells, then the rows as solved, and each search after the first skips shelves
+  whose rows and thinnest channels already take as much room as the smallest layout
+  so far. A tie still keeps the researched rows, then the rows as solved.
+- **Every search gets a share.** The first has all of `STEPS`, each after what's
+  left but at least a quarter of it. The rows sized without research are laid out
+  the same way, so the biggest requests get the comparison too.
+
+### Results
+
+The 34-request sweep, before (main) and now, in the same week on this Mac: without
+research, 29 lay out the same blueprint and 5 smaller; at research 7, 30 the same and
+4 smaller; none larger. Build times for the rows below are each request built alone
+(before: the sweep's, which the old search's clock bounded); every request here was
+built at least twice, and without research also under `PYTHONHASHSEED` 0 and 1, and
+each gave the same blueprint every time. The 9 changed blueprints passed `gen factory
+... --validate` on 2.1.23 at their rates.
+
+| Request | Before | Now | Build before | Build now | In game, now |
+|---|---|---|---|---|---|
+| electronic-circuit 15/s | 1,710 | 1,710 | 32 s | 10 s | |
+| logistic-science-pack 1/s | 1,062 | 1,062 | 26 s | 11 s | |
+| electric-engine-unit 0.5/s | 1,540 | 1,540 | 23 s | 12 s | |
+| electric-engine-unit 0.5/s, oil=1 | 2,231 | 2,231 | 44 s | 18 s | |
+| chemical-science-pack 0.5/s | 4,268 | **3,652 (-14%)** | 59 s | 35 s | 0.6/s |
+| processing-unit 0.5/s | 5,000 | **4,250 (-15%)** | 53 s | 36 s | 0.574/s |
+| chemical-science-pack 0.5/s, oil=1 | 6,372 | **4,700 (-26%)** | 59 s | 40 s | 0.6/s |
+| processing-unit 0.5/s, oil=1 | 6,734 | **5,382 (-20%)** | 54 s | 41 s | 0.595/s |
+| production-science-pack 0.2/s | 3,864 | **2,852 (-26%)** | 42 s | 31 s | 0.214/s |
+| electronic-circuit 15/s, research 7 | 1,710 | 1,710 | 41 s | 13 s | |
+| chemical-science-pack 0.5/s, research 7 | 4,312 | **3,608 (-16%)** | 59 s | 54 s | 0.6/s |
+| processing-unit 0.5/s, research 7 | 4,500 | **4,175 (-7%)** | 42 s | 52 s | 0.57/s |
+| chemical-science-pack 0.5/s, oil=1, research 7 | 6,318 | **4,700 (-26%)** | 59 s | 62 s | 0.601/s |
+| processing-unit 0.5/s, oil=1, research 7 | 6,214 | **5,278 (-15%)** | 43 s | 61 s | 0.597/s |
+| production-science-pack 0.2/s, research 7 | 2,291 | 2,291 | 42 s | 37 s | |
+
+- **Where the space comes from.** The searches now finish what the clock cut: the
+  shared cells for chemical science from crude oil and for processing units and
+  production science, and chemical science's rows as solved (3,652 tiles, found
+  after its shared cells' 4,440).
+- **The cost.** The biggest requests without research build 24 to 41% faster; with
+  research they take longer, up to about a minute, as the rows sized without it are
+  now laid out too, each with at least a quarter of the steps (before, a search that
+  filled its budget skipped them). On CI's runners, about 1.8 times slower than this
+  Mac, that's under 2 minutes, well inside the 300 s safety.
+- **Tests.** `tests/test_compact.py` pins a search cut by steps (electric engines'
+  rows as solved stopped at 200,000 steps) to the blueprint recorded on macOS, so CI
+  checks it on Linux; a machine a thousand times slower (a faked clock) lays out the
+  same blueprint; an earlier layout's bound loses no smaller one.
+
+### Negative results (this step)
+
+- **Holding grown channels to an earlier layout.** Within a search, a channel height
+  whose rows and gaps take more room than its own best isn't tried. Held to the
+  smallest layout of the searches before as well, electric engines at 7 lost their
+  1,540 tiles: the rows sized without research route only in channels grown past
+  1,587 and cut back after. A search now skips only whole shelvings whose rows and
+  thinnest channels take as much (`tests/test_compact.py`).
+- **4 million steps.** Chemical science came out at 4,356 tiles, against 4,268 before.
+- **Counting a tie as stuck,** to stop the negotiations that never route sooner: not
+  done. One for advanced circuits from crude oil sat a tile short for 8 rounds and
+  then routed.
+
+### Not built
+
+- **Skipping the trim of a layout that can't win.** Processing units' rows as solved
+  still spend their share of steps trimming layouts larger than the shared cells'
+  (from crude oil, 14,001 tiles toward 9,984 against 5,382): bounded by steps, but a
+  sound bound on what trimming can save needs each shelf's westmost position, which
+  the search doesn't keep.
+- **Faster steps still.** Routing is now most of the time, a Python A*; requests
+  with research lay out two sets of rows, so the biggest take longer than before.
