@@ -1053,3 +1053,88 @@ each gave the same blueprint every time. The 9 changed blueprints passed `gen fa
   the search doesn't keep.
 - **Faster steps still.** Routing is now most of the time, a Python A*; requests
   with research lay out two sets of rows, so the biggest take longer than before.
+
+## Every factory compact (built)
+
+Of the 34 requests, flying robot frames from crude oil still fell back to the bus: "the
+rows don't route in any shelf width tried". To see what else would, 19 more requests a
+player might ask for were laid out (utility science, low density structures, rocket
+fuel, modules, accumulators, solar panels, construction robots, rails, drills, fast
+inserters, engines from ore, with and without `oil=1`).
+
+### The survey
+
+| Request | Before | Why |
+|---|---|---|
+| flying-robot-frame 0.2/s | bus, 5,712 | no room for an adapter |
+| flying-robot-frame 0.2/s, oil=1 | bus, 7,028 | no room for an adapter |
+| utility-science-pack 0.2/s | bus, 9,831 | no room for an adapter, then for a split |
+| utility-science-pack 0.2/s, oil=1 | bus, 11,580 | no room for an adapter |
+| construction-robot 0.2/s, oil=1 | bus, 7,364 | no room for an adapter |
+| low-density-structure 0.5/s (and oil=1), rocket-fuel 0.5/s oil=1, speed and efficiency modules 0.2/s, productivity-module 0.2/s oil=1, accumulator 0.5/s oil=1, solar-panel 0.5/s, rail 2/s, electric-mining-drill 0.5/s, fast-inserter 1/s, engine-unit 1/s smelt=1 | compact | |
+| express-transport-belt 1/s oil=1, assembling-machine-2 0.5/s | refused | a row: one machine needs more than a lane (not the layout's) |
+
+### The cause
+
+- **Two ports side by side, two lines each.** Every fallback has a robot frame row:
+  four ingredients on two belts a side, so two ports at each corner each take two
+  lines. A port's adapter is a belt below it fed from both sides, and each of the two
+  needs a tile under the other: neither fits at any channel height. Every attempt
+  failed before routing anything.
+- **A short row's split.** Utility science then still failed. Its plastic row (4
+  tiles) stands beside 19-tile circuit cells on its shelf, so the comb that splits
+  its plastic to four ports can't pass them within the 5 tiles above the row it
+  looked; the comb laid west into the bus's columns instead, where its branches were
+  boxed in and the bus couldn't run either.
+
+### The fix
+
+- **Turning in from beside the row.** The outer port of such a pair (at the row's
+  corner) is fed by a belt beside the row fed from both sides (the left lane's item
+  from the north when it heads east, from the south when it heads west), which turns
+  into the port: a turn keeps its lanes. The inner port keeps its belt below, a tile
+  deeper. Bus taps take the goals beside a shelf's ports, as well as their channel's.
+- **A longer lead, and the bus kept clear.** A split's lead runs north up to 24 tiles
+  (`belts.LEAD`, past the tallest row and a channel) before its comb, and merges and
+  splits keep east of the lines still running at each row, as routes already did.
+
+### Results
+
+All five lay out compact and pass `gen factory ... --validate` on 2.1.23 at their
+rates. Build times are each request alone on this Mac (before: the search failing
+fast, then the bus).
+
+| Request | Bus | Compact | Change | Build before | Build now | In game |
+|---|---|---|---|---|---|---|
+| flying-robot-frame 0.2/s | 5,712 | 3,157 | -45% | 12 s | 34 s | 0.219/s |
+| flying-robot-frame 0.2/s, oil=1 | 7,028 | 4,420 | -37% | 12 s | 43 s | 0.221/s |
+| construction-robot 0.2/s, oil=1 | 7,364 | 4,628 | -37% | 12 s | 42 s | 0.198/s (window 4) |
+| utility-science-pack 0.2/s | 9,831 | 6,480 | -34% | 18 s | 43 s | 0.206/s |
+| utility-science-pack 0.2/s, oil=1 | 11,580 | 8,967 | -23% | 17 s | 50 s | 0.211/s |
+
+- **The sweep.** Of the 34 requests, without research and at research 7, the other 33
+  lay out the same blueprint as before; only robot frames from crude oil change. The
+  pinned default builds and the blueprint pinned across machines are unchanged.
+- **Tests.** `tests/test_belts.py`: the turned adapter's belts and lanes, and a short
+  row's comb leading past a taller one (it fails with the old 6-tile lead).
+  `tests/test_compact.py`: robot frames lay out clean, powered and with nothing
+  overlapping, and every port of theirs is reached by every item it takes; one
+  utility science layout that routes only with merges and splits kept off the bus.
+
+### Negative results (this step)
+
+- **The turn's first try missed a lane.** Without the taps taking the goals beside a
+  shelf's ports, the east corner's steel never arrived: robot frames made 0.112/s of
+  0.2 in game. `tests/test_compact.py` now follows every port's items for robot frames
+  too.
+- **Either change alone.** With the longer lead but merges and splits free to go west,
+  utility science's plastic comb still went west first and boxed itself in; with the
+  bus kept clear but a 6-tile lead, the comb found no room at all.
+
+### Not built
+
+- **Rows a lane can't feed.** Express belts and assembling machines 2 are refused
+  before any layout: one machine needs more of an ingredient than a lane carries
+  (`raw=` or a faster belt gets round it). That's the row generator's, not the layout's.
+- **A turn for a pair in the middle of a row.** Only a corner port turns in; no row
+  measured has two two-line ports side by side anywhere else.
