@@ -31,7 +31,19 @@ class Conn:
 
 @dataclass
 class Taps:
-    rows: list = field(default_factory=list)  # branch rows of every tap and entry so far, kept apart
+    rows: list = field(default_factory=list)  # (row, bus column) of every tap's branch and entry so far
+    close: bool = False  # taps as close together as the bus lets them (clear), and combs under another's trunk
+
+    def clear(self, y, c, last):
+        """Room for a tap of the line in bus column c at row y: three rows from any other, or
+        with close: placed west to east, every other row here is a line's west of it, whose
+        branch crosses its column. South of one, it dives under it from its splitter's output
+        on; north of one, it comes up out of the tunnel and into its splitter, or turns at its
+        last use: three rows north, or two. Its own line's entry, south of it, three rows."""
+        if not self.close:
+            return all(abs(y - ty) >= 3 for ty, _ in self.rows)
+        return all(y <= ty - 3 or (ty != y and tc != c and (y > ty or y <= ty - 2 and last))
+                   for ty, tc in self.rows)
 
 
 def put_across(canvas, splitter, x, y, owner, d):
@@ -143,14 +155,14 @@ def entry(canvas, free, taps, rows_south_north, c, Y1, Y2, trunk, claimed, conns
     Returns the row."""
     owner = f"onto bus {name}"
     for ye in rows_south_north[1:]:
-        if any(abs(ye - tr) < 3 for tr in taps.rows):
+        if any(abs(ye - ty) < 3 for ty, _ in taps.rows):
             continue
         need = [(x, ye) for x in range(c, Y1 + 1)] + [(Y2, ye)]
         if all(free(*tt) for tt in need):
             break
     else:
         raise Blocked(f"{name}: no room to join the bus")
-    taps.rows.append(ye)
+    taps.rows.append((ye, c))
     canvas.put(belt, c, ye, owner, direction=N)
     for x in range(c + 1, Y1 + 1):
         canvas.put(belt, x, ye, owner, direction=W)
@@ -159,10 +171,13 @@ def entry(canvas, free, taps, rows_south_north, c, Y1, Y2, trunk, claimed, conns
     return ye
 
 
-def comb(free, start, heading, targets):
+def comb(free, start, heading, targets, beside=lambda x, y: False):
     """A trunk along start's row (entered at start moving east or west), with a
     splitter as near under each target but the last as the row allows, each
-    peeling a branch north; the trunk's end goes to the last target.
+    peeling a branch north: a belt turning north on its north output; or, under
+    another tap's trunk (beside), the branch's route starts on that output, items
+    moving on along the trunk, and runs beside it (two rows, not three). The trunk's
+    end goes to the last target.
 
     Returns (placements, reserved tiles, [(handle, heading, target)]) or None if it
     doesn't fit. Placements are (kind, x, y, direction), kind "belt" or "splitter"
@@ -178,10 +193,15 @@ def comb(free, start, heading, targets):
         for bx in range(cur, sx, s):
             place.append(("belt", bx, y, heading))
         upper = (sx - s, y - 1)
-        if not any(k == "belt" and (px, py) == upper for k, px, py, _ in place):
+        if not any((px, py) == upper for k, px, py, _ in place if k == "belt") and \
+                not any(h == upper for h, _, _ in branches):  # a branch there can't run into it
             reserve.append(upper)  # nothing may feed the splitter's other input
-        place += [("splitter", sx, y, heading), ("belt", sx + s, y - 1, N)]
-        branches.append(((sx + s, y - 2), N, target))
+        place.append(("splitter", sx, y, heading))
+        if beside(sx + s, y - 2):
+            branches.append(((sx + s, y - 1), heading, target))
+        else:
+            place.append(("belt", sx + s, y - 1, N))
+            branches.append(((sx + s, y - 2), N, target))
         cur = sx + s
     branches.append(((cur, y), heading, targets[-1]))
     tiles = [(px, py) for k, px, py, _ in place] + [(px, py - 1) for k, px, py, _ in place if k == "splitter"]
@@ -242,19 +262,20 @@ def tap(canvas, free, taps, rows_south_north, c, Y1, Y2, last, targets, belt, sp
     south. Returns the branch's row."""
     owner = f"tap {name} {c}"
     for yb in reversed(rows_south_north[1:]):
-        if any(abs(yb - tr) < 3 for tr in taps.rows):
+        if not taps.clear(yb, c, last):
             continue
         need = [(x, yb) for x in range(c + 1, Y1 + 1)] + ([(c, yb)] if last else [(c, yb + 1), (c + 1, yb + 1)])
         if not all(free(*tt) for tt in need):
             continue
         rest = lambda a, b, need=set(need): free(a, b) and (a, b) not in need  # noqa: E731
-        got = comb(rest, (Y2, yb), E, targets) if len(targets) > 1 else ([], [], [((Y2, yb), E, targets[0])])
+        trunk = lambda a, b: taps.close and str(canvas.tiles.get((a, b), "")).startswith("tap ")  # noqa: E731
+        got = comb(rest, (Y2, yb), E, targets, trunk) if len(targets) > 1 else ([], [], [((Y2, yb), E, targets[0])])
         if got is None or (len(targets) == 1 and not rest(Y2, yb)):
             continue
         break
     else:
         raise Blocked(f"{name}: no room for its tap")
-    taps.rows.append(yb)
+    taps.rows.append((yb, c))
     if last:
         canvas.put(belt, c, yb, owner, direction=E)
     else:

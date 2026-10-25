@@ -258,6 +258,13 @@ class Compact(unittest.TestCase):
                          (1914, "a6eaeb376533"))
         self.assertLess(work.spent, 360_050)
 
+    def test_the_last_trim_takes_channels_thinner_with_taps_closer_together(self):
+        # Circuits at 5/s: iron and copper tapped into channel 0, each with a comb. Closer,
+        # copper's tap sits two rows south of iron's trunk, its branches running beside it:
+        # the channel is a row thinner (600 tiles with taps three rows apart).
+        _, got, _ = laid_out(**ITEMS[0], cells=1)
+        self.assertEqual(got.area, 580)
+
     def test_a_bound_from_an_earlier_layout_loses_no_smaller_one(self):
         # beat skips only shelves whose rows and thinnest channels already take that much.
         # Held to it too, channels grown until the belts route lost electric engines' 1,540

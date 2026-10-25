@@ -135,14 +135,20 @@ def build(p, work=None, beat=math.inf) -> Result:
         raise CompactError("the rows don't route in any shelf width tried")
     got, heights, shelves, bus_far = best
     got, heights = _trimmed(p, shelves, heights, bus_far, work, got)
+    west = False
     if not work.over():
         try:
-            west = _attempt(p, shelves, heights, bus_far, work, west=True)
+            moved = _attempt(p, shelves, heights, bus_far, work, west=True)
         except Blocked:
-            return got
-        west, _ = _trimmed(p, shelves, heights, bus_far, work, west, west=True)
-        got = min(got, west, key=lambda g: g.area)
-    return got
+            moved = None
+        if moved is not None:
+            moved, moved_heights = _trimmed(p, shelves, heights, bus_far, work, moved, west=True)
+            if moved.area < got.area:
+                got, heights, west = moved, moved_heights, True
+    # Last, the kept layout's channels thinner still with taps closer together (belts.Taps
+    # close), from its heights: never larger than without them, whatever they'd do to the
+    # search before (docs/layout-optimizer.md, "Thinner channels").
+    return _trimmed(p, shelves, heights, bus_far, work, got, west, close=True)[0]
 
 
 def lower_bound(p) -> dict:
@@ -187,13 +193,13 @@ def lower_bound(p) -> dict:
     return {"rows": max(own, max(map(width, rows)) * max(tallest)), **best}
 
 
-def _trimmed(p, shelves, heights, bus_far, work, got, west=False):
+def _trimmed(p, shelves, heights, bus_far, work, got, west=False, close=False):
     """(layout, heights): each channel a row thinner at a time while it still routes."""
     for c in range(len(heights)):
         while heights[c] > MIN_CHANNEL and not work.over():
             trial = heights[:c] + [heights[c] - 1] + heights[c + 1:]
             try:
-                smaller = _attempt(p, shelves, trial, bus_far, work, west)
+                smaller = _attempt(p, shelves, trial, bus_far, work, west, close)
             except Blocked:
                 break
             heights = trial
@@ -274,9 +280,10 @@ def _refuse(p):
                 raise CompactError(f"{r.step.item}: a port off the row's south or north edge")
 
 
-def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result:
+def _attempt(p, shelves, heights, bus_far=True, work=None, west=False, close=False) -> Result:
     """One layout of these shelves and channel heights, or Blocked. west: every shelf as
-    far west as the lines running beside it let it, not only as far as the box needs."""
+    far west as the lines running beside it let it, not only as far as the box needs.
+    close: taps as close together as the bus lets them (belts.Taps)."""
     rows, belt = p["rows"], p["belt"]
     restore(p)
     underground, splitter = factory.KITS[belt]
@@ -287,7 +294,7 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
     canvas = factory.Canvas()
     claimed = {}  # goal tiles: (x, y) -> the connection allowed onto it
     conns = []
-    taps = belts.Taps()
+    taps = belts.Taps(close=close)
 
     def free(x, y):
         return canvas.free(x, y) and (x, y) not in claimed
@@ -433,6 +440,8 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
             mine = [g for g in goals.get(id(ln), []) if channel_rows(s)[0] >= g[1] >= channel_rows(s)[-1] - 1]
             yb = belts.tap(canvas, free, taps, channel_rows(s), c, *yard[s], last, mine, belt, splitter, conns, ln.name)
             events.add(yb if last else yb + 1)
+            for cn in conns if close else ():  # its comb's branches' first tiles, kept from the taps after it
+                claimed.setdefault(cn.start, cn.owner)
         bus.append(_BusLine(ln.name, c, events))
     tunnels = []
     for cn in conns:  # a route's first tile is its own, as its last is
