@@ -9,7 +9,7 @@ real game → fix → only passing strings reach the user.
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m validator.fetch 2.1.23      # headless server for validation (Linux; elsewhere the installed game is found)
 .venv/bin/python -m tools.bp gen gated_requester item=iron-plate count=100 --validate
-.venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 --validate      # rows on shelves, all connected, products handed straight over (budget=SECONDS, default 40)
+.venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 --validate      # rows on shelves, all connected, products handed straight over (the same layout on any machine; budget=SECONDS only as a safety, default 300)
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 layout=bus --validate   # the same rows on a main bus
 .venv/bin/python -m tools.bp gen production item=electronic-circuit rate=5 --validate   # the same rows as a book
 .venv/bin/python -m tools.bp gen fluid_row recipe=processing-unit machine=assembling-machine-3 research=inserter-capacity-bonus=7 --validate   # inserters sized for researched hands: refused without it
