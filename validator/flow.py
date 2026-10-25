@@ -30,7 +30,8 @@ Unlike circuit tests, power comes only through the blueprint's own poles: a
 script-wired pole joins them to an unlimited source. An inserter outside
 every supply area, or a pole off the network, starves its machine and the
 rate falls short. The force has no research, so inserters move one item
-per swing.
+per swing, unless the case sets `research` (as bp takes it, a series and its
+level), as a generator sized for research does.
 """
 
 import json
