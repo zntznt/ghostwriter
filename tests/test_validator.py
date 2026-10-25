@@ -285,6 +285,22 @@ class Validator(unittest.TestCase):
             report = self.run_flow(data, cell.flow_tests(**params), ids)
             self.assertTrue(report.ok, (params, report.lines()))
 
+    def test_researched_rows_reach_their_rates(self):
+        # At inserter-capacity-bonus 7: a processing-unit machine 3 (refused without research)
+        # takes its circuits by one fast inserter, and circuit rows of six machines take their
+        # iron by one long-handed inserter each, which falls short without the research.
+        research = "inserter-capacity-bonus=7"
+        for gen, params in ((fluid_row, {"recipe": "processing-unit", "machine": "assembling-machine-3"}),
+                            (assembly_row, {"recipe": "electronic-circuit"})):
+            bp = gen.build(**params, research=research)
+            data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+            self.assertPasses(data)
+            flows = gen.flow_tests(**params, research=research)
+            report = self.run_flow(data, flows, ids)
+            self.assertTrue(report.ok, (params, report.lines()))
+        report = self.run_flow(data, [dataclasses.replace(f, research={}) for f in flows], ids)
+        self.assertFalse(report.ok, "the circuit row reached its rate without research")
+
     def test_production_book_rows_reach_their_rates(self):
         # Smelting columns and assembly rows from the solver, each distinct row
         # flow-tested on its own, and the book as a whole validated.
