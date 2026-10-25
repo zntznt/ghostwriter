@@ -48,6 +48,45 @@ def default_build_hashes() -> dict[str, str]:
     return out
 
 
+class Rates(unittest.TestCase):
+    FAKE = {"rates": {"inserter": {"transport-belt": {"from_belt": 0.9, "to_belt": 0.85}}},
+            "machine_to_machine": {"inserter": 0.85},
+            "researched": {"inserter-capacity-bonus=7": {
+                "rates": {"inserter": {"transport-belt": {"from_belt": 2.4, "to_belt": 2.2}}},
+                "machine_to_machine": {"inserter": 2.3}}}}
+
+    def setUp(self):
+        from unittest import mock
+
+        from tools import rates
+        self.rates = rates
+        patch = mock.patch.object(rates, "_inserter_file", lambda: self.FAKE)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_research_reads_as_bp_takes_it(self):
+        r = self.rates
+        self.assertEqual(r.research_levels("inserter-capacity-bonus=7"), {"inserter-capacity-bonus": 7})
+        self.assertEqual(r.research_levels(""), {})
+        self.assertEqual(r.research_levels({"b": 2, "a": 1}), {"b": 2, "a": 1})
+        self.assertEqual(r.research_key("b=2,a=1"), "a=1,b=2")
+        self.assertEqual(r.research_key(""), "")
+
+    def test_rates_follow_research(self):
+        r = self.rates
+        self.assertEqual(r.inserter_rate("inserter", "transport-belt", True), 0.9)
+        self.assertEqual(r.inserter_rate("inserter", "transport-belt", True, "inserter-capacity-bonus=7"), 2.4)
+        self.assertEqual(r.handover_rate("inserter", "inserter-capacity-bonus=7"), 2.3)
+        # 2 items/s at 85% of the rate: 3 inserters without research, 1 with it.
+        self.assertEqual(r.fewest_inserters(2, "transport-belt", True, ("inserter",), 0.85), ("inserter", 3))
+        self.assertEqual(r.fewest_inserters(2, "transport-belt", True, ("inserter",), 0.85,
+                                            "inserter-capacity-bonus=7"), ("inserter", 1))
+
+    def test_unmeasured_research_says_how_to_measure_it(self):
+        with self.assertRaisesRegex(ValueError, "validator.measure --research inserter-capacity-bonus=4"):
+            self.rates.inserter_rate("inserter", "transport-belt", True, "inserter-capacity-bonus=4")
+
+
 class DefaultBuilds(unittest.TestCase):
     def test_default_builds_are_unchanged(self):
         self.assertEqual(default_build_hashes(), json.loads(FIXTURE.read_text()))

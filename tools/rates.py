@@ -5,8 +5,9 @@ Recipes, machines and belts come from Draftsman's data, which matches the
 come from the game itself: tools/inserter_rates.json, written by
 `python -m validator.measure`.
 
-No modules, beacons or research: a machine crafts at its crafting_speed and
-an inserter moves what the measurement saw.
+No modules or beacons: a machine crafts at its crafting_speed and an inserter
+moves what the measurement saw. Inserter rates take research (as bp takes it,
+"inserter-capacity-bonus=7"): none unless given, else the rates measured at it.
 """
 
 import json
@@ -114,29 +115,49 @@ def _inserter_file() -> dict:
     return json.loads(INSERTER_RATES.read_text())
 
 
-def _inserter_table() -> dict:
-    return _inserter_file()["rates"]
+def research_levels(research: str | dict = "") -> dict[str, int]:
+    """Technology series -> levels researched, from "a=1,b=2" (as bp takes it) or a dict."""
+    if isinstance(research, dict):
+        return research
+    return {k: int(v) for k, _, v in (kv.partition("=") for kv in str(research).split(",") if kv)}
 
 
-def handover_rate(inserter: str) -> float:
+def research_key(research: str | dict = "") -> str:
+    """The research as one sorted string, "" for none: the key measured rates are kept under."""
+    return ",".join(f"{k}={v}" for k, v in sorted(research_levels(research).items()))
+
+
+def _measured(research) -> dict:
+    """The rates measured with no research, or at `research`."""
+    key = research_key(research)
+    if not key:
+        return _inserter_file()
+    got = _inserter_file().get("researched", {}).get(key)
+    if got is None:
+        raise ValueError(f"no inserter rates measured at {key} (python -m validator.measure --research {key})")
+    return got
+
+
+def handover_rate(inserter: str, research: str | dict = "") -> float:
     """Items/s one inserter moves from a machine's output straight into another's input, measured in game."""
-    table = _inserter_file().get("machine_to_machine", {})
+    table = _measured(research).get("machine_to_machine", {})
     if inserter not in table:
         raise ValueError(f"no measured handover rate for {inserter} (python -m validator.measure --handover)")
     return table[inserter]
 
 
-def inserter_rate(inserter: str, belt: str, from_belt: bool) -> float:
+def inserter_rate(inserter: str, belt: str, from_belt: bool, research: str | dict = "") -> float:
     """Items/s one inserter moves off (from_belt) or onto a moving belt, measured in game."""
-    table = _inserter_table()
+    table = _measured(research)["rates"]
     if inserter not in table or belt not in table[inserter]:
         raise ValueError(f"no measured rate for {inserter} on {belt} (python -m validator.measure)")
     return table[inserter][belt]["from_belt" if from_belt else "to_belt"]
 
 
-def fewest_inserters(demand: float, belt: str, from_belt: bool, options, margin: float) -> tuple[str, int]:
+def fewest_inserters(demand: float, belt: str, from_belt: bool, options, margin: float,
+                     research: str | dict = "") -> tuple[str, int]:
     """(inserter, count) moving `demand` items/s on or off `belt` at `margin` of the
     measured rate: the fewest inserters, then the cheapest (earliest in options)."""
-    best = min(((math.ceil(demand / (margin * inserter_rate(i, belt, from_belt)) - 1e-9), k), i)
+    best = min(((math.ceil(demand / (margin * inserter_rate(i, belt, from_belt, research)) - 1e-9), k), i)
                for k, i in enumerate(options))
     return best[1], best[0][0]
