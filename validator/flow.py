@@ -78,6 +78,7 @@ class Flow:
     fluids: list[FluidFeed] = field(default_factory=list)
     at_least: bool = False  # a target to reach, not a rate to match
     caps: dict[str, float] = field(default_factory=dict)  # pool level that stops draining an item or fluid
+    research: dict[str, int] = field(default_factory=dict)  # technology series -> levels the rate assumes
     # Windows to measure in all, stopping at the first that passes: a big factory
     # fills its belts slowly, with only its rows' slack to spare.
     settle: int = 1
@@ -108,7 +109,8 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
     for flow in flows:
         result = Measured(flow.name)
         results.append(result)
-        setup = server.call("flow_setup", json.dumps({"blueprint": encode(data), "speed": SPEED}))
+        setup = server.call("flow_setup", json.dumps({"blueprint": encode(data), "speed": SPEED,
+                                                      **({"research": flow.research} if flow.research else {})}))
         if "error" in setup:
             result.error = f"flow: setup failed: {setup['error']}"
             report.errors.append(result.error)

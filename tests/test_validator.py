@@ -452,6 +452,22 @@ class Validator(unittest.TestCase):
         self.assertRegex(flown.ended, r"hub destroyed by huge-\w+-asteroid")
         self.assertTrue(any(k.startswith("space-platform-hub <- ") for k in flown.deaths), flown.deaths)
 
+    def test_a_flow_test_runs_under_its_research(self):
+        # inserter-capacity-bonus 2 and 7 each add 1 to a non-bulk inserter's hand
+        # (dump): research=7 sets the bonus to 2 while the test runs, and teardown undoes it.
+        bonus = "/sc rcon.print(game.forces.player.inserter_stack_size_bonus)"
+        bp = Blueprint()
+        bp.entities.append("transport-belt", tile_position=(0, 0))
+        try:
+            setup = self.server.call("flow_setup", json.dumps({"blueprint": encode(bp.to_dict()), "speed": 1,
+                                                               "research": {"inserter-capacity-bonus": 7}}))
+            self.assertNotIn("error", setup)
+            during = self.server.command(bonus).strip()
+        finally:
+            self.server.call("flow_teardown")
+        self.assertEqual(during, "2")
+        self.assertEqual(self.server.command(bonus).strip(), "0")
+
     def test_flight_research_is_set_and_undone(self):
         # Levels researched set the game's own modifiers: railgun damage +0.4 a level,
         # physical projectile damage 1-6 then 7-8 (+1.0, +0.2, +0.2) for bullets.

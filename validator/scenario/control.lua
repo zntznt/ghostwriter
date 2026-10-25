@@ -884,6 +884,7 @@ local function flow_teardown()
   game.speed = 1
   local recipes = game.forces.player.recipes
   for _, name in pairs(f.locked) do recipes[name].enabled = false end
+  restore_research(game.forces.player, f.research)
   for _, e in pairs(f.helpers) do
     if e.valid then e.destroy() end
   end
@@ -1007,6 +1008,14 @@ remote.add_interface("ghostwriter", {
     end
     if poles[1] then f.helpers = source_for(s, area, poles) end
     storage.flow = f
+    -- Research the test is rated under (inserter capacity, as flights set research); teardown undoes it.
+    local research, wrong, partly = set_research(game.forces.player, args.research)
+    if not research then
+      restore_research(game.forces.player, partly)
+      flow_teardown()
+      return reply{error = wrong}
+    end
+    f.research = research
     game.speed = args.speed or 1
     -- Furnaces only take what an unlocked recipe smelts (iron plates need
     -- Steel processing); flow tests measure throughput, not research.
