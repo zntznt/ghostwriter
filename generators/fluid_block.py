@@ -68,7 +68,8 @@ class Plan:
         return self.machines * self.crafts * per_craft
 
 
-def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-belt", inserter="") -> Plan:
+def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-belt", inserter="",
+         research="") -> Plan:
     if recipe not in recipes.raw:
         raise ValueError(f"unknown recipe {recipe!r}")
     r = recipes.raw[recipe]
@@ -111,9 +112,10 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
         raise ValueError(f"{recipe}: a belt carries at most two ingredients")
     tiers = (inserter,) if inserter else REGULAR
     if items_in:
-        p.feeders = rates.fewest_inserters(sum(a for _, a in items_in) * crafts, belt, True, tiers, MARGIN)
+        p.feeders = rates.fewest_inserters(sum(a for _, a in items_in) * crafts, belt, True, tiers, MARGIN, research)
     if p.item_out:
-        p.output = rates.fewest_inserters(dict(items_out)[p.item_out] * crafts, belt, False, tiers, MARGIN)
+        p.output = rates.fewest_inserters(dict(items_out)[p.item_out] * crafts, belt, False, tiers, MARGIN,
+                                          research)
     if p.feeders[1] + p.output[1] > s:
         raise ValueError(f"{recipe} in {machine}: one machine needs {p.feeders[1] + p.output[1]} inserters "
                          f"on its belt side, where {s} fit")
@@ -134,8 +136,8 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
 
 
 def build(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-belt", inserter="",
-          pole="medium-electric-pole") -> Blueprint:
-    p = plan(recipe, machine, machines, belt, inserter)
+          pole="medium-electric-pole", research="") -> Blueprint:
+    p = plan(recipe, machine, machines, belt, inserter, research)
     s, n = p.size, p.machines
     items = bool(p.items_in or p.item_out)
 
@@ -261,4 +263,5 @@ def flow_tests(**params):
     length = rates.size(p.machine) + 8
     return [Flow(f"{p.machines} {p.machine}: " + ", ".join(f"{v:g} {k}/s" for k, v in expect.items()),
                  feeds, drains, expect, fluids=fluids,
-                 warmup=rates.warmup_seconds(p.belt, length, 1 / p.crafts), window=max(120, 50 / p.crafts))]
+                 warmup=rates.warmup_seconds(p.belt, length, 1 / p.crafts), window=max(120, 50 / p.crafts),
+                 research=rates.research_levels(params.get("research", "")))]

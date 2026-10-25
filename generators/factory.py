@@ -137,13 +137,14 @@ class Job:
 
 
 def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-                   furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, cells=0):
+                   furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, cells=0, research=""):
     """Rows and their lines (which line feeds each port), before they're laid out.
     cells: 1 fuses each producer only one row uses into a cell with it, 2 also each
-    shared producer into every row that takes a cell (production.fuse)."""
+    shared producer into every row that takes a cell (production.fuse). research: the
+    inserter research rows are sized for (production.solve)."""
     if belt not in KITS:
         raise ValueError(f"belt is one of {list(KITS)}")
-    steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil)
+    steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil, research)
     if cells:
         steps = production.fuse(steps, item, belt, shared=cells == 2)
     rows = [_row(s) for s in steps for _ in range(s.rows)]
@@ -152,9 +153,9 @@ def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machin
 
 
 def plan(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-         furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL):
+         furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, research=""):
     """Rows, lines and corridor jobs, with every row and line placed."""
-    p = rows_and_lines(item, rate, machine, belt, smelt, furnace, raw, oil, fill)
+    p = rows_and_lines(item, rate, machine, belt, smelt, furnace, raw, oil, fill, research=research)
     jobs = _jobs(p["rows"], p["lines"])
     layout = _allocate(p["rows"], jobs, p["lines"])
     _columns(p["lines"])
@@ -479,7 +480,8 @@ class Canvas:
 
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="compact", budget=None, cells=1) -> Blueprint:
+          furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="compact", budget=None, cells=1,
+          research="") -> Blueprint:
     """fill: the share of a belt a line made here may carry before it's split.
     layout: "compact" (rows on shelves with their products handed over directly,
     tools/compact.py), or "bus" (every row on one bus); compact falls back to the bus,
@@ -488,9 +490,10 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     that time. cells: compact also tries each producer only one row uses as a cell with
     that row (generators/cell.py), then shared producers in a cell with every row that
     takes one, each in the budget left but at least a quarter of it, and keeps the
-    smallest; 0 skips them."""
+    smallest; 0 skips them. research: inserter research ("inserter-capacity-bonus=7") the
+    rows are sized for; the build moves its rate only with that researched."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
-                  fill=fill)
+                  fill=fill, **({"research": research} if research else {}))
     compact = _compact(layout, params, budget, say=True, cells=cells)
     return compact[1].bp if compact else _build(plan(**params))[0]
 
@@ -961,7 +964,10 @@ def flow_tests(layout="compact", budget=None, cells=1, **params):
     if compact:
         from tools.compact import flow_tests as compact_flow_tests
 
-        return compact_flow_tests(*compact)
+        flows = compact_flow_tests(*compact)
+        for f in flows:
+            f.research = rates.research_levels(params.get("research", ""))
+        return flows
     bp, p = _build(plan(**params))
     feeds, drains, fluids = [], [], []
     for line in (ln for named in p["lines"].values() for ln in named):
@@ -984,4 +990,4 @@ def flow_tests(layout="compact", budget=None, cells=1, **params):
     window = max(r.flow.window for r in p["rows"])
     return [Flow(f"factory of {len(p['rows'])} rows: {p['rate']:g} {p['item']}/s", feeds, drains,
                  {p["item"]: float(p["rate"])}, warmup=warmup, window=window, fluids=fluids, at_least=True,
-                 settle=SETTLE)]
+                 settle=SETTLE, research=rates.research_levels(params.get("research", "")))]

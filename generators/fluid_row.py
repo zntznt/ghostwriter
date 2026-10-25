@@ -78,7 +78,8 @@ class Plan:
         return self.sides * self.per_side / r.results[self.product] * r.fluids[self.fluid]
 
 
-def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="") -> list[Plan]:
+def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
+          research="") -> list[Plan]:
     """Ingredient layouts that fit the belts and inserters, best first."""
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
@@ -97,7 +98,7 @@ def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, mach
     tiers = (inserter,) if inserter else REGULAR
 
     def pick(demand, from_belt, options):
-        return rates.fewest_inserters(demand, belt, from_belt, options, MARGIN) if demand else (options[0], 0)
+        return rates.fewest_inserters(demand, belt, from_belt, options, MARGIN, research) if demand else (options[0], 0)
 
     candidates, why, fewest = [], set(), None
     solids = list(r.ingredients)
@@ -158,8 +159,9 @@ def plan(pole="medium-electric-pole", **params) -> Plan:
 
 
 def build(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
-          pole="medium-electric-pole") -> Blueprint:
-    p = plan(pole, recipe=recipe, machine=machine, belt=belt, sides=sides, machines=machines, inserter=inserter)
+          pole="medium-electric-pole", research="") -> Blueprint:
+    p = plan(pole, recipe=recipe, machine=machine, belt=belt, sides=sides, machines=machines, inserter=inserter,
+             research=research)
     return _build(p, pole)
 
 
@@ -266,4 +268,5 @@ def flow_tests(**params):
     return [Flow(f"{p.machines * p.sides} machines: {total:g} {p.product}/s", feeds,
                  [f"out_{side}" for side in SIDES[:p.sides]], {p.product: total},
                  warmup=rates.warmup_seconds(p.belt, length, 1 / p.crafts),
-                 window=max(120, 50 / p.crafts), fluids=[FluidFeed("fluid_in", p.fluid)])]
+                 window=max(120, 50 / p.crafts), fluids=[FluidFeed("fluid_in", p.fluid)],
+                 research=rates.research_levels(params.get("research", "")))]
