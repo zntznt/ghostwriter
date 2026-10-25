@@ -43,8 +43,10 @@ Placement is tools/shelves.py, the merges, combs and taps tools/belts.py.
 
 import math
 import time
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 
 from draftsman.blueprintable import Blueprint
 from draftsman.data import entities
@@ -77,7 +79,7 @@ class CompactError(ValueError):
 
 @dataclass
 class Result:
-    bp: Blueprint
+    blueprint: Callable[[], Blueprint]  # the layout's blueprint, built on first use (bp)
     area: int
     inputs: list  # (id, item)
     outputs: list  # (id, item)
@@ -90,6 +92,10 @@ class Result:
     fluid_inputs: list = field(default_factory=list)  # (id, fluid)
     fluid_ports: list = field(default_factory=list)  # (tile, fluid): row fluid ports, inputs and outputs
     fluid_outputs: list = field(default_factory=list)  # (id, fluid, "product" or "surplus")
+
+    @cached_property
+    def bp(self) -> Blueprint:
+        return self.blueprint()
 
 
 def build(p, budget=BUDGET) -> Result:
@@ -435,27 +441,30 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
     except ValueError as e:
         raise Blocked(str(e)) from None
 
-    bp = Blueprint()
-    bp.label = f"Factory: {p['rate']:g} {p['item']}/s, compact"
-    bp.description = _description(p, raw, len(outlets))
-    bp.icons = [p["item"]]
-    for k, r in enumerate(rows):
-        dx, dy = where[k]
-        for e in r.bp.entities:
-            copy = deepcopy(e)
-            copy.tile_position = (int(e.tile_position[0]) + dx, int(e.tile_position[1]) + dy)
-            copy.id = f"row {k} {e.id}" if e.id else None
-            bp.entities.append(copy, copy=False)
-    for name, tile, kw in canvas.items:
-        bp.entities.append(name, tile_position=tile, **kw)
-    for k, r in enumerate(rows):
-        for color, a, b in r.wires:
-            bp.add_circuit_connection(color, f"row {k} {a}", f"row {k} {b}")
-    for tile in poles:
-        bp.entities.append(factory.POLE, tile_position=tile)
-    bp.generate_power_connections()
+    label, description = f"Factory: {p['rate']:g} {p['item']}/s, compact", _description(p, raw, len(outlets))
+
+    def blueprint():  # built only for the layout kept: most of an attempt's time went to it
+        bp = Blueprint()
+        bp.label, bp.description, bp.icons = label, description, [p["item"]]
+        for k, r in enumerate(rows):
+            dx, dy = where[k]
+            for e in r.bp.entities:
+                copy = deepcopy(e)
+                copy.tile_position = (int(e.tile_position[0]) + dx, int(e.tile_position[1]) + dy)
+                copy.id = f"row {k} {e.id}" if e.id else None
+                bp.entities.append(copy, copy=False)
+        for name, tile, kw in canvas.items:
+            bp.entities.append(name, tile_position=tile, **kw)
+        for k, r in enumerate(rows):
+            for color, a, b in r.wires:
+                bp.add_circuit_connection(color, f"row {k} {a}", f"row {k} {b}")
+        for tile in poles:
+            bp.entities.append(factory.POLE, tile_position=tile)
+        bp.generate_power_connections()
+        return bp
+
     if fluid_ports:
-        _check_fluids(bp.to_dict()["blueprint"], fluid_ports)
+        _check_fluids(_pipes(p, rows, where, canvas.items), fluid_ports)
     tiles = list(canvas.tiles) + list(poles)
     xs, ys = [x for x, _ in tiles], [y for _, y in tiles]
     area = (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1)
@@ -469,7 +478,7 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
                     span[0] - min(taken) + 1)
     ports = [("in", at(k, q), set(q.lanes.values())) if q.kind == "in" else ("out", at(k, q), q.name)
              for k, r in enumerate(rows) for q in r.ports if q.kind in ("in", "out")]
-    return Result(bp, area, inputs, [(ident, name) for _, ident, name in outlets], max(ys) - min(ys) + 1, used,
+    return Result(blueprint, area, inputs, [(ident, name) for _, ident, name in outlets], max(ys) - min(ys) + 1, used,
                   ports, [(line.name, line.column, min(line.events)) for line in bus],
                   [(x0s[s], *shelf_box[s]) for s in range(len(shelves))], leftovers, fluid_inputs, fluid_ports,
                   fluid_outputs)
@@ -600,6 +609,15 @@ def _row_spans(p, r, at) -> list:
     dx, dy = at
     return [span for (x, y), name, _, _ in _row_local(p, r) if name == "pipe-to-ground"
             for span in (("x", x + dx, y + dy, y + dy), ("y", y + dy, x + dx, x + dx))]
+
+
+def _pipes(p, rows, where, items) -> dict:
+    """The pipes of a layout, rows' and routed, as blueprint data: all tools/pipes reads."""
+    got = [((x + where[k][0], y + where[k][1]), name, d) for k, r in enumerate(rows)
+           for (x, y), name, d, _ in _row_local(p, r)]
+    got += [(tile, name, kw.get("direction")) for name, tile, kw in items if name in ("pipe", "pipe-to-ground")]
+    return {"entities": [{"name": name, "position": {"x": x + 0.5, "y": y + 0.5}, "direction": int(d or 0)}
+                         for (x, y), name, d in got]}
 
 
 def _check_fluids(data, ports):
