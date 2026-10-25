@@ -95,6 +95,7 @@ class Result:
     fluid_inputs: list = field(default_factory=list)  # (id, fluid)
     fluid_ports: list = field(default_factory=list)  # (tile, fluid): row fluid ports, inputs and outputs
     fluid_outputs: list = field(default_factory=list)  # (id, fluid, "product" or "surplus")
+    bound: dict = field(default_factory=dict)  # lower_bound's, the least over the rows factory tried
 
     @cached_property
     def bp(self) -> Blueprint:
@@ -142,6 +143,48 @@ def build(p, work=None, beat=math.inf) -> Result:
         west, _ = _trimmed(p, shelves, heights, bus_far, work, west, west=True)
         got = min(got, west, key=lambda g: g.area)
     return got
+
+
+def lower_bound(p) -> dict:
+    """Tiles no layout of p's rows can be smaller than (docs/layout-optimizer.md, "How close
+    to optimal"), leaving p's lines as they are:
+    - rows: any layout of the rows at all. Their entities can't overlap, so the box holds at
+      least their own tiles, and the widest and the tallest row (rectangle packing's area
+      and size bounds).
+    - shelves (wide by tall): any layout this search can make of them (build). For each way
+      it shelves them, at least as wide as each shelf's rows and gaps east of the bus lines
+      running beside them and their yard, and as tall as the input row, each shelf's tallest
+      row and every channel at MIN_CHANNEL rows; the least of those. rows_wide and rows_tall
+      are the rows' share of each: the rest is the bus and yard, and the channels."""
+    _gated(p)
+    rows = p["rows"]
+    feeds = [(q, dict(q.feeds)) for r in rows for q in r.ports if q.kind == "in"]
+    demands = [(ln, ln.demand) for named in p["lines"].values() for ln in named]
+    restore(p)
+    own = sum(len({(int(e.tile_position[0]) + dx, int(e.tile_position[1]) + dy) for e in r.bp.entities
+                   for dx in range(e.tile_width) for dy in range(e.tile_height)}) for r in rows)
+    tallest = [r.box[3] - r.box[1] + 1 for r in rows]
+    supplied = any(ln.supplied for ln, _ in demands)
+    best = None
+    for shelves in sorted({tuple(map(tuple, shelve(p, wide))) for wide in widths(rows)}):
+        rows_wide = [sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for shelf in shelves]
+        rows_tall = sum(max(tallest[k] for k in shelf) for shelf in shelves)
+        # The input row and channel 0 hold the supplied lines' first tiles; above the last
+        # shelf, the product leaves from the top channel's north row.
+        tall = rows_tall + MIN_CHANNEL * len(shelves) + (1 + MIN_CHANNEL if supplied else 0)
+        for bus_far in (False, True):
+            raw, running, *_ = _bus(p, shelves, bus_far)
+            for west in (False, True):
+                _, x0s, _ = _columns(p, shelves, running, len(raw), west)
+                wide = max(x + w for x, w in zip(x0s, rows_wide)) - (0 if raw else min(x0s))
+                if best is None or wide * tall < best["shelves"]:
+                    best = {"shelves": wide * tall, "wide": wide, "tall": tall, "rows_wide": max(rows_wide),
+                            "rows_tall": rows_tall}
+    for q, f in feeds:
+        q.feeds = f
+    for ln, d in demands:
+        ln.demand = d
+    return {"rows": max(own, max(map(width, rows)) * max(tallest)), **best}
 
 
 def _trimmed(p, shelves, heights, bus_far, work, got, west=False):
@@ -239,10 +282,8 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
     underground, splitter = factory.KITS[belt]
     reach = entities.raw[underground]["max_distance"]
     lines = [ln for named in p["lines"].values() for ln in named]
-    shelf_of = {k: s for s, shelf in enumerate(shelves) for k in shelf}
-    raw = [ln for ln in lines if ln.supplied and not ln.fluid]
-    raw += [ln for ln in lines if bus_far and not ln.supplied and not ln.fluid and not ln.top
-            and far(ln, rows, shelf_of)]
+    raw, running, tapped, source = _bus(p, shelves, bus_far)
+    yard, x0s, _ = _columns(p, shelves, running, len(raw), west)
     canvas = factory.Canvas()
     claimed = {}  # goal tiles: (x, y) -> the connection allowed onto it
     conns = []
@@ -253,35 +294,6 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
 
     # Rows on shelves, south to north, each shelf's channel below it (its ports'
     # adapters, the taps into it, the chains out of the shelf below).
-    sinks_in = [set() for _ in shelves]
-    for s, shelf in enumerate(shelves):
-        for k in shelf:
-            for q in rows[k].ports:
-                if q.kind == "in":
-                    for ln in q.feeds.values():
-                        sinks_in[s].add(id(ln))
-
-    def source(ln):  # the shelf of a made line's rows
-        return max(shelf_of[k] for k, r in enumerate(rows) for q in r.ports if q.kind == "out" and ln in q.outs)
-
-    def tapped(ln):  # the shelves a raw line taps into
-        got = [s for s in range(len(shelves)) if id(ln) in sinks_in[s]]
-        return got if ln.supplied else [s for s in got if s > source(ln)]
-
-    # A ragged bus: each line ends at its last tap, and lines reaching further north sit
-    # further west, so a shelf above a line's last tap starts in its columns. Each
-    # channel's yard is the two columns east of the lines still running in it.
-    last_channel = {id(ln): max(tapped(ln), default=0) for ln in raw}
-    raw.sort(key=lambda ln: -last_channel[id(ln)])
-    running = [sum(1 for ln in raw if last_channel[id(ln)] >= c) for c in range(len(shelves) + 1)]
-    yard = [(2 * n, 2 * n + 1) for n in running]
-    # A shelf moves west only as far as the box needs: moved further, it just stands
-    # off from the shelves it takes from.
-    room = [FLUID_ROOM if _hemmed(rows[shelf[0]]) else 0 for shelf in shelves]
-    span = [room[s] + sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for s, shelf in enumerate(shelves)]
-    edge = max(yard[s][1] + 1 + span[s] for s in range(len(shelves)))
-    x0s = [room[s] + max(yard[s][1] + 1, min(yard[s][1] + 1 if west else 2 * len(raw) + 2, edge - span[s]))
-           for s in range(len(shelves))]
     where, shelf_box, y_out = place(rows, shelves, heights, x0s, canvas)
     x_max = max(x for x, _ in canvas.tiles) + 2
 
@@ -497,6 +509,49 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result
                   ports, [(line.name, line.column, min(line.events)) for line in bus],
                   [(x0s[s], *shelf_box[s]) for s in range(len(shelves))], leftovers, fluid_inputs, fluid_ports,
                   fluid_outputs)
+
+
+def _bus(p, shelves, bus_far):
+    """(raw, running, tapped, source): the lines on the west bus, those reaching furthest
+    north first (a ragged bus: each line ends at its last tap, and lines reaching further
+    north sit further west, so a shelf above a line's last tap starts in its columns); per
+    channel, the lines still running in it; the shelves a line taps into; a made line's
+    shelf. bus_far: lines made here and used far from their rows ride the bus too."""
+    rows = p["rows"]
+    lines = [ln for named in p["lines"].values() for ln in named]
+    shelf_of = {k: s for s, shelf in enumerate(shelves) for k in shelf}
+    raw = [ln for ln in lines if ln.supplied and not ln.fluid]
+    raw += [ln for ln in lines if bus_far and not ln.supplied and not ln.fluid and not ln.top
+            and far(ln, rows, shelf_of)]
+    sinks_in = [{id(ln) for k in shelf for q in rows[k].ports if q.kind == "in" for ln in q.feeds.values()}
+                for shelf in shelves]
+
+    def source(ln):
+        return max(shelf_of[k] for k, r in enumerate(rows) for q in r.ports if q.kind == "out" and ln in q.outs)
+
+    def tapped(ln):
+        got = [s for s in range(len(shelves)) if id(ln) in sinks_in[s]]
+        return got if ln.supplied else [s for s in got if s > source(ln)]
+
+    last_channel = {id(ln): max(tapped(ln), default=0) for ln in raw}
+    raw.sort(key=lambda ln: -last_channel[id(ln)])
+    running = [sum(1 for ln in raw if last_channel[id(ln)] >= c) for c in range(len(shelves) + 1)]
+    return raw, running, tapped, source
+
+
+def _columns(p, shelves, running, n_raw, west):
+    """(yard, x0s, span): each channel's yard, the two columns east of the lines still running
+    in it; each shelf's west column; each shelf's columns (its rows, the gaps between them and
+    any room west of its first row). A shelf moves west only as far as the box needs: moved
+    further, it just stands off from the shelves it takes from (west: as far as it can)."""
+    rows = p["rows"]
+    yard = [(2 * n, 2 * n + 1) for n in running]
+    room = [FLUID_ROOM if _hemmed(rows[shelf[0]]) else 0 for shelf in shelves]
+    span = [room[s] + sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for s, shelf in enumerate(shelves)]
+    edge = max(yard[s][1] + 1 + span[s] for s in range(len(shelves)))
+    x0s = [room[s] + max(yard[s][1] + 1, min(yard[s][1] + 1 if west else 2 * n_raw + 2, edge - span[s]))
+           for s in range(len(shelves))]
+    return yard, x0s, span
 
 
 def _lines(q) -> int:
