@@ -9,6 +9,7 @@ exit ahead (NOTES.md). Used by the compact factory layout (tools/compact.py).
 
 import heapq
 import math
+import time
 
 from draftsman.constants import Direction
 from draftsman.data import entities
@@ -23,7 +24,35 @@ BACK = {N: S, S: N, E: W, W: E}
 BELT, TURN, TUNNEL = 1.0, 0.25, 1.0
 
 
-def route(free, start, heading, goal, facing, reach, bounds, tunnels=(), limit=30000, cost=None):
+class Work:
+    """What a search may spend: A* steps (tiles expanded), which are the same on any
+    machine, so a search bounded by them always ends the same way; and seconds, only as
+    a safety, past which it stops whatever steps it has left. A part of it (part) has
+    steps of its own, and stops when either is spent."""
+
+    def __init__(self, steps=math.inf, seconds=None, whole=None):
+        self.steps, self.spent, self.whole = steps, 0, whole
+        self.deadline = None if seconds is None else time.monotonic() + seconds
+
+    def part(self, steps):
+        return Work(steps, whole=self)
+
+    def spend(self, n):
+        self.spent += n
+        if self.whole:
+            self.whole.spend(n)
+
+    @property
+    def left(self):
+        return min(self.steps - self.spent, self.whole.left if self.whole else math.inf)
+
+    def over(self) -> bool:
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            return True
+        return self.left <= 0 or bool(self.whole and self.whole.over())
+
+
+def route(free, start, heading, goal, facing, reach, bounds, tunnels=(), limit=30000, cost=None, work=None):
     """Belt tiles from start, which items enter moving `heading`, to goal, placed
     facing `facing` (and never entered from its front).
 
@@ -32,7 +61,7 @@ def route(free, start, heading, goal, facing, reach, bounds, tunnels=(), limit=3
     distance (the prototype's max_distance). tunnels: pairs already placed, (x, y, x2,
     y2) entrance to exit.
     cost(x, y): what taking a tile costs (default 1), for routing several belts
-    that negotiate who gets a tile (route_all).
+    that negotiate who gets a tile (route_all). work: a Work the tiles expanded are spent from.
     Returns [(kind, x, y, direction)], kind "belt", "in" or "out", or None."""
     x0, y0, x1, y1 = bounds
     if callable(free):
@@ -68,6 +97,8 @@ def route(free, start, heading, goal, facing, reach, bounds, tunnels=(), limit=3
             while state in came:
                 state, step = came[state]
                 path[:0] = step
+            if work is not None:
+                work.spend(expanded)
             return path if _own_tunnels_apart(path) else None
         if (x, y) not in free:
             continue
@@ -96,6 +127,8 @@ def route(free, start, heading, goal, facing, reach, bounds, tunnels=(), limit=3
                 seen[nxt] = c
                 came[nxt] = (state, step)
                 heapq.heappush(queue, (c + h(nxt[0], nxt[1]), c, nxt))
+    if work is not None:
+        work.spend(expanded)
     return None
 
 
@@ -202,14 +235,13 @@ def reaches(blueprint: dict, start: tuple[int, int], item: str = "") -> set[tupl
     return got
 
 
-def route_all(conns, free, reach, bounds, rounds=30, deadline=None):
+def route_all(conns, free, reach, bounds, rounds=30, work=None):
     """Several belts that mustn't share a tile, by negotiated congestion (PathFinder,
     as FPGA routers do): each round routes every belt again with the tiles others
     hold costing more, and tiles fought over in earlier rounds costing more still,
     until no tile is shared. conns: (start, heading, goal, facing, free_for) where
-    free_for(x, y) adds the belt's own limits to free. deadline: a time.monotonic()
-    past which it gives up. Returns their paths, or None."""
-    import time
+    free_for(x, y) adds the belt's own limits to free. work: a Work it gives up once
+    spent. Returns their paths, or None."""
     from collections import Counter, defaultdict
 
     x0, y0, x1, y1 = bounds  # each belt's tiles asked for once: asking took a fifth of the time
@@ -219,7 +251,7 @@ def route_all(conns, free, reach, bounds, rounds=30, deadline=None):
     pressure, best, stale = 0.5, None, 0
     for _ in range(rounds):
         for n, (start, heading, goal, facing, mine) in enumerate(conns):
-            if deadline is not None and time.monotonic() > deadline:
+            if work is not None and work.over():
                 return None
             if paths[n]:
                 use.subtract(_tiles(paths[n]))
@@ -228,7 +260,7 @@ def route_all(conns, free, reach, bounds, rounds=30, deadline=None):
             def cost(x, y):
                 return BELT + history[(x, y)] + pressure * use[(x, y)]
 
-            path = route(oks[n], start, heading, goal, facing, reach, bounds, others, cost=cost)
+            path = route(oks[n], start, heading, goal, facing, reach, bounds, others, cost=cost, work=work)
             if path is None:
                 return None
             paths[n] = path

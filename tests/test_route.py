@@ -4,7 +4,7 @@ import unittest
 
 from draftsman.constants import Direction
 
-from tools.route import reaches, route, route_all
+from tools.route import Work, reaches, route, route_all
 
 N, E, S, W = Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST
 BOX = (0, 0, 9, 9)
@@ -74,14 +74,35 @@ class RouteAll(unittest.TestCase):
         tiles = [(x, y) for p in paths for _, x, y, _ in p]
         self.assertEqual(len(tiles), len(set(tiles)))
 
-    def test_a_negotiation_past_its_deadline_gives_up(self):
-        # The crossing above routes, but not once its time is up.
-        import time
-
+    def test_a_negotiation_is_bounded_by_steps_not_seconds(self):
+        # The crossing above routes, but not once its work is spent: A* steps, which are
+        # the same on any machine, so the same negotiation always ends the same way.
         conns = [((0, 3), E, (9, 3), E), ((0, 5), E, (9, 5), E), ((4, 9), N, (4, 0), N)]
         spec = [(s, h, g, f, lambda x, y: True) for s, h, g, f in conns]
-        self.assertIsNone(route_all(spec, lambda x, y: True, reach=5, bounds=BOX, deadline=time.monotonic() - 1))
-        self.assertIsNotNone(route_all(spec, lambda x, y: True, reach=5, bounds=BOX, deadline=time.monotonic() + 60))
+        self.assertIsNone(route_all(spec, lambda x, y: True, reach=5, bounds=BOX, work=Work(0)))
+        spent = []
+        for _ in range(2):
+            work = Work(10 ** 6)
+            self.assertIsNotNone(route_all(spec, lambda x, y: True, reach=5, bounds=BOX, work=work))
+            spent.append(work.spent)
+        self.assertGreater(spent[0], 0)
+        self.assertEqual(spent[0], spent[1])
+
+    def test_work_parts_spend_the_whole_and_stop_with_it(self):
+        whole = Work(100)
+        part = whole.part(30)
+        part.spend(20)
+        self.assertEqual((whole.spent, whole.left, part.left), (20, 80, 10))
+        part.spend(15)
+        self.assertTrue(part.over())
+        self.assertFalse(whole.over())
+        other = whole.part(1000)
+        other.spend(70)
+        self.assertTrue(whole.over() and other.over())  # the whole spent, so its parts too
+        # Seconds only as a safety: a search out of time stops whatever work it has left.
+        self.assertTrue(Work(10 ** 6, seconds=0).over())
+        self.assertTrue(Work(10 ** 6, seconds=0).part(10).over())
+        self.assertFalse(Work(10 ** 6, seconds=60).over())
 
 
 class Reaches(unittest.TestCase):

@@ -42,7 +42,6 @@ Placement is tools/shelves.py, the merges, combs and taps tools/belts.py.
 """
 
 import math
-import time
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -55,7 +54,7 @@ from generators import factory
 from tools import belts, pipes
 from tools.belts import Blocked, Conn
 from tools.pipe_route import ALL, Fluids, route_line, sides
-from tools.route import N, S, W, route_all, tunnels_of
+from tools.route import N, S, W, Work, route_all, tunnels_of
 from tools.shelves import GAP, MIN_CHANNEL, far, least_area, localize, place, restore, shelve, width, widths
 
 MAX_EXTRA = 14  # rows added to every channel before a width is given up
@@ -63,14 +62,18 @@ MAX_EXTRA = 14  # rows added to every channel before a width is given up
 # two others (refining's light oil): with the yard's two alone it has no way out. Given to
 # every row with west fluid ports, processing units at 0.5/s stopped routing.
 FLUID_ROOM = 2
-# Seconds a search may take by default: every request measured reached its best layout
-# within it (the slowest, electronic circuits at 15/s, at 30.7 s on the machine measured;
-# docs/layout-optimizer.md), with room for a slower one. A search ends when it's done, so
-# small factories don't wait for it.
-BUDGET = 40.0
-# A negotiation that routes took 0.1 to 1 s on every request measured; the ones that
-# never route ran to 15 to 38 s first. Cut there.
-NEGOTIATION = 4.0
+# A* steps (route.Work) the whole search for a factory may take, shared by factory._compact:
+# the least that lays out every request measured no larger than when seconds cut it (4
+# million left chemical science at 4,356 tiles against 4,268; docs/layout-optimizer.md).
+# Steps are the same on any machine, so the same request always gives the same layout.
+STEPS = 5_000_000
+# Steps a negotiation may take: the most one that routed took on the 34 requests measured
+# was 160,041; the ones that never route ran on to 1.5 million, stuck a few tiles short.
+NEGOTIATION = 300_000
+# Seconds, only as a safety: steps end every search measured long before it (the slowest,
+# chemical science from crude oil at research 7, in 62 s on this Mac, CI's runners about 1.8
+# times slower). Past it a search keeps the best so far, which then depends on the machine.
+BUDGET = 300.0
 
 
 class CompactError(ValueError):
@@ -98,51 +101,56 @@ class Result:
         return self.blueprint()
 
 
-def build(p, budget=BUDGET) -> Result:
+def build(p, work=None, beat=math.inf) -> Result:
     """The smallest compact layout of the rows in p (factory.rows_and_lines) that routes
-    within budget seconds. For each shelf width, and each way of carrying items used
-    far from their rows (routed straight from them, or on the bus): every channel grown
-    until it routes, then cut to the rows it used. The best of those then loses a
-    channel row at a time while it still routes and gets no bigger. Shelves are tried
-    least room first, and a channel height whose rows and gaps alone already take more
-    room than the best so far isn't tried. Last, it tries every shelf as far west as the
-    bus lets it (_attempt's west), and keeps that if smaller. Out of time, it keeps the
-    best so far."""
+    within work (a route.Work; by default STEPS, and BUDGET seconds as a safety). For
+    each shelf width, and each way of carrying items used far from their rows (routed
+    straight from them, or on the bus): every channel grown until it routes, then cut to
+    the rows it used. The best of those then loses a channel row at a time while it still
+    routes and gets no bigger. Shelves are tried least room first, and a channel height
+    whose rows and gaps alone already take more room than the best so far isn't tried,
+    nor shelves whose rows and thinnest channels take as much as beat (a layout found
+    before). Last, it tries every shelf as far west as the bus lets it (_attempt's west),
+    and keeps that if smaller. Out of work, it keeps the best so far."""
     _gated(p)
     _refuse(p)
-    deadline = time.monotonic() + budget
+    work = Work(STEPS, seconds=BUDGET) if work is None else work
     candidates = {tuple(map(tuple, shelve(p, wide))) for wide in widths(p["rows"])}
     best = None
     for shelves in sorted(candidates, key=lambda s: least_area(p, s)):
+        if least_area(p, shelves) >= beat:  # nor any after: none of them can be smaller
+            break
         for bus_far in (False, True):
-            if time.monotonic() > deadline:
+            if work.over():
                 break
-            got = _fitted(p, shelves, bus_far, best[0].area if best else math.inf, deadline)
+            got = _fitted(p, shelves, bus_far, best[0].area if best else math.inf, work)
             if got and (best is None or got[0].area < best[0].area):
                 best = got + (shelves, bus_far)
     if best is None:
-        if time.monotonic() > deadline:
-            raise CompactError(f"no layout routed within its budget of {budget:g} s")
+        if work.over():
+            raise CompactError("no layout routed within its budget")
+        if beat < math.inf:
+            raise CompactError(f"no layout smaller than {beat:,} tiles")
         raise CompactError("the rows don't route in any shelf width tried")
     got, heights, shelves, bus_far = best
-    got, heights = _trimmed(p, shelves, heights, bus_far, deadline, got)
-    if time.monotonic() <= deadline:
+    got, heights = _trimmed(p, shelves, heights, bus_far, work, got)
+    if not work.over():
         try:
-            west = _attempt(p, shelves, heights, bus_far, deadline, west=True)
+            west = _attempt(p, shelves, heights, bus_far, work, west=True)
         except Blocked:
             return got
-        west, _ = _trimmed(p, shelves, heights, bus_far, deadline, west, west=True)
+        west, _ = _trimmed(p, shelves, heights, bus_far, work, west, west=True)
         got = min(got, west, key=lambda g: g.area)
     return got
 
 
-def _trimmed(p, shelves, heights, bus_far, deadline, got, west=False):
+def _trimmed(p, shelves, heights, bus_far, work, got, west=False):
     """(layout, heights): each channel a row thinner at a time while it still routes."""
     for c in range(len(heights)):
-        while heights[c] > MIN_CHANNEL and time.monotonic() <= deadline:
+        while heights[c] > MIN_CHANNEL and not work.over():
             trial = heights[:c] + [heights[c] - 1] + heights[c + 1:]
             try:
-                smaller = _attempt(p, shelves, trial, bus_far, deadline, west)
+                smaller = _attempt(p, shelves, trial, bus_far, work, west)
             except Blocked:
                 break
             heights = trial
@@ -150,15 +158,15 @@ def _trimmed(p, shelves, heights, bus_far, deadline, got, west=False):
     return got, heights
 
 
-def _fitted(p, shelves, bus_far, beat=math.inf, deadline=math.inf):
+def _fitted(p, shelves, bus_far, beat=math.inf, work=None):
     """(layout, channel heights): channels grown together until it routes, then each
-    cut to the rows it used; None if it never routes in less room than beat, or in time."""
+    cut to the rows it used; None if it never routes in less room than beat, or in work."""
     for extra in range(0, MAX_EXTRA + 1, 3):
         heights = [MIN_CHANNEL + extra] * (len(shelves) + 1)
-        if least_area(p, shelves, heights) >= beat or time.monotonic() > deadline:
+        if least_area(p, shelves, heights) >= beat or (work and work.over()):
             return None
         try:
-            got = _attempt(p, shelves, heights, bus_far, deadline)
+            got = _attempt(p, shelves, heights, bus_far, work)
             break
         except Blocked:
             continue
@@ -167,7 +175,7 @@ def _fitted(p, shelves, bus_far, beat=math.inf, deadline=math.inf):
     fitted = [max(MIN_CHANNEL, used) for used in got.channels_used]
     if fitted != heights:
         try:
-            return _attempt(p, shelves, fitted, bus_far, deadline), fitted
+            return _attempt(p, shelves, fitted, bus_far, work), fitted
         except Blocked:
             pass
     return got, heights
@@ -223,7 +231,7 @@ def _refuse(p):
                 raise CompactError(f"{r.step.item}: a port off the row's south or north edge")
 
 
-def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -> Result:
+def _attempt(p, shelves, heights, bus_far=True, work=None, west=False) -> Result:
     """One layout of these shelves and channel heights, or Blocked. west: every shelf as
     far west as the lines running beside it let it, not only as far as the box needs."""
     rows, belt = p["rows"], p["belt"]
@@ -417,7 +425,7 @@ def _attempt(p, shelves, heights, bus_far=True, deadline=math.inf, west=False) -
     spec = [(cn.start, cn.heading, cn.goal, cn.facing, lambda x, y, cn=cn: claimed.get((x, y), cn.owner) == cn.owner)
             for cn in conns]
     paths = route_all(spec, lambda x, y: canvas.free(x, y) and x >= yard[band.get(y, 0)][0], reach, bounds,
-                      deadline=min(deadline, time.monotonic() + NEGOTIATION))
+                      work=(work or Work()).part(NEGOTIATION))
     if paths is None:
         raise Blocked("the belts don't route without sharing a tile")
     for cn, path in zip(conns, paths):
