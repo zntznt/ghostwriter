@@ -1293,3 +1293,139 @@ as not routing. On the rows the search kept:
 - **Not built: a tighter bound for any layout.** Routing lower bounds (cut capacity,
   Steiner trees, multicommodity flow) would add the connections to the rows' own tiles;
   the rows alone are 10 to 48% of the box.
+
+## Thinner channels (built)
+
+"How close to optimal" left most factories within two columns of their bound's width and
+3 to 20 rows taller: channels past their least. Which pieces hold those rows, and the
+smallest change that thins them.
+
+### Where the rows go
+
+The 34 requests without research, as laid out before this step: 152 channels, 652
+channel rows, 348 of them past the 2-row least. For each channel, what blocks it a row
+thinner (its layout tried one row less, every other channel as kept), and the fixed
+pieces in each row:
+
+| What blocks a row less | Rows past the least |
+|---|---|
+| a tap ("no room for its tap") | 250 (72%) |
+| the router ("the belts don't route") | 40 |
+| nothing: it routes, the trim stopped at another channel first | 30 |
+| a split | 16 |
+| an adapter | 6 |
+| a pipe | 6 |
+
+| Piece | Channel rows holding it |
+|---|---|
+| a tap (the bus splitter's branch, its comb) | 210 |
+| a split's comb or lead | 110 |
+| an adapter | 101 |
+| a merge | 49 |
+| a row's output splitter | 12 |
+| routes only | 158 |
+| nothing | 80 |
+
+A channel is about 3 rows taller for each line tapped into it: 2.8 rows on average with
+none (77 channels), 4.4 with one (45), 7.4 with two (23), 10.3 with three (7). A tap took
+three rows: its branch row, carrying the comb's trunk east of the yard; the comb's
+splitters' north halves with a belt turning north on each; and that branch's first
+routed tile. And taps were kept three rows from any other.
+
+### Closer taps (`belts.Taps(close=True)`)
+
+- **Taps as close as the bus lets them.** Taps go in west to east, so every row already
+  in a channel is a branch of a line west of this one, crossing its column.
+  - **South of such a branch:** the tap may take the very next row. Its line dives
+    under the branch from its splitter's output (an underground entrance on the tile
+    the splitter feeds).
+  - **North of one:** the line must come up out of its tunnel before its splitter, so
+    three rows north, or two at its last use, where it turns instead.
+  - **Its own line's entry onto the bus, south of it:** three rows.
+- **A comb under another tap's trunk.** Where a branch's way north is another tap's
+  trunk, the comb lays no belt turning north. The branch's route starts on its
+  splitter's north output, items moving on along the trunk, and runs beside that trunk
+  to get north of it. So a tap takes two rows, not three: copper's comb at circuits
+  5/s sits two rows south of iron's trunk.
+
+### Only as a last trim
+
+Through the whole search, the closer pieces lay out more combinations, which changes
+what the step-bounded search spends its steps on. The two pieces through the whole
+search, four ways, on the 34 requests (total area 51,568):
+
+| Variant | Smaller | Larger | Total |
+|---|---|---|---|
+| closer taps only | 7 | 2 (circuits 15/s +6, chemical science +176) | -0.6% |
+| combs of two rows everywhere (a branch's way north unclaimed) | 12 | 13 (production science fell back to the bus) | +14.4% |
+| that, with each branch's way north free when laid | 10 | 3 | -2.6% |
+| a comb of two rows only under another tap's trunk | 14 | 3 (chemical science 3,652 to 3,875, from crude oil 4,700 to 5,886, production science 2,852 to 3,082) | +1.7% |
+
+Chemical science shows why. Closer pieces let the narrowest shelving (one row a shelf)
+route at 11-row channels, where before it didn't. The search trims the first layout it
+finds, spending most of the steps on a shelving that ends at 3,875. Before, that
+shelving failed, and the search went on to the 5-shelf one that trims to 3,652.
+
+So `compact.build` lays out and trims exactly as before. Then, from the kept layout's
+heights, it trims each channel once more, a row at a time while it routes with the
+closer pieces. Every step keeps the layout only if it routes and is smaller, so no
+factory is larger than without them, whatever they'd do earlier in the search.
+
+### Results
+
+Every blueprint that changed passes `gen factory ... --validate` in game on 2.1.23 at its
+rate (39: 16 without research, 13 at research 7, 10 of the survey); every other one is
+byte-identical. Build times are each sweep's, three requests at a time on this Mac.
+
+| Request | Before | Now | Gap before, now | Build | In game |
+|---|---|---|---|---|---|
+| processing-unit 0.5/s, oil=1 | 5,382 | **4,810 (-11%)** | 45%, 29% | 64.2 to 61.5 s | 0.598/s |
+| processing-unit 0.5/s | 4,250 | **3,950 (-7%)** | 50%, 40% | 64.7 to 56.8 s | 0.576/s |
+| electronic-circuit 15/s | 1,710 | **1,596 (-7%)** | 28%, 20% | 17.2 to 15.0 s | 15/s |
+| logistic-science-pack 0.5/s, assembling machine 3, fast belts | 704 | **672 (-5%)** | 17%, 12% | 6.2 to 5.8 s | 0.829/s |
+| automation-science-pack 1/s, smelt=1 | 900 | **860 (-4%)** | 48%, 41% | 3.1 to 2.3 s | 1.2/s |
+| electronic-circuit 5/s | 600 | **580 (-3%)** | 32%, 27% | 1.1 to 1.0 s | 6/s |
+| electronic-circuit 5/s, assembling machine 3 | 600 | **580 (-3%)** | 32%, 27% | 1.1 to 0.9 s | 6/s |
+| electronic-circuit 5/s, smelt=1 | 1,280 | **1,240 (-3%)** | 30%, 26% | 3.6 to 2.8 s | 5.83/s |
+| inserter 1/s | 576 | **558 (-3%)** | 44%, 40% | 2.0 to 1.8 s | 1.5/s |
+| battery 2/s | 1,073 | **1,044 (-3%)** | 32%, 28% | 2.2 to 2.1 s | 2.46/s |
+| electric-engine-unit 0.5/s, oil=1 | 2,231 | **2,185 (-2%)** | 24%, 21% | 30.0 to 29.1 s | 0.603/s |
+| electronic-circuit 10/s, fast belts | 1,000 | **980 (-2%)** | 20%, 17% | 1.6 to 1.4 s | 12/s |
+| battery 1/s, oil=1 | 1,566 | **1,537 (-2%)** | 15%, 13% | 4.0 to 4.0 s | 1.3/s |
+| logistic-science-pack 1/s | 1,062 | **1,044 (-2%)** | 22%, 20% | 19.1 to 17.6 s | 1.26/s |
+| electronic-circuit 20/s, express belts | 1,640 | **1,620 (-1%)** | 14%, 13% | 2.9 to 2.5 s | 21/s |
+| flying-robot-frame 0.2/s, oil=1 | 4,420 | **4,368 (-1%)** | 90%, 88% | 76.5 to 73.6 s | 0.221/s |
+
+- **The 34 requests:** 16 smaller, none larger; 51,568 tiles in all to 50,198 (-2.7%).
+  The median gap to the bound falls from 29% to 27%.
+- **At research 7:** 13 smaller, none larger; 49,902 to 48,605 (-2.6%), median gap 29%
+  to 27%. Inserters at 1/s go from 377 to 351 tiles (gap 16% to 8%), processing units
+  from crude oil from 5,278 to 4,706 (-11%).
+- **The 16 surveyed:** 10 smaller, none larger; 42,428 to 41,937 (-1.2%), median gap 44%
+  to 43%. Robot frames at 0.2/s go from 3,157 to 2,952 (-6%), rails from 440 to 418.
+- **The new shapes, in game.** Of the 39 changed layouts, 26 have taps under three rows
+  apart (15 a row apart), 25 a comb's branch running beside another tap's trunk, and 5
+  a bus line diving under a branch from its splitter's output (processing units with
+  and without crude oil, at research 0 and 7, and robot frames at 0.2/s). All pass.
+- **Build time** stays about the same: the last trim tries each channel a row thinner,
+  and most stop at the first row.
+- **Where the rows go now:** on the 34, 294 channel rows past the least, from 348 (-16%).
+  Taps still block 209 of them, the router 46, splits 16, adapters and pipes 6 each;
+  taps hold 196 channel rows, from 210.
+
+### Negative results and not built
+
+- **Negative: the closer pieces through the whole search.** Four ways, each laid out
+  more of the 34 smaller and some larger, up to production science falling back to the
+  bus (the table above). Kept only as the last trim.
+- **Negative: a comb's branch starting on its splitter's output everywhere.** Under a
+  shelf it can only run on east into the next splitter, so the comb is placed and its
+  layout doesn't route: production science didn't route at any shelf width.
+- **Not built: two lines on one belt.** Where several ports take the same two bus lines
+  on their two lanes (circuits take iron and copper), both could go onto one belt's two
+  lanes once, side-loaded at the yard, and one comb split that belt to every port, fed
+  from below: one comb a channel, not two. Taps still block most of the rows past the
+  least; this is the next lever on them.
+- **Not built: closer splits and adapters.** Splits block 16 rows past the least and
+  adapters 6; a split's comb under a merge's or another split's trunk could run beside
+  it as a tap's does.

@@ -7,7 +7,7 @@
  "cell {\"producer\": \"iron-gear-wheel\", \"recipe\": \"inserter\"}": "600088a4785124abce198e9c4b4c6a7e6cfaaf368d11a7aad06189b317ed8552",
  "cell {}": "d537e3719aa92894d341e033902dae5ffaec93e167bf5ffd67656dc42f2fb2ff",
  "factory {\"item\": \"electronic-circuit\", \"layout\": \"bus\", \"rate\": 5}": "58784686f10069c5b2fd7cf300a9de1d36779f897ab4c38f0ae8f002cdc684f7",
- "factory {\"item\": \"electronic-circuit\", \"rate\": 5}": "b375ac699b53985c8afbb050e0b84932a754e46a14157799f2a37d895d340460",
+ "factory {\"item\": \"electronic-circuit\", \"rate\": 5}": "3228e24bdfcc876efeb3a4cf0257a632a248b340e418ed01a9df9db023d76c18",
  "factory {\"item\": \"plastic-bar\", \"rate\": 5}": "d585c46b81b506589d6b6cb533df5c7e3ebec41277e8357ce63686c6a9c2d89d",
  "fluid_block {\"recipe\": \"advanced-oil-processing\"}": "514b5e1aefc963550a396a389371c723c18ae7f53129ff10a67e428f25cb8912",
  "fluid_block {\"recipe\": \"lubricant\"}": "3dbb684db1d9fe8e5aed4e85f8836373bfa8858431f8c6af66e72266177b26c3",

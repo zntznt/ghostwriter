@@ -18,6 +18,15 @@ class Comb(unittest.TestCase):
         # Nothing feeds a splitter's other input.
         self.assertEqual(reserve, [(2, -1), (6, -1)])
 
+    def test_under_another_taps_trunk_a_branch_runs_beside_it_from_its_splitter(self):
+        # Two rows north, another tap's trunk: the branch's route starts on the splitter's
+        # north output, items moving on east, and runs beside the trunk to get north of it.
+        trunk = lambda x, y: y == -2 and x < 6  # noqa: E731
+        place, _, branches = belts.comb(lambda x, y: not trunk(x, y), (0, 0), E, self.TARGETS, beside=trunk)
+        self.assertEqual([(h, d, t[3]) for h, d, t in branches], [((4, -1), E, "a"), ((8, -2), N, "b"),
+                                                                     ((8, 0), E, "c")])
+        self.assertNotIn(("belt", 4, -1, N), place)
+
     def test_it_doesnt_fit_through_a_taken_tile(self):
         self.assertIsNone(belts.comb(lambda x, y: (x, y) != (5, 0), (0, 0), E, self.TARGETS))
 
@@ -65,6 +74,34 @@ class Split(unittest.TestCase):
         belts.split(canvas, free, (10, -1), targets, "transport-belt", "splitter", conns, "plastic-bar")
         self.assertEqual(sorted(c.goal for c in conns), [(14, -30), (18, -30)])
         self.assertTrue(all(c.start[1] < -19 for c in conns))
+
+
+class Tap(unittest.TestCase):
+    # A bus of two lines: iron at column 0 (its branch already across the bus at row -6, its
+    # comb east of the yard) and copper at column 2, tapped next; the yard is columns 4 and 5.
+    def tap(self, last, taken=(), close=True):
+        canvas, conns, taps = factory.Canvas(), [], belts.Taps(rows=[(-6, 0)], close=close)
+        for x in range(1, 5):
+            canvas.take(x, -6, "tap iron-plate 0")
+        yb = belts.tap(canvas, lambda x, y: canvas.free(x, y) and y not in taken, taps, list(range(-1, -11, -1)),
+                       2, 4, 5, last, [(9, -12, N, "row 0 port 9")], "transport-belt", "splitter", conns,
+                       "copper-plate")
+        return yb, taps
+
+    def test_south_of_a_western_lines_branch_it_takes_the_next_row(self):
+        # It dives under the branch from its splitter's output: no rows between.
+        yb, taps = self.tap(last=False, taken=(-10, -9))
+        self.assertEqual(yb, -5)
+        self.assertEqual(taps.rows, [(-6, 0), (-5, 2)])
+
+    def test_north_of_one_it_leaves_room_to_come_up_between(self):
+        # Its line comes up out of the tunnel north of the branch, then into its splitter (or
+        # turns, at its last use): three rows north, or two.
+        self.assertEqual(self.tap(last=False, taken=(-10,))[0], -9)
+        self.assertEqual(self.tap(last=True, taken=(-10, -9))[0], -8)
+
+    def test_unless_close_three_rows_from_any_other(self):
+        self.assertEqual(self.tap(last=False, taken=(-10, -9), close=False)[0], -3)
 
 
 class Merge(unittest.TestCase):
