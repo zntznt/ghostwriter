@@ -746,3 +746,131 @@ default factory search is exactly as before.
   a fluid row's pipe face sits where a cell keeps its handover and output inserter
   columns, so it needs pipes threaded through the chain: a new layout, not an
   option on this one.
+
+## Inserter research (built)
+
+Every rate so far assumed no research: an inserter moves one item a swing. A player
+past the first science packs has bigger hands. `research=inserter-capacity-bonus=N`
+on `factory`, `production`, `assembly_row`, `cell`, `fluid_row` and `fluid_block`
+sizes inserters at rates measured in game at that research (NOTES.md), and runs the
+flow and chain tests with it set on the force. Levels 2 and 7 are measured: they are
+the two that grow the hand of every inserter the generators place (to 2, then 3), so
+2 also stands for 3 to 6. Without `research=` every build is byte for byte what it
+was: `tests/test_research.py` pins 18 of them, from rows to factories.
+`smelting_column` doesn't take it: it places one inserter in and one out a furnace,
+not sized from the rates. Nor do refineries and cracking, which have no item
+inserters.
+
+### Rows (the #56 audit requests)
+
+Each row alone, as many machines as its belts carry. In game is `gen ... --validate`
+at that research, 2.1.23.
+
+| Request | No research | Capacity 2 | Capacity 7 | In game, 2 and 7 |
+|---|---|---|---|---|
+| assembly_row, electronic-circuit, assembling machine 1 | 78 tiles, 4 machines, 4/s, 19.5 tiles per item/s | 225, 10, 10/s, 22.5 | the same as 2 | 10/s, 10/s |
+| assembly_row, electronic-circuit, assembling machine 2 | 52, 2, 3/s, 17.3 | 39, 2, 3/s, 13.0 | 135, 6, 9/s, 15.0 | 3/s, 8.99/s |
+| assembly_row, iron-gear-wheel, assembling machine 3, fast belt | 312, 12, 30/s, 10.4 | 234, 12, 30/s, 7.8 | 234, 12, 30/s, 7.8 | 30/s, 30/s |
+| fluid_row, processing-unit, assembling machine 3 | refused | 169, 6, 0.75/s, 225 | 130, 6, 0.75/s, 173 | 0.753/s, 0.748/s |
+| fluid_block, sulfuric-acid | 175, 12 inserters | 150, 8 inserters | 150, 4 inserters | 200/s, 199/s |
+
+Unchanged at either level: advanced circuits and automation and logistic science in
+assembly rows, plastic, batteries and electric engines in fluid rows (their machines
+are bound by the belt lanes, not the inserters), lubricant, oil processing and
+cracking blocks, and smelting columns.
+
+- **Smaller where inserters set the width.** Gears on assembling machines 3 take 5
+  inserters a machine without research, 3 at level 2 and 2 at 7: the same 12
+  machines in 234 tiles against 312.
+- **Longer where a second belt now keeps up.** A row's far input belt is reached by
+  long-handed inserters, 1.2/s without research, 2.4/s at 2 and 3.4/s at 7. Where
+  that was too slow the row kept one belt, which caps its machines; with research
+  it takes both, and holds more. Circuits on assembling machines 1 go from 4
+  machines to 10, and per item/s that is larger (19.5 to 22.5 tiles); on machines
+  2 at level 7 from 2 to 6 (17.3 to 15.0).
+- **The refusal goes.** Processing units on assembling machines 3 need 4 inserters a
+  side without research, where 3 fit; at 2 and 7 they fit.
+
+### Factories (the 34-request sweep)
+
+Each request built without research and with `research=inserter-capacity-bonus=7`,
+areas from `bp density`. Every request whose blueprint changed (31 of 34; sulfur and
+both lubricant requests come out the same) passed `gen factory ...
+research=inserter-capacity-bonus=7 --validate` on 2.1.23 (macOS); the area at 7 is
+that run's. Cells are tiles: area, empty share, tiles per item/s.
+
+| Request | No research | Capacity 7 | Change | Inserters | In game at 7 |
+|---|---|---|---|---|---|
+| electronic-circuit 5/s | 600, 58%, 120 | 600, 59%, 120 |  | 26 to 22 | 5.98/s |
+| electronic-circuit 15/s | 1,710, 57%, 114 | 1,710, 57%, 114 |  | 80 to 68 | 15/s in window 2 |
+| electronic-circuit 5/s, assembling machine 3 | 600, 58%, 120 | 600, 58%, 120 |  | 26 to 26 | 10/s |
+| electronic-circuit 2/s, assembling machine 1 | 475, 53%, 238 | 475, 54%, 238 |  | 20 to 16 | 2.67/s |
+| electronic-circuit 10/s, fast belts | 1,000, 56%, 100 | 912, 45%, 91 | **-9%** | 52 to 48 | 12/s |
+| electronic-circuit 20/s, express belts | 1,640, 56%, 82 | 1,425, 40%, 71 | **-13%** | 92 to 90 | 21/s |
+| electronic-circuit 5/s, smelt=1 | 1,280, 47%, 256 | 1,280, 49%, 256 |  | 74 to 70 | 5.85/s |
+| automation-science-pack 1/s | 450, 52%, 450 | 450, 52%, 450 |  | 19 to 18 | 1.2/s |
+| automation-science-pack 1/s, smelt=1 | 900, 52%, 900 | 900, 52%, 900 |  | 31 to 30 | 1.2/s |
+| logistic-science-pack 1/s | 1,062, 52%, 1,062 | 896, 52%, 896 | **-16%** | 41 to 34 | 1.24/s |
+| logistic-science-pack 0.5/s, fast belts, assembling machine 3 | 704, 51%, 1,408 | 640, 50%, 1,280 | **-9%** | 31 to 20 | 0.83/s |
+| military-science-pack 0.5/s | 1,196, 50%, 2,392 | 1,196, 50%, 2,392 |  | 33 to 31 | 0.6/s |
+| inserter 1/s | 576, 62%, 576 | 377, 60%, 377 | **-35%** | 15 to 10 | 1.5/s |
+| iron-gear-wheel 1/s | 88, 67%, 88 | 88, 68%, 88 |  | 3 to 2 | 1.51/s |
+| engine-unit 1/s | 860, 44%, 860 | 860, 44%, 860 |  | 49 to 48 | 1.05/s |
+| battery 2/s | 1,073, 55%, 536 | 1,073, 55%, 536 |  | 26 to 24 | 2.45/s |
+| electric-engine-unit 0.5/s | 1,540, 46%, 3,080 | 1,587, 46%, 3,174 | +3% | 55 to 50 | 0.6/s |
+| sulfur 5/s | 234, 53%, 47 | 234, 53%, 47 |  | 3 to 3 | same blueprint |
+| plastic-bar 5/s | 272, 57%, 54 | 272, 57%, 54 |  | 8 to 8 | 8.01/s |
+| sulfuric-acid 10/s | 228, 48%, 23 | 240, 52%, 24 | +5% | 4 to 2 | 19.8/s |
+| lubricant 10/s | 99, 54%, 10 | 99, 54%, 10 |  | 0 to 0 | same blueprint |
+| advanced-circuit 1/s | 1,242, 47%, 1,242 | 1,219, 47%, 1,219 | -2% | 54 to 46 | 1.16/s |
+| chemical-science-pack 0.5/s | 4,268, 64%, 8,536 | 4,576, 65%, 9,152 | +7% | 106 to 97 | 0.601/s |
+| processing-unit 0.5/s | 5,000, 51%, 10,000 | 4,800, 50%, 9,600 | -4% | 148 to 124 | 0.558/s |
+| plastic-bar 5/s, oil=1 | 1,078, 52%, 216 | 1,078, 52%, 216 |  | 8 to 8 | 5.84/s |
+| sulfuric-acid 10/s, oil=1 | 792, 53%, 79 | 804, 54%, 80 | +2% | 4 to 2 | 13/s |
+| lubricant 10/s, oil=1 | 700, 51%, 70 | 700, 51%, 70 |  | 0 to 0 | same blueprint |
+| battery 1/s, oil=1 | 1,566, 56%, 1,566 | 1,566, 56%, 1,566 |  | 17 to 15 | 1.3/s |
+| advanced-circuit 1/s, oil=1 | 2,116, 51%, 2,116 | 2,093, 51%, 2,093 | -1% | 54 to 46 | 1.17/s |
+| chemical-science-pack 0.5/s, oil=1 | 6,372, 67%, 12,744 | 6,372, 67%, 12,744 |  | 106 to 97 | 0.611/s |
+| electric-engine-unit 0.5/s, oil=1 | 2,424, 52%, 4,848 | 2,472, 52%, 4,944 | +2% | 52 to 50 | 0.599/s |
+| flying-robot-frame 0.2/s, oil=1 | 7,028 (the bus), 63%, 35,140 | 7,028 (the bus), 63%, 35,140 |  | 61 to 54 | 0.225/s |
+| processing-unit 0.5/s, oil=1 | 6,734, 55%, 13,468 | 6,370, 54%, 12,740 | **-5%** | 148 to 124 | 0.579/s |
+| production-science-pack 0.2/s | 3,864, 65%, 19,320 | 2,291, 47%, 11,455 | **-41%** | 60 to 50 | 0.21/s |
+
+Smaller on 10 of 34, by 1 to 41%; the same area on 19, 13 of them with 1 to 12
+fewer inserters; larger on 5, by 2 to 7%. Where it comes from:
+
+- **A row that fell back now takes the machine asked for.** `production` gives a row
+  the next slower machine when its inserters don't fit. Without research production
+  science's rails, the inserter rows of inserters and logistic science, and military
+  science's walls fell back to assembling machines 1; at 7 they take machines 2.
+  Production science, its rails on machines 2, is 41% smaller (3,864 to 2,291
+  tiles), inserters at 1/s 35% (576 to 377), logistic science 16% (1,062 to 896). Asked for assembling machines 3,
+  every request's circuit rows (and processing units' own row) fell back to machines
+  2 without research and take machines 3 at 7 (`production.solve` on all 34).
+- **One row where two were needed.** At 7 a circuit row holds 4 machines on fast
+  belts (7 on express) where it held 2 (4), so the circuits take one row, and the
+  rows as solved beat the cable cell they lost to without research: 1,000 to 912
+  tiles on fast belts, 1,640 to 1,425 on express.
+- **Fewer inserters, the same box.** Where machines set a row's width, fewer
+  inserters only leave more of its columns empty.
+
+### Negative results (this step)
+
+- **Larger at 7.** Electric engines at 0.5/s (1,540 to 1,587 tiles) and sulfuric acid
+  at 10/s (228 to 240; from crude oil 792 to 804): the acid block alone is smaller
+  (175 to 150), but its ports move and the factory around it grows. Electric engines
+  from crude oil (2,472 validated, 2,400 in the sweep, 2,424 without research) and
+  chemical science (4,576 validated, 4,224 in the sweep, 4,268 without) are
+  budget-bound searches that land differently from run to run, as do processing
+  units (4,800 validated, 4,475 in the sweep), so their changes are within that. A
+  researched player could build the unresearched layout, so `factory` could keep
+  the smaller of the two; not built, since it doubles the search for 2 to 5% on
+  3 of 34.
+- **Only one hand size measured per step.** Levels 3 to 6 move what 2 moves for every
+  non-bulk inserter, so they aren't measured, and `research=` with them is refused,
+  naming the command that would measure it: ask for 2. transport-belt-capacity 2
+  adds a fourth item to the hand, but it comes after stack inserters, so it isn't
+  measured.
+- **Some rigs cap the reading.** A fast inserter onto a transport belt stops at 3.75/s
+  at both levels, and handovers of about 5/s are the rig's cable machine (NOTES.md):
+  sizing at those rates can place an inserter more than needed, never fewer.

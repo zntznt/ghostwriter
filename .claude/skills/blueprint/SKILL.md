@@ -53,6 +53,7 @@ SRC is a string, a file path, or `-` (stdin).
    - **One fluid ingredient** (plastic, batteries, explosives, solid fuel, processing units, electric engines, rocket fuel): use `fluid_row`. Machines face a shared middle pipe, and the product leaves on the inner belt's far lane.
    - **Any item recipe in assemblers:** use `assembly_row`, e.g. `recipe=electronic-circuit machine=assembling-machine-1`. It sizes machines to the belts, inserters to the measured rates, and spreads ingredients over one or two input belts. When nothing fits, it says why.
    - **Smelting:** use `smelting_column`.
+   - **Inserter research:** `factory`, `production`, `assembly_row`, `cell`, `fluid_row` and `fluid_block` take `research=inserter-capacity-bonus=N`, N 2 or 7 (measured in game; 3 to 6 move what 2 does, so pass 2 for them, and other levels are refused). Inserters are sized at the rates measured at that research, and `--validate` runs the flow and chain tests with it set on the force. On the 34-request sweep level 7 made 10 factories 1 to 41% smaller (production science 3,864 to 2,291 tiles, inserters at 1/s 576 to 377), 5 came out 2 to 7% larger, and processing units on assembling machines 3 build where they were refused (docs/layout-optimizer.md). Without it a build assumes no research, which always works. When the player says what they've researched, or a row is refused or falls back to a slower machine, pass it. Tell the player the build assumes that research (level 2 takes red and green science, 7 utility science): with less, its inserters fall short of the rate. `smelting_column` doesn't take it.
    - **Rates and layout:** take rates from `tools/rates.py` (recipes, machine speeds, belt lanes, measured inserter rates) and columns and poles from `tools/layout.py`. Never hard-code a speed.
 2. A new generator is `generators/<name>.py` exposing
    `build(**params) -> Blueprintable` (Draftsman). Docstring: what it does and
@@ -87,7 +88,8 @@ SRC is a string, a file path, or `-` (stdin).
    building on a test surface, and the circuit and flow cases by name.
    Inputs in circuit tests are synthetic (injected signals, script power),
    and flow tests feed belts by script with no research on the force (one
-   item per inserter swing, all recipes unlocked for the run), so name what
+   item per inserter swing, all recipes unlocked for the run) unless the
+   build took `research=` (then with just that research), so name what
    the user still has to check in a real factory.
 7. If validation fails: read the error, fix the generator, re-run. A key
    the game drops is either a typo or something Draftsman writes in an older
