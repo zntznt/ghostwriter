@@ -491,7 +491,8 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     that row (generators/cell.py), then shared producers in a cell with every row that
     takes one, each in the budget left but at least a quarter of it, and keeps the
     smallest; 0 skips them. research: inserter research ("inserter-capacity-bonus=7") the
-    rows are sized for; the build moves its rate only with that researched."""
+    rows are sized for; the build moves its rate only with that researched. Compact also
+    tries the rows sized without it in the budget left, and keeps them if smaller."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill, **({"research": research} if research else {}))
     compact = _compact(layout, params, budget, say=True, cells=cells)
@@ -518,19 +519,27 @@ def _compact(layout, params, budget=None, say=False, cells=1):
         # Rows as solved first, with the whole budget; then, each in what's left but at least
         # a quarter of it, with each producer only one row uses fused into a cell with it,
         # and with shared producers fused too: each only if it has cells and isn't the same
-        # steps as one before. The smallest is kept.
+        # rows as one before. Asked for research, the same again with rows sized without it,
+        # which a researched player can build too, each only in what's left. The smallest is
+        # kept.
         start, laid, errors, seen = time.monotonic(), [], [], []
-        for fused in (0, 1, 2) if cells else (0,):
-            left = max(budget - (time.monotonic() - start), budget / 4 if fused else 0)
-            p = rows_and_lines(**params, cells=fused)
-            steps = [(s.generator, s.item, s.rows, sorted(s.params.items())) for s in p["steps"]]
-            if fused and (not any(s.generator == "cell" for s in p["steps"]) or steps in seen):
-                continue
-            seen.append(steps)
-            try:
-                laid.append((p, compact.build(p, left)))
-            except compact.CompactError as e:
-                errors.append(str(e))
+        asked = params.get("research", "")
+        for research in dict.fromkeys((asked, "")):
+            for fused in (0, 1, 2) if cells else (0,):
+                left = budget - (time.monotonic() - start)
+                if research == asked:
+                    left = max(left, budget / 4 if fused else 0)
+                elif left <= 0:
+                    break
+                p = rows_and_lines(**{**params, "research": research}, cells=fused)
+                rows = [r.bp.to_dict() for r in p["rows"]]
+                if fused and not any(s.generator == "cell" for s in p["steps"]) or rows in seen:
+                    continue
+                seen.append(rows)
+                try:
+                    laid.append((p, compact.build(p, left)))
+                except compact.CompactError as e:
+                    errors.append(str(e))
         if not laid:
             _COMPACT[key] = errors[0]
         else:  # kept only if smaller: one tall row can set both boxes (processing units)

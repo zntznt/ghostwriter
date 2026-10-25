@@ -837,7 +837,8 @@ that run's. Cells are tiles: area, empty share, tiles per item/s.
 | production-science-pack 0.2/s | 3,864, 65%, 19,320 | 2,291, 47%, 11,455 | **-41%** | 60 to 50 | 0.21/s |
 
 Smaller on 10 of 34, by 1 to 41%; the same area on 19, 13 of them with 1 to 12
-fewer inserters; larger on 5, by 2 to 7%. Where it comes from:
+fewer inserters; larger on 5, by 2 to 7% (no longer: [keeping the smaller
+layout](#keeping-the-smaller-layout-built)). Where it comes from:
 
 - **A row that fell back now takes the machine asked for.** `production` gives a row
   the next slower machine when its inserters don't fit. Without research production
@@ -854,6 +855,60 @@ fewer inserters; larger on 5, by 2 to 7%. Where it comes from:
 - **Fewer inserters, the same box.** Where machines set a row's width, fewer
   inserters only leave more of its columns empty.
 
+### Keeping the smaller layout (built)
+
+Of the 5 that came out larger at 7, 3 do every run: sulfuric acid at 10/s (228 to
+240 tiles; from crude oil 792 to 804) and electric engines at 0.5/s (1,540 to 1,587).
+The other 2 fill the budget and land differently each run.
+
+- **Why the acid grows.** With one inserter where it had three, the acid plant's
+  pole takes the first tile, in order, that powers both the plant and the inserter,
+  and that one is north of the pipes: the block is a row taller (7 by 6 against 7
+  by 5). Preferring a tile inside the block would fix it at the cause, but it
+  changes default builds too: 201 of 396 default fluid blocks tried (12 recipes of
+  22, sulfuric acid among them). So it isn't done.
+- **Why electric engines grow.** At 7 the circuit row is a row shorter (7 by 3
+  against 7 by 4). The search picks the same shelves and channels, but the router
+  lays a long belt down the east side a column further out: 23 by 69 against 22 by
+  70. A smaller row doesn't always route smaller, so there's no simple cause to fix.
+- **The fix: compare whole layouts.** A researched player can build the rows sized
+  without research: their extra inserters only wait. With `research=` the compact
+  search also lays those out, after the researched ones and each only in the budget
+  left, and keeps the smallest. A tie keeps the researched rows, which have fewer
+  inserters, and rows the research leaves the same aren't laid out twice. A build
+  without `research=` is unchanged (`tests/test_research.py`).
+
+At level 7, before and now, in the same runs (areas from `bp density`, build times on
+this Mac). The 3 whose blueprint changed passed `gen factory ...
+research=inserter-capacity-bonus=7 --validate` on 2.1.23 twice; the rest build the
+same researched rows as before.
+
+| Request | No research | 7 before | 7 now | Build at 7 | In game at 7 |
+|---|---|---|---|---|---|
+| electric-engine-unit 0.5/s | 1,540 | 1,587 | **1,540** | 22.2 to 41.9 s | 0.6/s, 0.603/s |
+| sulfuric-acid 10/s | 228 | 240 | **228** | 0.1 to 0.2 s | 19.7/s, 20.1/s |
+| sulfuric-acid 10/s, oil=1 | 792 | 804 | **792** | 0.8 to 1.5 s | 13/s, 13.1/s |
+| chemical-science-pack 0.5/s | 4,224 | 4,180 | 4,180 | 58.4 to 58.4 s | |
+| electric-engine-unit 0.5/s, oil=1 | 2,231 | 2,231 | 2,231 | 40.1 to 43.3 s | |
+| electronic-circuit 10/s, fast belts | 1,000 | 912 | 912 | 1.3 to 2.7 s | |
+| electronic-circuit 20/s, express belts | 1,640 | 1,425 | 1,425 | 2.4 to 4.5 s | |
+| logistic-science-pack 1/s | 1,062 | 896 | 896 | 6.0 to 32.4 s | |
+| logistic-science-pack 0.5/s, fast belts, assembling machine 3 | 704 | 640 | 640 | 5.9 to 11.9 s | |
+| inserter 1/s | 576 | 377 | 377 | 0.9 to 2.8 s | |
+| advanced-circuit 1/s | 1,242 | 1,219 | 1,219 | 6.4 to 13.2 s | |
+| processing-unit 0.5/s | 5,000 | 4,475 | 4,475 | 41.9 to 41.7 s | |
+| advanced-circuit 1/s, oil=1 | 2,116 | 2,093 | 2,093 | 20.7 to 40.8 s | |
+| processing-unit 0.5/s, oil=1 | 6,734 | 6,214 | 6,214 | 41.8 to 41.9 s | |
+| production-science-pack 0.2/s | 3,864 | 2,291 | 2,291 | 41.8 to 41.8 s | |
+
+- **No larger on all 15,** and the 3 back to their size without research.
+- **The cost is time, inside the budget.** Where the rows without research are laid
+  out, a build takes up to 26 s longer: logistic science at 1/s 6.0 to 32.4 s, whose
+  rows without research take 25 s to lose. A search the researched rows fill
+  (processing units, chemical and production science) leaves them no time, so it
+  takes no longer, and isn't compared: those can still land larger, within their
+  run-to-run spread.
+
 ### Negative results (this step)
 
 - **Larger at 7.** Electric engines at 0.5/s (1,540 to 1,587 tiles) and sulfuric acid
@@ -862,10 +917,8 @@ fewer inserters; larger on 5, by 2 to 7%. Where it comes from:
   from crude oil (2,472 validated, 2,400 in the sweep, 2,424 without research) and
   chemical science (4,576 validated, 4,224 in the sweep, 4,268 without) are
   budget-bound searches that land differently from run to run, as do processing
-  units (4,800 validated, 4,475 in the sweep), so their changes are within that. A
-  researched player could build the unresearched layout, so `factory` could keep
-  the smaller of the two; not built, since it doubles the search for 2 to 5% on
-  3 of 34.
+  units (4,800 validated, 4,475 in the sweep), so their changes are within that.
+  `factory` now keeps the smaller of the two (next section).
 - **Only one hand size measured per step.** Levels 3 to 6 move what 2 moves for every
   non-bulk inserter, so they aren't measured, and `research=` with them is refused,
   naming the command that would measure it: ask for 2. transport-belt-capacity 2
