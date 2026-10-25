@@ -40,6 +40,32 @@ class Adapter(unittest.TestCase):
                             claimed, "row")
         self.assertEqual(got, [(line, (5, -7, N, "row"))])
 
+    def test_a_port_beside_another_taking_two_lines_is_fed_round_from_beside_the_row(self):
+        # Two such ports side by side can't both have a belt below fed from both sides: each
+        # needs a tile under the other. The outer one turns in from a belt fed from both
+        # sides beside it, its lanes kept through the turn: heading east, the north side is
+        # the left lane; heading west, the south side.
+        for turn, tee, heading, left, right in ((belts.W, (4, -7), E, (4, -8, belts.S), (4, -6, N)),
+                                                (E, (6, -7), belts.W, (6, -6, N), (6, -8, belts.S))):
+            canvas, claimed, a, b = factory.Canvas(), {}, object(), object()
+            got = belts.adapter(canvas, canvas.free, 5, -8, -1, {"left": a, "right": b}, "transport-belt", claimed,
+                                "row", turn=turn)
+            self.assertEqual(got, [(a, (*left, "row left")), (b, (*right, "row right"))], turn)
+            placed = {tile: kw["direction"] for name, tile, kw in canvas.items}
+            self.assertEqual(placed, {(5, -7): N, tee: heading}, turn)
+
+
+class Split(unittest.TestCase):
+    def test_a_short_rows_comb_leads_up_past_a_taller_row_beside_it(self):
+        # Utility science's plastic row (4 tiles) stands beside 19-tile circuit cells on its
+        # shelf, the bus west of it: a comb a few tiles above its output can't pass them.
+        canvas, conns = factory.Canvas(), []
+        free = lambda x, y: canvas.free(x, y) and x >= 10 and not (x == 11 and -19 <= y <= 0)  # noqa: E731
+        targets = [(14, -30, N, "a"), (18, -30, N, "b")]
+        belts.split(canvas, free, (10, -1), targets, "transport-belt", "splitter", conns, "plastic-bar")
+        self.assertEqual(sorted(c.goal for c in conns), [(14, -30), (18, -30)])
+        self.assertTrue(all(c.start[1] < -19 for c in conns))
+
 
 class Merge(unittest.TestCase):
     def test_rows_merge_through_stacked_splitters_with_one_output_empty(self):
