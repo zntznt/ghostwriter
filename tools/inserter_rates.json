@@ -80,5 +80,171 @@
     "fast-inserter": 2.5,
     "long-handed-inserter": 1.249,
     "bulk-inserter": 2.508
+  },
+  "researched": {
+    "inserter-capacity-bonus=2": {
+      "rates": {
+        "inserter": {
+          "transport-belt": {
+            "from_belt": 1.704,
+            "to_belt": 1.696
+          },
+          "fast-transport-belt": {
+            "from_belt": 1.715,
+            "to_belt": 1.694
+          },
+          "express-transport-belt": {
+            "from_belt": 1.497,
+            "to_belt": 1.697
+          },
+          "turbo-transport-belt": {
+            "from_belt": 1.574,
+            "to_belt": 1.681
+          }
+        },
+        "fast-inserter": {
+          "transport-belt": {
+            "from_belt": 4.78,
+            "to_belt": 3.734
+          },
+          "fast-transport-belt": {
+            "from_belt": 4.999,
+            "to_belt": 4.802
+          },
+          "express-transport-belt": {
+            "from_belt": 4.997,
+            "to_belt": 4.796
+          },
+          "turbo-transport-belt": {
+            "from_belt": 5.461,
+            "to_belt": 4.794
+          }
+        },
+        "long-handed-inserter": {
+          "transport-belt": {
+            "from_belt": 2.371,
+            "to_belt": 2.448
+          },
+          "fast-transport-belt": {
+            "from_belt": 2.357,
+            "to_belt": 2.447
+          },
+          "express-transport-belt": {
+            "from_belt": 2.372,
+            "to_belt": 2.449
+          },
+          "turbo-transport-belt": {
+            "from_belt": 2.356,
+            "to_belt": 2.45
+          }
+        },
+        "bulk-inserter": {
+          "transport-belt": {
+            "from_belt": 7.221,
+            "to_belt": 3.748
+          },
+          "fast-transport-belt": {
+            "from_belt": 7.511,
+            "to_belt": 6.425
+          },
+          "express-transport-belt": {
+            "from_belt": 6.917,
+            "to_belt": 6.93
+          },
+          "turbo-transport-belt": {
+            "from_belt": 6.941,
+            "to_belt": 6.923
+          }
+        }
+      },
+      "machine_to_machine": {
+        "inserter": 1.719,
+        "fast-inserter": 5.029,
+        "long-handed-inserter": 2.505,
+        "bulk-inserter": 5.019
+      }
+    },
+    "inserter-capacity-bonus=7": {
+      "rates": {
+        "inserter": {
+          "transport-belt": {
+            "from_belt": 2.254,
+            "to_belt": 2.302
+          },
+          "fast-transport-belt": {
+            "from_belt": 2.365,
+            "to_belt": 2.427
+          },
+          "express-transport-belt": {
+            "from_belt": 2.253,
+            "to_belt": 2.499
+          },
+          "turbo-transport-belt": {
+            "from_belt": 2.369,
+            "to_belt": 2.502
+          }
+        },
+        "fast-inserter": {
+          "transport-belt": {
+            "from_belt": 7.222,
+            "to_belt": 3.75
+          },
+          "fast-transport-belt": {
+            "from_belt": 7.5,
+            "to_belt": 6.429
+          },
+          "express-transport-belt": {
+            "from_belt": 6.915,
+            "to_belt": 6.923
+          },
+          "turbo-transport-belt": {
+            "from_belt": 6.929,
+            "to_belt": 6.927
+          }
+        },
+        "long-handed-inserter": {
+          "transport-belt": {
+            "from_belt": 3.381,
+            "to_belt": 3.218
+          },
+          "fast-transport-belt": {
+            "from_belt": 3.473,
+            "to_belt": 3.457
+          },
+          "express-transport-belt": {
+            "from_belt": 3.398,
+            "to_belt": 3.598
+          },
+          "turbo-transport-belt": {
+            "from_belt": 3.472,
+            "to_belt": 3.604
+          }
+        },
+        "bulk-inserter": {
+          "transport-belt": {
+            "from_belt": 7.478,
+            "to_belt": 3.748
+          },
+          "fast-transport-belt": {
+            "from_belt": 13.496,
+            "to_belt": 7.336
+          },
+          "express-transport-belt": {
+            "from_belt": 14.969,
+            "to_belt": 10.313
+          },
+          "turbo-transport-belt": {
+            "from_belt": 14.998,
+            "to_belt": 11.785
+          }
+        }
+      },
+      "machine_to_machine": {
+        "inserter": 2.573,
+        "fast-inserter": 4.972,
+        "long-handed-inserter": 3.741,
+        "bulk-inserter": 4.992
+      }
+    }
   }
 }
