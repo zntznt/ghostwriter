@@ -87,6 +87,32 @@ class Rates(unittest.TestCase):
             self.rates.inserter_rate("inserter", "transport-belt", True, "inserter-capacity-bonus=4")
 
 
+class Researched(unittest.TestCase):
+    R = "inserter-capacity-bonus=7"
+
+    def test_research_lets_a_row_through_that_none_refuses(self):
+        # Without research one processing-unit machine 3 needs more inserters than fit beside it.
+        params = {"recipe": "processing-unit", "machine": "assembling-machine-3"}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with self.assertRaisesRegex(ValueError, "no layout fits"):
+                fluid_row.build(**params)
+            fluid_row.build(**params, research=self.R)
+        (flow,) = fluid_row.flow_tests(**params, research=self.R)
+        self.assertEqual(flow.research, {"inserter-capacity-bonus": 7})
+
+    def test_a_factory_passes_research_to_rows_that_size_inserters(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="electronic-circuit", rate=5, research=self.R, cells=1)
+        sized = {"assembly_row", "fluid_row", "fluid_block", "cell"}
+        for s in p["steps"]:
+            self.assertEqual(s.params.get("research"), self.R if s.generator in sized else None, s.generator)
+        self.assertTrue(any(s.generator == "cell" for s in p["steps"]))
+        (flow,) = factory.flow_tests(**{"item": "electronic-circuit", "rate": 5, "research": self.R}, layout="bus")
+        self.assertEqual(flow.research, {"inserter-capacity-bonus": 7})
+
+
 class DefaultBuilds(unittest.TestCase):
     def test_default_builds_are_unchanged(self):
         self.assertEqual(default_build_hashes(), json.loads(FIXTURE.read_text()))

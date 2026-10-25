@@ -64,7 +64,7 @@ class Plan:
 
 
 def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,
-          machines=0, inserter="", input_belts=0) -> list[Plan]:
+          machines=0, inserter="", input_belts=0, research="") -> list[Plan]:
     """Input layouts that fit the belts and inserters, best first."""
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
@@ -78,7 +78,7 @@ def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transp
     tiers = (inserter,) if inserter else REGULAR
 
     def pick(demand, from_belt, options):
-        return rates.fewest_inserters(demand, belt, from_belt, options, MARGIN)
+        return rates.fewest_inserters(demand, belt, from_belt, options, MARGIN, research)
 
     candidates, why, fewest = [], set(), None
     groupings = _groupings(list(r.ingredients), input_belts)
@@ -153,9 +153,11 @@ def plan(pole="medium-electric-pole", **params) -> Plan:
 
 
 def build(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,
-          machines=0, inserter="", input_belts=0, pole="medium-electric-pole") -> Blueprint:
+          machines=0, inserter="", input_belts=0, pole="medium-electric-pole", research="") -> Blueprint:
+    """research: inserter research the row is sized for (e.g. inserter-capacity-bonus=7), at
+    rates measured in game at it; none by default."""
     p = plan(pole, recipe=recipe, machine=machine, belt=belt, sides=sides, machines=machines,
-             inserter=inserter, input_belts=input_belts)
+             inserter=inserter, input_belts=input_belts, research=research)
     return _build(p, pole)
 
 
@@ -234,4 +236,4 @@ def flow_tests(**params):
     # A window counts each machine's crafts to within one, so give it 50.
     return [Flow(f"{p.machines * p.sides} machines: {total:g} {p.product}/s", feeds, ["product"],
                  {p.product: total}, warmup=rates.warmup_seconds(p.belt, p.machines * (p.size + p.gap), 1 / p.crafts),
-                 window=max(120, 50 / p.crafts))]
+                 window=max(120, 50 / p.crafts), research=rates.research_levels(params.get("research", "")))]

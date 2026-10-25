@@ -66,7 +66,7 @@ class Plan:
 
 
 def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembling-machine-2",
-         belt="transport-belt", sides=2, consumers=0, belts=1) -> Plan:
+         belt="transport-belt", sides=2, consumers=0, belts=1, research="") -> Plan:
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
     if belts not in (1, 2):
@@ -102,7 +102,7 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
     def from_belt(demand, who, options=REGULAR):
         if not demand:
             return REGULAR[0], 0
-        got = rates.fewest_inserters(demand, belt, True, options, MARGIN)
+        got = rates.fewest_inserters(demand, belt, True, options, MARGIN, research)
         if got[1] > s:
             raise ValueError(f"a {who} machine needs {got[1]} inserters from the belt where {s} fit")
         return got
@@ -110,7 +110,7 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
     feeders = {"P": from_belt(p_crafts * sum(pr.ingredients.values()), producer),
                "C": from_belt(c_crafts * sum(a for i, a in cr.ingredients.items() if i != item), recipe,
                               (LONG,) if far else REGULAR)}
-    output = rates.fewest_inserters(c_crafts * out, belt, False, REGULAR, MARGIN)
+    output = rates.fewest_inserters(c_crafts * out, belt, False, REGULAR, MARGIN, research)
     if output[1] > s:
         raise ValueError(f"a {recipe} machine needs {output[1]} inserters to the belt where {s} fit")
     give, need, lane = p_crafts * made, c_crafts * cr.ingredients[item], rates.lane_rate(belt)
@@ -128,7 +128,7 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
             flows = _handed(chain, give, need)
             if flows is None or not carried(chain):
                 continue
-            handover = [_handover(f) if f > 1e-9 else (REGULAR[0], 0) for f in flows]
+            handover = [_handover(f, research) if f > 1e-9 else (REGULAR[0], 0) for f in flows]
             if all(k <= s for _, k in handover):
                 return chain, handover
         return None
@@ -195,9 +195,10 @@ def _handed(chain: str, give: float, need: float) -> list[float] | None:
     return None if short > 1e-9 else flows
 
 
-def _handover(flow: float) -> tuple[str, int]:
+def _handover(flow: float, research="") -> tuple[str, int]:
     """The fewest inserters, then the cheapest, handing `flow` items/s machine to machine."""
-    best = min(((math.ceil(flow / (MARGIN * rates.handover_rate(i)) - 1e-9), k), i) for k, i in enumerate(REGULAR))
+    best = min(((math.ceil(flow / (MARGIN * rates.handover_rate(i, research)) - 1e-9), k), i)
+               for k, i in enumerate(REGULAR))
     return best[1], best[0][0]
 
 
@@ -212,8 +213,8 @@ def ingredients(recipe="electronic-circuit", producer="copper-cable", **_) -> di
 
 
 def build(recipe="electronic-circuit", producer="copper-cable", machine="assembling-machine-2",
-          belt="transport-belt", sides=2, consumers=0, belts=1, pole="medium-electric-pole") -> Blueprint:
-    p = plan(recipe, producer, machine, belt, sides, consumers, belts)
+          belt="transport-belt", sides=2, consumers=0, belts=1, pole="medium-electric-pole", research="") -> Blueprint:
+    p = plan(recipe, producer, machine, belt, sides, consumers, belts, research)
     s, n = p.size, len(p.chain)
     pitch = s + 1
     length = n * pitch - 1
@@ -302,4 +303,4 @@ def flow_tests(**params):
     return [Flow(f"{p.sides * p.chain.count('C')} {p.consumer.name} machines fed {p.item} by hand-over: "
                  f"{total:g} {p.product}/s", feeds, ["product"], {p.product: total},
                  warmup=rates.warmup_seconds(p.belt, machines * (p.size + 1), 1 / p.c_crafts + 1 / p.p_crafts),
-                 window=max(120, 50 / p.c_crafts))]
+                 window=max(120, 50 / p.c_crafts), research=rates.research_levels(params.get("research", "")))]
