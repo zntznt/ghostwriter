@@ -1421,11 +1421,101 @@ byte-identical. Build times are each sweep's, three requests at a time on this M
 - **Negative: a comb's branch starting on its splitter's output everywhere.** Under a
   shelf it can only run on east into the next splitter, so the comb is placed and its
   layout doesn't route: production science didn't route at any shelf width.
-- **Not built: two lines on one belt.** Where several ports take the same two bus lines
-  on their two lanes (circuits take iron and copper), both could go onto one belt's two
-  lanes once, side-loaded at the yard, and one comb split that belt to every port, fed
-  from below: one comb a channel, not two. Taps still block most of the rows past the
-  least; this is the next lever on them.
+- **Built next: two lines on one belt.** Where ports take two supplied items on their
+  two lanes, one line carries both ("Two items on one belt").
 - **Not built: closer splits and adapters.** Splits block 16 rows past the least and
   adapters 6; a split's comb under a merge's or another split's trunk could run beside
   it as a tap's does.
+
+## Two items on one belt (built)
+
+"Thinner channels" left taps blocking most channel rows past the least, a tap and a bus
+line (two columns) for each supplied item. Where ports take two supplied items, one on
+each lane, one line can carry both: one tap and one comb where there were two, and two
+bus columns fewer.
+
+### The game facts
+
+- **Onto two lanes:** a belt with nothing behind it and a belt pointing into each side
+  takes the left one's items onto its left lane, the right one's onto its right (NOTES.md,
+  bus belt pieces; the hub's ammo feed keeps two ammos a lane each the same way).
+- **A lane is half a belt:** 7.5 items a second on a transport belt, 15 fast, 22.5 express
+  (`rates.lane_rate`).
+- **Lanes keep through the bus's pieces:** a splitter splits lane by lane, an underground
+  pair and a turn keep both lanes (NOTES.md; the turned feed in "Every factory compact").
+- **New, in game:** a line on two lanes, side-loaded full at its first belt, keeps them
+  through the bus's splitters and undergrounds, a tap's turn, a comb and the adapter's
+  turn into each port. Circuits at 5/s draw 7.5 copper a second, a full yellow lane, and
+  make 5.01/s (NOTES.md).
+- **Ports taking only one of the two** never get the shared line, so no port is reached
+  by an item it doesn't take: a mixed belt's other lane would back up there, and the
+  check that every port gets only what it takes holds as before.
+
+### Where it applies
+
+On the 34 requests (80 supplied lines in all), 18 have ports taking two supplied items one
+a lane: 46 ports, most of them copper and iron into circuit cells; from ore, each ore with
+coal; military science, copper with steel and iron with coal.
+
+`compact._shared(p)` puts those ports on lines of two lanes, per pair of items (left,
+right), as many ports to a line as each lane carries; each item's other ports go on lines
+of their own as `factory` shares a supplied item's (worst-fit bins of a belt). A line pair
+is shared only if it takes no more lines in all, and the whole only if fewer. So
+circuits at 15/s don't: a cell port takes 5.6 copper a second, one port to a lane, four
+lines where three carry it now; nor at 20/s on express belts. 6 of the 34 come out with
+fewer lines.
+
+- **Its inputs stay plain belts.** The line's first belt is fed from both sides: the left
+  item from the west, the right from the east, each from a belt of its own at the bottom
+  (one column west of the bus where the line is the westmost). Beside another such
+  line's, whose east feeder takes the tile, its first belt is a row further south
+  (circuits and automation science from ore: each ore with coal).
+- **Last, on the kept layout.** `compact.build` searches and trims as before, closer taps
+  last; then it lays out the kept shelves and heights with the shared lines, trims them,
+  and keeps that only if smaller. So no factory is larger, and the search is unchanged.
+- **The bound stays a bound:** `lower_bound` takes the least over the lines as planned and
+  as shared, whose bus is narrower. The west feeder's column beside the bus isn't in it,
+  so the bound only gets further below. A request with shared lines that don't win keeps
+  its layout and gets a lower bound, so its gap grows.
+
+### Results
+
+Every blueprint that changed passes `gen factory ... --validate` in game on 2.1.23 at its
+rate (10 distinct); every other one of the 84 is byte-identical. Build times are each
+sweep's, three requests at a time on this Mac.
+
+| Request | Lines | Taps | Before | Now | Gap before, now | Build | In game |
+|---|---|---|---|---|---|---|---|
+| electronic-circuit 5/s | 2 to 1 | 2 to 1 | 580 | **486 (-16%)** | 27%, 19% | 1.0 to 1.0 s | 5.01/s |
+| electronic-circuit 5/s, assembling machine 3 | 2 to 1 | 2 to 1 | 580 | **486 (-16%)** | 27%, 19% | 0.9 to 1.0 s | 5.01/s |
+| military-science-pack 0.5/s | 5 to 4 | 5 to 4 | 1,196 | **1,012 (-15%)** | 37%, 38% | 5.4 to 6.2 s | 0.6/s |
+| electronic-circuit 10/s, fast belts | 2 to 1 | 2 to 1 | 980 | **846 (-14%)** | 17%, 13% | 1.4 to 1.5 s | 10/s |
+| automation-science-pack 1/s, smelt=1 | 3 to 2 | 3 to 2 | 860 | **760 (-12%)** | 41%, 40% | 2.3 to 2.7 s | 1.2/s |
+| electronic-circuit 5/s, smelt=1 | 3 to 2 | 3 to 2 | 1,240 | **1,121 (-10%)** | 26%, 27% | 2.8 to 3.2 s | 5.01/s |
+
+- **The 34 requests:** 6 smaller, none larger; 50,198 tiles in all to 49,473 (-1.4%);
+  supplied lines 80 to 74, taps 6 fewer. The median gap to the bound falls from 27% to
+  26%.
+- **At research 7:** the same 6 smaller, none larger; 48,605 to 47,948 (-1.4%), median
+  gap 27% to 26%. Circuits at 10/s on fast belts go from 912 to 846 (-7%), and pass at
+  9.99/s; at 5/s 5.0 and 5.01/s, from ore 4.99/s; automation science from ore 1.21/s.
+- **The 16 surveyed:** none changes. Robot frames' three ports taking copper and iron
+  would take as many lines shared as not.
+- **No headroom where a lane is full.** Circuits at 5/s now make 5.0/s: their copper lane
+  carries exactly what the rate needs, where copper on a belt of its own let the rows'
+  5% slack through (6/s). A player feeding more than the rate gets the rate.
+- **The gap and the bound:** the bound on shelves falls where a request's bus can be
+  narrower (circuits at 5/s 456 to 408), so a request that shares and wins can look no
+  closer (military science 37% to 38%) even 15% smaller.
+
+### Negative results and not built
+
+- **Not built: sharing for fewer taps alone.** A pair that takes as many lines shared as
+  not is never shared, even where it would save taps (robot frames' three copper and
+  iron ports: an estimated tap fewer, counted on the rows, not laid out). Every such
+  variant would be one more attempt and trim.
+- **Not built: a made item with a supplied one.** Circuit rows without cells take iron
+  (supplied) and cable (made here) a lane each; cable comes up from its own rows, not the
+  bus, so a shared line would need a merge of the two at the yard.
+- **Not built: a lane-aware check in the tests.** The tests follow items belt by belt to
+  the ports they reach, not which lane each rides; lanes are checked in game only.
