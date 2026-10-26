@@ -482,14 +482,16 @@ class Canvas:
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
           furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="compact", budget=None, cells=1,
-          research="") -> Blueprint:
+          research="", effort=1) -> Blueprint:
     """fill: the share of a belt a line made here may carry before it's split.
     layout: "compact" (rows on shelves with their products handed over directly,
     tools/compact.py), or "bus" (every row on one bus); compact falls back to the bus,
     saying why, for what it can't lay out or lays out no smaller. The compact search is
     bounded by steps (compact.STEPS), the same on any machine, so the same request always
-    gives the same layout; budget: seconds, only as a safety (default compact.BUDGET), past
-    which it keeps the best layout found so far. cells: compact also tries shared
+    gives the same layout; effort: how many times those steps it may spend (a whole number,
+    default 1): more can find a smaller layout for a big factory, and takes longer. budget:
+    seconds, only as a safety (default compact.BUDGET times effort), past which it keeps the
+    best layout found so far, and says so: the layout may then differ on another machine. cells: compact also tries shared
     producers in a cell with every row that takes one, and each producer only one row
     uses as a cell with that row (generators/cell.py), and keeps the smallest; 0 skips
     them. research: inserter research ("inserter-capacity-bonus=7") the rows are sized
@@ -497,17 +499,19 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     sized without it, and keeps them if smaller."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill, **({"research": research} if research else {}))
-    compact = _compact(layout, params, budget, say=True, cells=cells)
+    compact = _compact(layout, params, budget, say=True, cells=cells, effort=effort)
     return compact[1].bp if compact else _build(plan(**params))[0]
 
 
 _COMPACT = {}  # params -> (parts, compact.Result) or the reason it isn't compact: build and flow_tests share one search
 
 
-def _compact(layout, params, budget=None, say=False, cells=1):
+def _compact(layout, params, budget=None, say=False, cells=1, effort=1):
     """(parts, compact.Result), or None for the bus layout (asked for, or no larger)."""
     if layout not in ("bus", "compact"):
         raise ValueError("layout is bus or compact")
+    if type(effort) is not int or effort < 1:
+        raise ValueError(f"effort is a whole number of times the search's steps, 1 or more, not {effort!r}")
     if layout == "bus":
         return None
     import time
@@ -515,9 +519,9 @@ def _compact(layout, params, budget=None, say=False, cells=1):
     from tools import compact
     from tools.route import Work
 
-    budget = compact.BUDGET if budget is None else float(budget)
+    budget = compact.BUDGET * effort if budget is None else float(budget)
     defaults = {k: v.default for k, v in inspect.signature(rows_and_lines).parameters.items()}
-    key = tuple(sorted({**defaults, **params, "budget": budget, "cells": int(cells)}.items()))
+    key = tuple(sorted({**defaults, **params, "budget": budget, "cells": int(cells), "effort": effort}.items()))
     if key not in _COMPACT:
         # Shared producers fused into cells with every row that takes one first, then each
         # producer only one row uses fused into a cell with it, then the rows as solved: cells'
@@ -525,15 +529,16 @@ def _compact(layout, params, budget=None, say=False, cells=1):
         # search after looks only for a layout smaller than the smallest so far (beat). Each
         # only if it has cells and isn't the same rows as one before. Asked for research, the
         # same again with rows sized without it, which a researched player can build too. The
-        # first search has the whole of compact.STEPS, each after what's left but at least a
-        # quarter of them, so none goes without; seconds (budget) the same, as a safety. The
-        # smallest is kept; a tie keeps the researched rows, then the rows as solved.
+        # first search has the whole of compact.STEPS (times effort), each after what's left
+        # but at least a quarter of them, so none goes without; seconds (budget) the same, as a
+        # safety. The smallest is kept; a tie keeps the researched rows, then the rows as solved.
         start, spent, laid, errors, seen, bounds, tried = time.monotonic(), 0, [], [], [], [], []
+        steps_all, late = compact.STEPS * effort, False
         asked = params.get("research", "")
         for research in dict.fromkeys((asked, "")):
             for fused in (2, 1, 0) if cells else (0,):
                 quarter = 0.25 if seen else 0
-                steps = max(compact.STEPS - spent, compact.STEPS * quarter)
+                steps = max(steps_all - spent, steps_all * quarter)
                 left = max(budget - (time.monotonic() - start), budget * quarter)
                 p = rows_and_lines(**{**params, "research": research}, cells=fused)
                 rows = [r.bp.to_dict() for r in p["rows"]]
@@ -548,20 +553,21 @@ def _compact(layout, params, budget=None, say=False, cells=1):
                     laid.append((p, compact.build(p, work, beat), (research != asked, fused)))
                 except compact.CompactError as e:
                     errors.append(str(e))
-                spent += work.spent
+                spent, late = spent + work.spent, late or work.late()
         # Last, exactly (compact.exact): each row set again, the kept one first, over all the
         # search can make of it under the smallest so far, with steps of its own; kept only if
         # smaller. Done for every one, no layout on shelves of any is smaller: optimal on
         # shelves (docs/layout-optimizer.md, "Exact on shelves").
         done = bool(laid)
         if laid:
-            work = Work(compact.EXACT, seconds=max(budget - (time.monotonic() - start), budget / 4))
+            work = Work(compact.EXACT * effort, seconds=max(budget - (time.monotonic() - start), budget / 4))
             areas = {id(p): got.area for p, got, _ in laid}
             for p, tag in sorted(tried, key=lambda pt: areas.get(id(pt[0]), math.inf)):
                 got, finished = compact.exact(p, min(g.area for _, g, _ in laid), work)
                 done = done and finished
                 if got:
                     laid.append((p, got, tag))
+            late = late or work.late()
         if not laid:
             _COMPACT[key] = errors[0]
         else:  # kept only if smaller: one tall row can set both boxes (processing units)
@@ -570,7 +576,7 @@ def _compact(layout, params, budget=None, say=False, cells=1):
             _COMPACT[key] = min(laid, key=lambda got: (got[1].area, got[2]))[:2]
             # No layout of any of the rows tried is under the least of their bounds.
             _COMPACT[key][1].bound = {**min(bounds, key=lambda b: b["shelves"]), "rows": min(b["rows"] for b in bounds)}
-            _COMPACT[key][1].optimal = done
+            _COMPACT[key][1].optimal, _COMPACT[key][1].late = done and not late, late
             bus = density(_build(plan(**params))[0].to_dict())[0]["area"]
             if bus <= _COMPACT[key][1].area:
                 _COMPACT[key] = f"the bus layout is smaller ({bus:,} tiles, compact {_COMPACT[key][1].area:,})"
@@ -586,6 +592,9 @@ def _compact(layout, params, budget=None, say=False, cells=1):
               f"rows {b['rows_wide']} by {b['rows_tall']}, bus {b['wide'] - b['rows_wide']}, channels "
               f"{b['tall'] - b['rows_tall']}), within {area / b['shelves'] - 1:.0%}; the rows' own tiles {b['rows']:,}",
               file=sys.stderr)
+        if got[1].late:
+            print(f"factory: budget={budget:g} seconds ran out before the steps did: another machine may lay "
+                  f"this out differently (raise budget= for the same layout everywhere)", file=sys.stderr)
     return got
 
 
@@ -998,10 +1007,10 @@ def _description(p) -> str:
     return text
 
 
-def flow_tests(layout="compact", budget=None, cells=1, **params):
+def flow_tests(layout="compact", budget=None, cells=1, effort=1, **params):
     from validator.flow import Feed, Flow, FluidFeed
 
-    compact = _compact(layout, params, budget, cells=cells)
+    compact = _compact(layout, params, budget, cells=cells, effort=effort)
     if compact:
         from tools.compact import flow_tests as compact_flow_tests
 

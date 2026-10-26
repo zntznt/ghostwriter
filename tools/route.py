@@ -51,6 +51,10 @@ class Work:
             return True
         return self.left <= 0 or bool(self.whole and self.whole.over())
 
+    def late(self) -> bool:
+        """Past its seconds: a search it bounded may have ended other than on another machine."""
+        return self.deadline is not None and time.monotonic() > self.deadline
+
 
 def route(free, start, heading, goal, facing, reach, bounds, tunnels=(), limit=30000, cost=None, work=None):
     """Belt tiles from start, which items enter moving `heading`, to goal, placed

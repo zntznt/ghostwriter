@@ -109,6 +109,7 @@ class Result:
     fluid_outputs: list = field(default_factory=list)  # (id, fluid, "product" or "surplus")
     bound: dict = field(default_factory=dict)  # lower_bound's, the least over the rows factory tried
     optimal: bool = False  # exact tried every layout under it of every row set factory tried
+    late: bool = False  # factory's seconds (budget) ran out before its steps: may differ elsewhere
 
     @cached_property
     def bp(self) -> Blueprint:

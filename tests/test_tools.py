@@ -795,6 +795,95 @@ class Factory(unittest.TestCase):
                              budget=38)  # a budget no other test asks for
         self.assertEqual(len(given), 1)
 
+    def test_effort_multiplies_the_steps_of_the_search_and_the_exact_pass(self):
+        from unittest import mock
+
+        from tools import compact
+
+        params, given = {"item": "iron-gear-wheel", "rate": 1}, []
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            laid = compact.build(factory.rows_and_lines(**params))
+            build = lambda p, work, beat: given.append(("build", work.steps)) or laid  # noqa: E731
+            exact = lambda p, beat, work: given.append(("exact", work.steps)) or (None, True)  # noqa: E731
+            with mock.patch.object(compact, "build", build), mock.patch.object(compact, "exact", exact):
+                factory._compact("compact", params, budget=0.43, effort=3)  # a budget no other test asks for
+                factory._compact("compact", params, budget=0.43)
+        self.assertEqual(given, [("build", compact.STEPS * 3), ("exact", compact.EXACT * 3),
+                                 ("build", compact.STEPS), ("exact", compact.EXACT)])
+
+    def test_effort_gives_the_seconds_safety_as_many_times_over(self):
+        # A run that more steps make longer isn't cut by the clock it would have had at effort 1.
+        import time
+        from unittest import mock
+
+        from tools import compact
+
+        params, given = {"item": "iron-gear-wheel", "rate": 1, "raw": "iron-plate"}, []
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            laid = compact.build(factory.rows_and_lines(**params))
+            build = lambda p, work, beat: given.append(work.deadline - time.monotonic()) or laid  # noqa: E731
+            with mock.patch.object(compact, "build", build), \
+                    mock.patch.object(compact, "exact", lambda p, beat, work: (None, True)):
+                factory._compact("compact", params, effort=7)
+        self.assertGreater(given[0], compact.BUDGET * 6)
+
+    def test_a_search_the_seconds_cut_says_so_and_never_claims_optimal(self):
+        import contextlib
+        import io
+        import time
+        from unittest import mock
+
+        from tools import compact
+
+        params = {"item": "iron-gear-wheel", "rate": 1, "raw": "iron-plate", "belt": "fast-transport-belt"}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            laid = compact.build(factory.rows_and_lines(**params))
+
+            def build(p, work, beat):
+                while not work.late():  # a machine too slow for the safety
+                    time.sleep(0.01)
+                return laid
+
+            err = io.StringIO()
+            with mock.patch.object(compact, "build", build), contextlib.redirect_stderr(err), \
+                    mock.patch.object(compact, "exact", lambda p, beat, work: (None, True)):
+                _, got = factory._compact("compact", params, budget=0.05, say=True)
+        self.assertTrue(got.late)
+        self.assertFalse(got.optimal)
+        self.assertIn("budget=0.05 seconds ran out", err.getvalue())
+
+    def test_effort_is_a_whole_number_of_times_one_or_more(self):
+        for effort in (0, -2, 2.5, "lots", True):
+            with self.subTest(effort=effort), self.assertRaisesRegex(ValueError, "effort"):
+                factory.build(item="iron-gear-wheel", rate=1, effort=effort)
+
+    def test_the_cli_refuses_an_effort_that_isnt_one(self):
+        import contextlib
+        import io
+
+        from tools import bp
+
+        err = io.StringIO()
+        with self.assertRaises(SystemExit) as stopped, contextlib.redirect_stderr(err):
+            bp.main(["gen", "factory", "item=iron-gear-wheel", "rate=1", "effort=0"])
+        self.assertIn("effort", str(stopped.exception.code))
+
+    def test_a_request_the_exact_pass_settles_lays_out_the_same_at_any_effort(self):
+        # Iron gears are optimal on shelves at effort 1: more steps can't find smaller, and
+        # the same effort always lays out the same.
+        params = {"item": "iron-gear-wheel", "rate": 1, "belt": "fast-transport-belt"}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            once = factory.build(**params).to_dict()
+            factory._COMPACT.clear()
+            again = factory.build(**params, effort=2).to_dict()
+            factory._COMPACT.clear()
+            self.assertEqual(factory.build(**params, effort=2).to_dict(), again)
+        self.assertEqual(again, once)
+
     def test_the_rows_as_solved_get_a_quarter_of_the_steps_whatever_the_cells_take(self):
         # Cells are laid out first, as their rows are usually the smaller (processing units
         # 4,250 tiles with shared cells against 8,346 without), and can take every step.
