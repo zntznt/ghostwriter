@@ -83,6 +83,9 @@ BUDGET = 300.0
 EXACT = 4_000_000
 TRY = 70
 TRIES = 200_000
+# Rows past each channel's fewest a probe (_probe) starts from, where exact can't try every
+# layout: the most a channel of a layout the exact pass proved needed past its fewest was 6.
+GROW = 4
 
 
 class CompactError(ValueError):
@@ -327,8 +330,10 @@ def exact(p, beat, work) -> tuple:
     except CompactError:
         return None, True  # no layout of these rows on shelves at all
     starts = _space(p)
-    if starts is None or _count(starts, beat) > TRIES:
+    if starts is None:
         return None, False
+    if _count(starts, beat) > TRIES:  # too many to try every one: a channel at a time instead
+        return _probe(p, starts, beat, work), False
 
     def heights(fewest, extra):  # every way of the channels taking extra rows past their fewest, in order
         n = len(fewest)
@@ -358,6 +363,49 @@ def exact(p, beat, work) -> tuple:
         heapq.heappush(queue, (wide * (tall + extra + 1), i, extra + 1))
     restore(p)
     return best, True
+
+
+def _probe(p, starts, beat, work):
+    """The smallest layout under beat found a channel at a time, where exact can't try every
+    layout: each start least box first, every channel GROW rows past its fewest (3 more,
+    twice, while that doesn't route), then each channel in turn down to the fewest rows it
+    routes in with the others as they are, by a binary search. Channels don't lay out alone
+    (docs/layout-optimizer.md, "Channels one at a time"), so it proves nothing. None if
+    nothing under beat."""
+    best, least = None, beat
+    for wide, tall, lines, close, shelves, bus_far, west, fewest in sorted(starts, key=lambda s: s[0] * s[1]):
+        if wide * tall >= least or work.over():
+            break
+
+        def laid(h):
+            work.spend(TRY)
+            try:
+                return _attempt(lines, shelves, h, bus_far, work, west, close)
+            except (Blocked, CompactError):
+                return None
+
+        h = [m + GROW for m in fewest]
+        got = laid(h)
+        for _ in range(2):
+            if got or work.over():
+                break
+            h = [m + 3 for m in h]
+            got = laid(h)
+        if got is None:
+            continue
+        for c in range(len(h)):
+            lo, hi = fewest[c], h[c]  # hi routes
+            while lo < hi and not work.over():
+                trial = h[:c] + [(lo + hi) // 2] + h[c + 1:]
+                smaller = laid(trial)
+                if smaller and smaller.area <= got.area:
+                    hi, h, got = trial[c], trial, smaller
+                else:
+                    lo = trial[c] + 1
+        if got.area < least:
+            best, least = got, got.area
+    restore(p)
+    return best
 
 
 def _space(p):
