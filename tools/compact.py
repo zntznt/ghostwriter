@@ -74,6 +74,15 @@ NEGOTIATION = 300_000
 # chemical science from crude oil at research 7, in 62 s on this Mac, CI's runners about 1.8
 # times slower). Past it a search keeps the best so far, which then depends on the machine.
 BUDGET = 300.0
+# The exact pass (exact): steps for every row set factory tries, each layout tried charged
+# TRY besides its A* steps, as most of one that doesn't route spends none, only time (about
+# 0.3 ms here, an A* step about 4 us); and the most layouts whose least box is under the
+# smallest so far it starts on. Batteries at 2/s have 4,956 under the search's 1,044 tiles,
+# and it tries 1,293 as the smallest so far falls (to 968); advanced circuits 40,363 of
+# 178,044 (1,242 tiles to 1,134), in about 7 s here; electric engines have 504,384.
+EXACT = 4_000_000
+TRY = 70
+TRIES = 200_000
 
 
 class CompactError(ValueError):
@@ -96,6 +105,7 @@ class Result:
     fluid_ports: list = field(default_factory=list)  # (tile, fluid): row fluid ports, inputs and outputs
     fluid_outputs: list = field(default_factory=list)  # (id, fluid, "product" or "surplus")
     bound: dict = field(default_factory=dict)  # lower_bound's, the least over the rows factory tried
+    optimal: bool = False  # exact tried every layout under it of every row set factory tried
 
     @cached_property
     def bp(self) -> Blueprint:
@@ -272,6 +282,99 @@ def lower_bound(p) -> dict:
     for ln, d in demands:
         ln.demand = d
     return {"rows": max(own, max(map(width, rows)) * max(tallest)), **best}
+
+
+def exact(p, beat, work) -> tuple:
+    """(layout or None, done): the smallest layout of p's rows under beat tiles of all build
+    can make of them: every shelving it tries, either bus choice and shelf placement, every
+    channel height, and its pieces (taps three rows apart or closer together, and closer
+    with two supplied items on one line's lanes, _shared); None if none is under beat.
+    Best first by the least box each can be (lower_bound's, with its heights), so it stops
+    at the first whose least isn't under the smallest so far. done: every layout under the
+    result was tried, so none of these rows on shelves is smaller, as far as the router
+    routes (a layout it doesn't route within NEGOTIATION counts as none). Not done: out of
+    work, more than TRIES layouts under beat, or no supplied item (channel 0's height then
+    sets no least); it keeps the best found."""
+    import heapq
+    from itertools import combinations
+
+    try:
+        _gated(p)
+        _refuse(p)
+    except CompactError:
+        return None, True  # no layout of these rows on shelves at all
+    starts = _space(p)
+    if starts is None or _count(starts, beat) > TRIES:
+        return None, False
+
+    def heights(n, extra):  # every way of n channels taking extra rows past MIN_CHANNEL, in order
+        for bars in combinations(range(extra + n - 1), n - 1):
+            edges = (-1, *bars, extra + n - 1)
+            yield [MIN_CHANNEL + b - a - 1 for a, b in zip(edges, edges[1:])]
+
+    best, least = None, beat
+    queue = [(wide * tall, i, 0) for i, (wide, tall, *_) in enumerate(starts)]
+    heapq.heapify(queue)
+    while queue[0][0] < least:
+        box, i, extra = heapq.heappop(queue)
+        wide, tall, lines, close, shelves, bus_far, west = starts[i]
+        for h in heights(len(shelves) + 1, extra):
+            if box >= least:
+                break
+            work.spend(TRY)
+            if work.over():
+                restore(p)
+                return best, False
+            try:
+                got = _attempt(lines, shelves, h, bus_far, work, west, close)
+            except (Blocked, CompactError):
+                continue
+            if got.area < least:
+                best, least = got, got.area
+        heapq.heappush(queue, (wide * (tall + extra + 1), i, extra + 1))
+    restore(p)
+    return best, True
+
+
+def _space(p):
+    """exact's starts, one per way to lay out the rows but their channel heights: (wide,
+    tall with every channel at MIN_CHANNEL, lines, close, shelves, bus_far, west), the least
+    box first; one only once, though two choices lay out the same (bus_far with no line
+    used far off, west with no shelf moving). None with no supplied item."""
+    rows = p["rows"]
+    tallest = [r.box[3] - r.box[1] + 1 for r in rows]
+    shelvings = sorted({tuple(map(tuple, shelve(p, wide))) for wide in widths(rows)})
+    starts, seen = [], set()
+    for lines, close in [(p, False), (p, True)] + [(q, True) for q in filter(None, [_shared(p)])]:
+        restore(lines)
+        if not any(ln.supplied and not ln.fluid for named in lines["lines"].values() for ln in named):
+            restore(p)
+            return None
+        for shelves in shelvings:
+            rows_wide = [sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for shelf in shelves]
+            tall = 1 + sum(max(tallest[k] for k in shelf) for shelf in shelves) + MIN_CHANNEL * (len(shelves) + 1)
+            for bus_far in (False, True):
+                raw, running, *_ = _bus(lines, shelves, bus_far)
+                for west in (False, True):
+                    _, x0s, _ = _columns(lines, shelves, running, len(raw), west)
+                    same = (id(lines), close, shelves, tuple(map(id, raw)), tuple(x0s))
+                    if same not in seen:
+                        seen.add(same)
+                        wide = max(x + w for x, w in zip(x0s, rows_wide)) - (0 if raw else min(x0s))
+                        starts.append((wide, tall, lines, close, [list(s) for s in shelves], bus_far, west))
+    restore(p)
+    return sorted(starts, key=lambda s: s[0] * s[1])
+
+
+def _count(starts, beat) -> int:
+    """Layouts of starts whose least box is under beat (past TRIES, a little more)."""
+    tries = 0
+    for wide, tall, _, _, shelves, *_ in starts:
+        n, extra = len(shelves) + 1, 0
+        while wide * (tall + extra) < beat and tries <= TRIES:
+            tries += math.comb(extra + n - 1, n - 1)
+            extra += 1
+    return tries
 
 
 def _trimmed(p, shelves, heights, bus_far, work, got, west=False, close=False):
