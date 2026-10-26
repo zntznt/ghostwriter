@@ -1740,8 +1740,113 @@ time on this Mac:
   result, and a row or two more in some channels leaves about as many ways to share the
   rest. Electric mining drills and logistic science at 1/s run out of steps instead. A
   proof tries every layout under the result, at least `TRY` (70) steps each, so
-  `EXACT`'s 4 million cap one at about 57,000.
+  `EXACT`'s 4 million cap one at about 57,000. They're now probed a channel at a time
+  instead ("Channels one at a time"), which proves nothing but finds smaller layouts.
 - **Not built: the other pieces.** Where a channel holds two or three taps and entries,
   routed layouts sit a median 2 to 4 rows past its least (the table): those rows are
   combs', adapters' and merges'. Counting them needs the free tiles of the shelf above
   (its gaps and the rows' empty tiles) at each start, as they can reach into it.
+
+## Channels one at a time (built as a probe, not a proof)
+
+The exact pass tries every way of sharing rows out among a start's channels, so its work is
+a product over the channels: the big requests have millions to billions of layouts ("Channels
+as tall as their taps"). If each channel laid out alone, the least box of a start would be a
+sum instead: each channel's fewest rows that route, found on its own, like dynamic
+programming. That needs two things: the fewest rows of a channel don't depend on the others
+(separable), and more rows anywhere never stop a layout routing (monotone), so a channel's
+fewest rows with the others roomy are a lower bound for it in every layout. Neither holds.
+
+### How a layout couples its channels
+
+- **One negotiation for every belt.** `route_all` routes all of a layout's belts together
+  (PathFinder), each over the whole box, with shared congestion costs and one budget
+  (`NEGOTIATION`), and gives up after four rounds without fewer shared tiles.
+- **Belts that span channels.** Items made here and used further up go straight there when
+  they don't ride the bus (`bus_far`), passing a shelf's gaps; the product leaves at the top.
+  Every optimal layout below carries far lines straight, and in routed layouts up to 39% of
+  belts touch more than one channel (military science 1,150 of 2,986; logistic science on
+  fast belts 37%; advanced circuits 30%; none in 8 of the 23).
+- **Pipes first.** Fluids are piped from the bottom and to the top before any belt routes,
+  and they take whatever way is free.
+
+### Measured on the 23 requests the exact pass proves
+
+For the optimal layout's start and channel heights, each channel's fewest rows that route
+with every other 4 rows roomier, and with every other as it is; then the optimal heights with
+one channel 1, 2 or 4 rows taller:
+
+- **20 separable:** each channel's fewest rows alone are the optimum's, and those heights
+  together lay out the optimum.
+- **Batteries at 2/s: not monotone (pipes).** Channel 2 routes at 4 and 5 rows and not at 6
+  or 8. Taller, the acid's pipes take another way and wall one belt's goal in on three sides,
+  a row on the fourth: that belt can't route even alone. With the others roomier (channel 2
+  at 8), channels 0, 1 and 3 don't route at any height.
+- **Advanced circuits at 1/s: not monotone (the negotiation), and not separable.** With
+  channel 2 four rows taller every belt still routes alone, but the negotiation gives up.
+  With the others roomier, channel 3 needs 4 rows, though the optimum has 3: the fewest rows
+  alone aren't a lower bound.
+- **Military science at 0.5/s: the box isn't the heights.** The fewest rows alone (channel 4
+  at 3 rows, the optimum's 4) route, but the belts run further east: 966 tiles against 946.
+
+So a sum of channels' fewest rows proves nothing about the least box, and no proof is built
+on it.
+
+### The probe (`compact._probe`)
+
+What did hold, in 20 of 23, makes a good search where the exact pass can't try every layout
+(more than `TRIES` under the smallest so far). For each start, least box first: every channel
+`GROW` (4) rows past its fewest (3 more, twice, while that doesn't route; only the result need
+be under the smallest so far), then each channel in turn down to the fewest rows it routes in
+with the others as they are, by a binary search, kept where the box gets no bigger. It runs
+in the exact pass's steps, so the same request gives the same layout on any machine (seeds 0
+and 1 give advanced circuits from crude oil the same blueprint), is kept only if smaller, and
+never says optimal.
+
+Against main (#87), 9 builds at a time on this Mac (main's were 8):
+
+| Set | Smaller | Larger | Total area | Proven optimal | Median gap | Build time |
+|---|---|---|---|---|---|---|
+| 34, research 0 | 3 | 0 | 48,970 to 48,340 (-1.3%) | 21 | 20% | 553 to 834 s |
+| 34, research 7 | 3 | 0 | 47,393 to 46,786 (-1.3%) | 20 | 20% | 723 to 1,064 s |
+| 16 surveyed | 4 | 0 | 41,805 to 39,247 (-6.1%) | 5 | 40% | 406 to 705 s |
+
+| Request | Before | After | Gap to the bound | In game (2.1.23) |
+|---|---|---|---|---|
+| utility science 0.2/s, oil=1 | 8,967 | 6,893 (-23%) | 157% to 97% | 0.208/s |
+| advanced circuits 1/s, oil=1 (research 0 and 7) | 2,116; 2,093 | 1,806 (-15%, -14%) | 40% to 19% | 1.22/s |
+| accumulators 0.5/s, oil=1 | 3,780 | 3,468 (-8%) | | 0.595/s |
+| productivity modules 0.2/s, oil=1 | 2,760 | 2,596 (-6%) | | 0.25/s |
+| chemical science 0.5/s | 3,652 | 3,432 (-6%) | 83% to 72% | 0.599/s |
+| chemical science 0.5/s, research 7 | 3,608 | 3,388 (-6%) | | 0.599/s |
+| processing units 0.5/s | 3,950 | 3,850 (-3%) | | 0.581/s |
+| processing units 0.5/s, research 7 | 3,875 | 3,775 (-3%) | | 0.578/s |
+| engines 1/s from ore | 1,520 | 1,512 (-0.5%) | | 1.05/s |
+
+- **The 74 other blueprints are byte-identical,** and every proof stands. The probe runs
+  only where the exact pass gave up before, and a row set it probes was never proven. It
+  does spend steps a later row set's exact pass could have used; on these sets that cost
+  no layout.
+- **The cost is time.** Where the exact pass gave up at once, the probe now spends its 4
+  million steps, found something or not: up to 71 s longer (utility science from crude oil
+  82 to 132 s, electric engines from crude oil at research 7 55 to 126 s).
+- **More steps find more.** Given 20 million of its own and a linear search from each
+  channel's fewest rows, the probe finds chemical science in 2,875 tiles (-21%) at 7.0
+  million steps and production science in 2,581 (-9%) at 3.0 million, past what the exact
+  pass's share leaves it. Logistic science at 1/s, electric engines from crude oil, fast
+  inserters, mining drills and speed modules find nothing smaller with every start tried.
+
+### Negative results and not built
+
+- **No proof by decomposition**, nor a dynamic program over neighbouring channels: pipes run
+  from the bottom through every channel and far lines past shelves, so the coupling isn't
+  between neighbours only, and neither kind is monotone.
+- **Cheaper failed negotiations.** Most of a probe's steps go to negotiations that fail at
+  `NEGOTIATION` (chemical science: 13 failures, 3.1 of its 4 million steps). Capped at 100,000
+  or 150,000 steps in a probe, 5 of 6 big requests lay out the same and utility science from
+  crude oil loses its find (8,967 tiles): not kept.
+- **Not built: a monotone router**, the prerequisite for any proof by channels: belt goals'
+  approach tiles kept from the pipes before they're routed, and a negotiation that doesn't
+  give up while it can still use more room. Both would change layouts the search keeps.
+- **Not built: more steps for the probe.** Chemical and production science show what 7 and 3
+  million more would find; each million is about 5 s here.
