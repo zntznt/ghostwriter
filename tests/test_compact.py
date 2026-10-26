@@ -301,6 +301,7 @@ class Compact(unittest.TestCase):
 
         real, err = compact.build, io.StringIO()
         with mock.patch.object(compact, "build", lambda p, work, beat: replace(real(p, work, beat), area=10 ** 9)), \
+                mock.patch.object(compact, "exact", lambda p, beat, work: (None, True)), \
                 contextlib.redirect_stderr(err), warnings.catch_warnings():
             warnings.simplefilter("ignore")
             bp = factory.build(**ITEMS[1], layout="compact", budget=39)  # a budget no other test asks for
@@ -531,6 +532,43 @@ class Compact(unittest.TestCase):
         line = next(ln for ln in err.getvalue().splitlines() if ln.startswith("factory: compact"))
         self.assertNotIn("optimal", line)
         self.assertIn("factory: compact, 1,044 tiles;", line)
+
+    def test_a_probe_finds_each_channels_fewest_rows_one_channel_at_a_time(self):
+        # Channels that lay out alone (a layout routes once each has its own fewest rows):
+        # the probe finds those rows by a binary search a channel, not by trying every way
+        # of sharing the rows out, as the exact pass does.
+        from types import SimpleNamespace
+        from unittest import mock
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="iron-gear-wheel", rate=1)
+        need, fewest, wide, rows_tall = [7, 2, 11, 4], [2, 2, 3, 2], 10, 20
+        tried = []
+
+        def attempt(lines, shelves, h, *args):
+            tried.append(list(h))
+            if any(a < b for a, b in zip(h, need)):
+                raise compact.Blocked("too thin")
+            return SimpleNamespace(area=wide * (rows_tall + sum(h)))
+
+        start = (wide, rows_tall + sum(fewest), p, True, [[0]], False, False, fewest)
+        with mock.patch.object(compact, "_attempt", attempt):
+            got = compact._probe(p, [start], 10_000, Work())
+        self.assertEqual(got.area, wide * (rows_tall + sum(need)))
+        self.assertIn(need, tried)
+        self.assertLess(len(tried), 20)  # every way of sharing them out: thousands
+
+    def test_an_exact_pass_with_too_many_layouts_probes_and_never_says_optimal(self):
+        from unittest import mock
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="iron-gear-wheel", rate=1)
+        found = object()
+        with mock.patch.object(compact, "_count", lambda *a: compact.TRIES + 1), \
+                mock.patch.object(compact, "_probe", lambda *a: found):
+            self.assertEqual(compact.exact(p, 100, Work()), (found, False))
 
 
 
