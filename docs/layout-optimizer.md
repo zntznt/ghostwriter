@@ -1166,7 +1166,8 @@ factory: compact, 600 tiles; at least 456 on shelves (19 by 24: rows 13 by 19, b
     bus puts column 0 in the box), and
   - as tall as the input row, every shelf's tallest row and every channel at
     `MIN_CHANNEL` rows: the search never makes a channel thinner, the supplied lines
-    enter at row 0, and the product leaves from the top channel's north row.
+    enter at row 0, and the product leaves from the top channel's north row. (Since
+    "Channels as tall as their taps", each channel at the least rows its taps take.)
 
   The least of those boxes is the bound. It's a bound of the model, not of every
   layout: one without shelves, or with thinner channels, could be smaller.
@@ -1536,7 +1537,7 @@ factory: compact, 968 tiles, optimal on shelves; at least 814 on shelves (22 by 
   or not), the kept one first, over everything the search can make of it: every
   shelving it tries (`shelve` at each of `widths`), far lines on the bus or not, each
   shelf as far west as the box needs or the bus lets it, every channel height from
-  `MIN_CHANNEL` up, and the pieces: taps three rows apart, closer (`belts.Taps(close=True)`),
+  `MIN_CHANNEL` up (since "Channels as tall as their taps", from its least rows up), and the pieces: taps three rows apart, closer (`belts.Taps(close=True)`),
   and closer with two supplied items on one line's lanes (`_shared`), as the search
   itself only tries lanes with closer taps. Two choices that lay out the same (`bus_far`
   with no line used far off, `west` with no shelf moving) are tried once.
@@ -1638,7 +1639,109 @@ Every changed blueprint passes `gen factory ... --validate` on 2.1.23 at the rat
   channel, could reach in), and a wrong skip would make a false proof.
 - **Not built: the big requests.** A tighter least box per channel, from the pieces it
   must hold ("How close to optimal": a tighter bound on shelves), is what would bring
-  their counts down.
+  their counts down. Tried for taps in "Channels as tall as their taps": it doesn't.
 - **Not built: a proof beyond the router.** A complete check that a layout can't route
   (a SAT model of its channels, as Factorio-SAT does for balancers) would turn "as far as
   the router routes" into a proof on shelves.
+
+## Channels as tall as their taps (built)
+
+The bound on shelves ("How close to optimal") and the exact pass ("Exact on shelves")
+started every channel at `MIN_CHANNEL`, two rows, though "Thinner channels" measured a
+tap taking about three. Each channel now starts at the fewest rows its taps and bus
+entries can take (`compact.least_rows`, `least_channels`):
+
+```
+factory: compact, 968 tiles, optimal on shelves; at least 836 on shelves (22 by 38: rows 16 by 28, bus 6, channels 10), within 16%; the rows' own tiles 306
+```
+
+### The argument
+
+- **What a channel holds.** For a shelving and bus (`_bus`), each raw line on the bus
+  taps into the channel below every shelf that takes it (`tapped`), and each line made
+  here that rides the bus joins it in the channel above its rows (`belts.entry`). Both
+  are fixed before anything is laid, so each start knows how many each channel holds.
+- **A row each, past the southmost.** `belts.tap` puts a tap's branch on a row of its
+  channel other than the southmost (a tap before the line's last use has its splitter
+  on the row below), and `belts.entry` the same. `Taps.clear` never lets two share a
+  row: three apart from every other without close taps, taps and entries alike; with
+  close, a tap may take the row south of another's, never the same one. So a channel
+  holding m of them has at least m + 1 rows with close taps, and 3m - 1 without (m
+  rows three apart, past the southmost).
+- **Whatever the router does.** All of it is settled as the pieces are placed, before
+  PathFinder runs: a channel under it raises `Blocked` at its taps. Nothing else is
+  counted. Adapters, combs, merges and splits can reach into a shelf's gaps, so what they
+  take of a channel isn't fixed, and a count too high would make a false proof ("Exact
+  on shelves").
+- **Which count.** Each of the exact pass's starts gets its own, taps three apart where
+  it lays them so. `lower_bound` must hold for any layout the search keeps, close taps or
+  not, so it counts close taps, the fewer rows.
+
+### Checked
+
+- **A brute force** over every row each tap could take, at `Taps.clear`'s most
+  permissive (every tap a line's last use), in channels of 2 to 10 rows: the most taps
+  a channel holds is what `least_rows` allows, no more and no fewer.
+- **A row short never lays out.** Circuits at 5/s without cells, every start and every
+  channel holding more than `MIN_CHANNEL` takes: a row under it, every other channel
+  roomy, raises `Blocked`.
+- **No layout under it, on main.** Every layout `_attempt` routed for the 84 requests
+  (the 34 at research 0 and 7, and the 16 surveyed) on main, whose exact pass tries every
+  channel from `MIN_CHANNEL` up: 5,811 layouts, none with a channel under its least, and
+  1,697 with one exactly at a least past `MIN_CHANNEL`. The least is met at every count
+  but one, so it can't be raised as it stands:
+
+  | Taps and entries | Least rows | Requests with such a channel | Its fewest rows past the least in a routed layout: median over them, least |
+  |---|---|---|---|
+  | 2, three apart | 5 | 67 | 3, 0 |
+  | 3, three apart | 8 | 47 | 3, 0 |
+  | 4, three apart | 11 | 19 | 0, 0 |
+  | 5, three apart | 14 | 1 | 0, 0 |
+  | 2, close | 3 | 54 | 4, 0 |
+  | 3, close | 4 | 6 | 2, 2 |
+
+### Measured
+
+The 34 requests at research 0 and 7 and the 16 surveyed, against main (#86), 8 builds at a
+time on this Mac:
+
+| Set | Proven optimal on shelves | Bound higher | Median gap | Blueprints | Build time |
+|---|---|---|---|---|---|
+| 34, research 0 | 21 | 10 | 21% to 20% | all byte-identical | 572 to 553 s (-3%) |
+| 34, research 7 | 20 | 11 | 21% to 20% | all byte-identical | 744 to 723 s (-3%) |
+| 16 surveyed | 4 to 5 | 13 | 43% to 40% | all byte-identical | 420 to 406 s (-3%) |
+
+- **The gap is honest a little sooner.** Circuits at 15/s go from within 20% to 14%
+  (1,332 tiles to 1,406), processing units 40% to 35%, production science 76% to 70%,
+  rails 53% to 42%, batteries 19% to 16%, inserters at research 7 8% to 4%.
+- **One more proof.** Solar panels at 0.5/s (1,342 tiles) are now optimal on shelves:
+  the layouts the pass no longer tries are those that can't lay out, and the steps they
+  were charged (`TRY`) go to the rest.
+- **The same layouts.** The pass skips only layouts that can't lay out, and tries the
+  rest in the same order: starts whose least boxes tie keep main's order, as the first
+  cut, sorting them by the new least box, kept another 1,584-tile layout of low density
+  structures from crude oil.
+
+### Negative results and not built
+
+- **The big requests are still out of reach.** Layouts under the search's result, before
+  and after, per set of rows:
+
+  | Request (search's result) | With cells | Without |
+  |---|---|---|
+  | electric engines 0.5/s (1,540) | 172,512 to 87,596 | 504,384 to 504,004 |
+  | fast inserters 1/s (1,060) | 24,840 to 13,172 | 981,616 to 980,752 |
+  | advanced circuits 1/s, oil=1 (2,116) | 33.7 to 22.0 million | 76.0 to 74.7 million |
+  | processing units 0.5/s (3,950) | 6.7 to 1.2 billion | over 15 billion |
+  | chemical science 0.5/s (3,652) | over 10 billion | over 10 billion |
+  | production science 0.2/s (2,852) | over 10 billion | over 10 billion |
+
+  On their narrowest shelvings, 6 to 15 channels share 12 to 71 rows of slack under the
+  result, and a row or two more in some channels leaves about as many ways to share the
+  rest. Electric mining drills and logistic science at 1/s run out of steps instead. A
+  proof tries every layout under the result, at least `TRY` (70) steps each, so
+  `EXACT`'s 4 million cap one at about 57,000.
+- **Not built: the other pieces.** Where a channel holds two or three taps and entries,
+  routed layouts sit a median 2 to 4 rows past its least (the table): those rows are
+  combs', adapters' and merges'. Counting them needs the free tiles of the shelf above
+  (its gaps and the rows' empty tiles) at each start, as they can reach into it.
