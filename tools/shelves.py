@@ -90,22 +90,33 @@ def place(rows, shelved, heights, x0s, canvas):
             dx, dy = x - r.box[0], bottom - r.box[3]
             where[k] = (dx, dy)
             r.dx, r.dy = dx, dy
-            for e in r.bp.entities:
-                for ex in range(e.tile_width):
-                    for ey in range(e.tile_height):
-                        canvas.take(int(e.tile_position[0]) + dx + ex, int(e.tile_position[1]) + dy + ey, f"row {k}")
+            tiles, ends = _footprint(r)
+            for tx, ty in tiles:
+                canvas.take(tx + dx, ty + dy, f"row {k}")
             outs = {(q.x + dx, q.y + dy) for q in r.ports if q.kind == "out"}
-            for e in r.bp.entities:
-                if e.name in BELTS or getattr(e, "io_type", None) == "output":
-                    t = (int(e.tile_position[0]) + dx, int(e.tile_position[1]) + dy)
-                    sx, sy = STEP[int(e.direction)]
-                    if (t[0] + sx, t[1] + sy) not in canvas.tiles and t not in outs:
-                        canvas.reserve(t[0] + sx, t[1] + sy, f"row {k} end")
+            for (tx, ty), (sx, sy) in ends:
+                t = (tx + dx, ty + dy)
+                if (t[0] + sx, t[1] + sy) not in canvas.tiles and t not in outs:
+                    canvas.reserve(t[0] + sx, t[1] + sy, f"row {k} end")
             x += width(r) + GAP
             top = min(top, r.box[1] + dy)
         shelf_box.append((bottom, top))
         y = top - 1
     return where, shelf_box, y - heights[-1] + 1
+
+
+def _footprint(r):
+    """(tiles, ends): a row's own tiles, and each belt or underground output's tile and the
+    way it runs, from its entities once per blueprint: worked out every layout tried, it
+    took most of each (compact.exact tries thousands)."""
+    got = getattr(r, "_footprint", None)
+    if got is None or got[0] is not r.bp:
+        tiles = [(int(e.tile_position[0]) + ex, int(e.tile_position[1]) + ey) for e in r.bp.entities
+                 for ex in range(e.tile_width) for ey in range(e.tile_height)]
+        ends = [((int(e.tile_position[0]), int(e.tile_position[1])), STEP[int(e.direction)]) for e in r.bp.entities
+                if e.name in BELTS or getattr(e, "io_type", None) == "output"]
+        got = r._footprint = (r.bp, tiles, ends)
+    return got[1], got[2]
 
 
 def restore(p):

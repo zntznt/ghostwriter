@@ -403,12 +403,54 @@ class Compact(unittest.TestCase):
         line = next(ln for ln in err.getvalue().splitlines() if ln.startswith("factory: compact"))
         got = [int(n.replace(",", "")) for n in re.findall(r"\d[\d,]*", line)]
         tiles, least, wide, tall, rows_wide, rows_tall, bus, channels, gap, own = got
-        self.assertRegex(line, r"^factory: compact, [\d,]+ tiles; at least [\d,]+ on shelves \(\d+ by \d+: rows \d+ by "
-                               r"\d+, bus \d+, channels \d+\), within \d+%; the rows' own tiles [\d,]+$")
+        self.assertRegex(line, r"^factory: compact, [\d,]+ tiles(, optimal on shelves)?; at least [\d,]+ on shelves "
+                               r"\(\d+ by \d+: rows \d+ by \d+, bus \d+, channels \d+\), within \d+%; the rows' own "
+                               r"tiles [\d,]+$")
         self.assertEqual(tiles, density(bp.to_dict())[0]["area"])
         self.assertEqual((least, rows_wide + bus, rows_tall + channels), (wide * tall, wide, tall))
         self.assertEqual(gap, round(100 * (tiles / least - 1)))
         self.assertLessEqual(own, least)
+
+    def test_the_exact_pass_finds_the_least_layout_on_shelves_and_says_so(self):
+        # Batteries at 2/s: the search grows every channel together, then trims each, to
+        # 1,044 tiles; tried best first, every shelving, placement, piece and channel height
+        # under it, the least on shelves is 968, and no layout of the rows tried is smaller.
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            factory.build(item="battery", rate=2)
+        self.assertIn("factory: compact, 968 tiles, optimal on shelves; at least 814 on shelves", err.getvalue())
+
+    def test_the_exact_pass_finds_nothing_under_a_least_box_and_proves_it(self):
+        # Iron gears at 1/s lay out in 88 tiles, their least box: nothing to try under it.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="iron-gear-wheel", rate=1)
+            self.assertEqual(compact.exact(p, 88, Work()), (None, True))
+            got, done = compact.exact(p, 89, Work())
+        self.assertEqual((got.area, done), (88, True))
+
+    def test_an_exact_pass_out_of_steps_never_says_optimal(self):
+        import contextlib
+        import io
+        from unittest import mock
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="battery", rate=2, cells=0)
+            work = Work(1)
+            got, done = compact.exact(p, 1044, work)
+            self.assertFalse(done)
+            self.assertTrue(got is None or got.area < 1044)
+            err = io.StringIO()
+            with mock.patch.object(compact, "EXACT", 1), contextlib.redirect_stderr(err):
+                factory.build(item="battery", rate=2, budget=36)  # a budget no other test asks for
+        line = next(ln for ln in err.getvalue().splitlines() if ln.startswith("factory: compact"))
+        self.assertNotIn("optimal", line)
+        self.assertIn("factory: compact, 1,044 tiles;", line)
 
 
 

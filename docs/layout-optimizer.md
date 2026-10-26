@@ -1283,7 +1283,7 @@ as not routing. On the rows the search kept:
 
 - **Not built: a search held to the exact optimum.** The exact channel-height search is
   cheap on these (up to 47 s) and found battery 6% smaller; it changes layouts, so it
-  isn't in this step.
+  isn't in this step. (Built later: "Exact on shelves".)
 - **Not built: pruning with the new bound.** `least_area`, which the search prunes
   with, leaves out the bus and the input row. A tighter bound skips more candidates,
   which changes what each step budget reaches, so the layouts would change.
@@ -1519,3 +1519,126 @@ sweep's, three requests at a time on this Mac.
   bus, so a shared line would need a merge of the two at the yard.
 - **Not built: a lane-aware check in the tests.** The tests follow items belt by belt to
   the ports they reach, not which lane each rides; lanes are checked in game only.
+
+## Exact on shelves (built)
+
+"How close to optimal" found the search the least layout on shelves for 8 of 9 small
+requests, and batteries at 2/s 6% off it. `factory` now ends with that exact search
+(`compact.exact`), kept only if smaller, and says where it proves a layout the least:
+
+```
+factory: compact, 968 tiles, optimal on shelves; at least 814 on shelves (22 by 37: rows 16 by 28, bus 6, channels 9), within 19%; the rows' own tiles 306
+```
+
+### The pass
+
+- **What it tries.** Each set of rows `factory` tried (cells or not, sized for research
+  or not), the kept one first, over everything the search can make of it: every
+  shelving it tries (`shelve` at each of `widths`), far lines on the bus or not, each
+  shelf as far west as the box needs or the bus lets it, every channel height from
+  `MIN_CHANNEL` up, and the pieces: taps three rows apart, closer (`belts.Taps(close=True)`),
+  and closer with two supplied items on one line's lanes (`_shared`), as the search
+  itself only tries lanes with closer taps. Two choices that lay out the same (`bus_far`
+  with no line used far off, `west` with no shelf moving) are tried once.
+- **Best first, branch and bound.** For each choice but its channel heights, no layout
+  is smaller than its least box: as wide as `lower_bound`'s width for it, and as tall as
+  the input row, its shelves' tallest rows and its channels. A queue takes the least box
+  first, so the pass stops at the first whose least isn't under the smallest so far:
+  every layout under the result has been tried. An assert on every layout that routed,
+  in a first sweep of the 84 requests below, found none smaller than its least box.
+- **Why a pass after the search, and in `factory`.** Held to it throughout, the search's
+  order would change what each step budget reaches (as closer taps did, "Thinner
+  channels"), so the pass only adds layouts, kept if smaller. It's in `factory._compact`,
+  not `compact.build`: the claim must cover every set of rows tried, and `build` on a set
+  with nothing under the smallest so far stops before it would run.
+- **Bounded by steps.** Steps of its own (`EXACT`, 4 million), each layout tried charged
+  `TRY` (70) besides its A* steps, as most layouts that don't route are refused before
+  any routing (about 0.3 ms each here, an A* step about 4 us). A set with more than
+  `TRIES` (200,000) layouts under the smallest so far isn't started. All of it counts
+  steps and layouts, so the same request still gives the same layout on any machine; the
+  pass claims nothing when it stops short.
+- **Faster attempts.** `shelves.place` took over 90% of each layout tried, reading every
+  row's tiles from Draftsman's collision boxes; each row's tiles are now worked out once
+  (2,382 layouts of automation science from ore in 0.70 s instead of 8.9 s). Layouts are
+  unchanged by it: the 70 of the 84 blueprints the pass leaves alone are byte-identical.
+
+### What "optimal on shelves" proves, and what it doesn't
+
+It proves that no layout of these rows that this code lays out and routes is smaller:
+none of the shelvings tried, placements, pieces and channel heights, for none of the
+sets of rows tried. It isn't a proof against every layout:
+
+- **The router is not complete.** A layout counts as impossible when its pieces find no
+  room (adapters, taps, combs, merges and splits are placed first fit, so another
+  placement might fit), when PathFinder doesn't route its belts within `NEGOTIATION`
+  steps (negotiated congestion is a heuristic for an NP-hard problem, so a routing may
+  exist that it misses), or when its pipes or poles don't fit. So the proof is up to the
+  router: no smaller layout these pieces and this router make.
+- **Only the shelvings the search tries.** `shelve` puts rows in level order on shelves
+  no wider than each of `WIDTHS` widths; other ways of grouping rows on shelves, and
+  layouts off shelves, aren't tried.
+- **Only the sets of rows tried.** Other machines, or other cells, aren't.
+
+### Measured
+
+The 34 requests at research 0 and 7 and the 16 surveyed, against main (#85), on this
+Mac with 8 builds at a time:
+
+| Set | Proven optimal on shelves | Smaller | Larger | Total area | Median gap | Build time |
+|---|---|---|---|---|---|---|
+| 34, research 0 | 21 | 6 | 0 | 49,473 to 48,970 (-1.0%) | 26% to 21% | 518 to 572 s (+10%) |
+| 34, research 7 | 20 | 7 | 0 | 47,948 to 47,393 (-1.2%) | 26% to 21% | 711 to 744 s (+5%) |
+| 16 surveyed | 4 | 1 | 0 | 41,937 to 41,805 (-0.3%) | 43%, unchanged | 393 to 420 s (+7%) |
+
+| Request | Before | After | Proven | In game |
+|---|---|---|---|---|
+| advanced-circuit 1/s | 1,242 | **1,134 (-8.7%)** | yes | 1.2/s |
+| advanced-circuit 1/s, research 7 | 1,219 | **1,113 (-8.7%)** | no | 1.18/s |
+| automation-science-pack 1/s, smelt=1 (both research levels) | 760 | **720 (-5.3%)** | yes | 1.2/s; research 7: 1.19/s |
+| battery 2/s (both) | 1,044 | **968 (-7.3%)** | yes | 2.48/s; research 7: 2.48/s |
+| electric-engine-unit 0.5/s (both) | 1,540 | **1,386 (-10%)** | no | 0.598/s; research 7: 0.604/s |
+| electronic-circuit 5/s, smelt=1 (both) | 1,121 | **1,062 (-5.3%)** | yes | 5.02/s |
+| logistic-science-pack 0.5/s, fast belts, assembling machine 3, research 7 | 640 | **608 (-5%)** | yes | 0.836/s |
+| military-science-pack 0.5/s | 1,012 | **946 (-6.5%)** | yes | 0.599/s |
+| military-science-pack 0.5/s, research 7 | 1,012 | **924 (-8.7%)** | yes | 0.598/s |
+| low-density-structure 0.5/s, oil=1 | 1,716 | **1,584 (-7.7%)** | yes | 0.599/s |
+
+Every changed blueprint passes `gen factory ... --validate` on 2.1.23 at the rates above.
+
+- **Proven:** the small and middling requests, from iron gears to advanced circuits and
+  military science. Chemical, production and utility science, processing units, robot
+  frames and the other big ones have more than `TRIES` layouts under their search's
+  result, so the pass doesn't start on them and they build as before.
+- **Smaller without a proof:** electric engines at 0.5/s (1,386 tiles) and advanced
+  circuits at research 7 came out smaller, but a set of their rows was over `TRIES` or
+  ran out of steps, so nothing is claimed (electric engines' kept rows have 504,384
+  layouts under 1,540 tiles; another set of rows found 1,386); logistic
+  science at 1/s, electric mining drills, fast inserters and solar panels ran out with
+  nothing smaller. Circuits at 15/s and logistic science at 1/s are proven at one research
+  level and not the other.
+- **What it costs:** 5 to 10% more build time over each set. The most added: logistic
+  science at 1/s (17.5 to 38.8 s, ending unproven), military science at research 7 (11.7
+  to 26.8 s), solar panels (12.0 to 26.4 s), advanced circuits (4.5 to 17.1 s). The
+  cached footprints make the search itself faster, so some big requests build quicker.
+- **The default build is unchanged:** circuits at 5/s were already the least on shelves
+  (486 tiles), so the pinned fixture stands.
+
+### Negative results and not built
+
+- **A count of layouts under the search's result over-counts.** The first cut skipped a
+  set with more than 5,000 such layouts, and proved 15 of the 34. The smallest so far
+  falls as the pass goes: battery's 4,956 became 1,293 tried, advanced circuits' 178,044
+  became 40,363. The count now only skips the hopeless (`TRIES`, 200,000).
+- **Steps alone don't bound the time.** Most layouts that don't route are refused before
+  any routing: automation science from ore tried 7,602 for 86,000 A* steps, which steps
+  alone would let run for minutes on a big request. Each layout is now charged `TRY`.
+- **Not built: skipping a channel height known to fail.** Whether a shelf's adapters fit
+  seems to depend on its channel's height alone, which would let the pass skip every
+  layout with that height; it isn't proven (a fluid port's pipe tile, or pieces of another
+  channel, could reach in), and a wrong skip would make a false proof.
+- **Not built: the big requests.** A tighter least box per channel, from the pieces it
+  must hold ("How close to optimal": a tighter bound on shelves), is what would bring
+  their counts down.
+- **Not built: a proof beyond the router.** A complete check that a layout can't route
+  (a SAT model of its channels, as Factorio-SAT does for balancers) would turn "as far as
+  the router routes" into a proof on shelves.

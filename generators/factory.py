@@ -528,7 +528,7 @@ def _compact(layout, params, budget=None, say=False, cells=1):
         # first search has the whole of compact.STEPS, each after what's left but at least a
         # quarter of them, so none goes without; seconds (budget) the same, as a safety. The
         # smallest is kept; a tie keeps the researched rows, then the rows as solved.
-        start, spent, laid, errors, seen, bounds = time.monotonic(), 0, [], [], [], []
+        start, spent, laid, errors, seen, bounds, tried = time.monotonic(), 0, [], [], [], [], []
         asked = params.get("research", "")
         for research in dict.fromkeys((asked, "")):
             for fused in (2, 1, 0) if cells else (0,):
@@ -540,6 +540,7 @@ def _compact(layout, params, budget=None, say=False, cells=1):
                 if fused and not any(s.generator == "cell" for s in p["steps"]) or rows in seen:
                     continue
                 seen.append(rows)
+                tried.append((p, (research != asked, fused)))
                 work = Work(steps, seconds=left)
                 try:
                     bounds.append(compact.lower_bound(p))
@@ -548,6 +549,19 @@ def _compact(layout, params, budget=None, say=False, cells=1):
                 except compact.CompactError as e:
                     errors.append(str(e))
                 spent += work.spent
+        # Last, exactly (compact.exact): each row set again, the kept one first, over all the
+        # search can make of it under the smallest so far, with steps of its own; kept only if
+        # smaller. Done for every one, no layout on shelves of any is smaller: optimal on
+        # shelves (docs/layout-optimizer.md, "Exact on shelves").
+        done = bool(laid)
+        if laid:
+            work = Work(compact.EXACT, seconds=max(budget - (time.monotonic() - start), budget / 4))
+            areas = {id(p): got.area for p, got, _ in laid}
+            for p, tag in sorted(tried, key=lambda pt: areas.get(id(pt[0]), math.inf)):
+                got, finished = compact.exact(p, min(g.area for _, g, _ in laid), work)
+                done = done and finished
+                if got:
+                    laid.append((p, got, tag))
         if not laid:
             _COMPACT[key] = errors[0]
         else:  # kept only if smaller: one tall row can set both boxes (processing units)
@@ -556,6 +570,7 @@ def _compact(layout, params, budget=None, say=False, cells=1):
             _COMPACT[key] = min(laid, key=lambda got: (got[1].area, got[2]))[:2]
             # No layout of any of the rows tried is under the least of their bounds.
             _COMPACT[key][1].bound = {**min(bounds, key=lambda b: b["shelves"]), "rows": min(b["rows"] for b in bounds)}
+            _COMPACT[key][1].optimal = done
             bus = density(_build(plan(**params))[0].to_dict())[0]["area"]
             if bus <= _COMPACT[key][1].area:
                 _COMPACT[key] = f"the bus layout is smaller ({bus:,} tiles, compact {_COMPACT[key][1].area:,})"
@@ -566,7 +581,8 @@ def _compact(layout, params, budget=None, say=False, cells=1):
         return None
     if say:
         area, b = got[1].area, got[1].bound
-        print(f"factory: compact, {area:,} tiles; at least {b['shelves']:,} on shelves ({b['wide']} by {b['tall']}: "
+        print(f"factory: compact, {area:,} tiles{', optimal on shelves' if got[1].optimal else ''}; at least "
+              f"{b['shelves']:,} on shelves ({b['wide']} by {b['tall']}: "
               f"rows {b['rows_wide']} by {b['rows_tall']}, bus {b['wide'] - b['rows_wide']}, channels "
               f"{b['tall'] - b['rows_tall']}), within {area / b['shelves'] - 1:.0%}; the rows' own tiles {b['rows']:,}",
               file=sys.stderr)
