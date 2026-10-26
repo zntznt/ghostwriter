@@ -12,6 +12,7 @@
  "test_compact.Compact.test_lower_bound_leaves_the_rows_lines_as_laid_out": 0.4,
  "test_compact.Compact.test_merges_and_splits_keep_east_of_the_bus": 4.3,
  "test_compact.Compact.test_no_layout_is_smaller_than_its_lower_bound": 8.1,
+ "test_compact.Compact.test_no_layout_routes_with_a_channel_under_its_least_rows": 1.3,
  "test_compact.Compact.test_smaller_than_on_the_bus": 2.0,
  "test_compact.Compact.test_the_bus_layout_is_kept_when_it_is_smaller": 2.8,
  "test_compact.Compact.test_the_exact_pass_finds_the_least_layout_on_shelves_and_says_so": 1.8,

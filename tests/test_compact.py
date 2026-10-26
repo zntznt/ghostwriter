@@ -373,6 +373,86 @@ class Compact(unittest.TestCase):
             self.assertLessEqual(bound["shelves"], got.area, params)
             self.assertEqual(got.area, area(bp), params)
 
+    def test_a_channel_holds_no_more_taps_than_its_least_rows_allow(self):
+        # Brute force over every row each tap could take, west to east (belts.Taps.clear, the
+        # most it lets through: every tap the line's last use): taps take rows of their own
+        # past the channel's southmost, three apart without close. The most h rows hold is
+        # what least_rows allows, no more and no fewer.
+        from itertools import product
+
+        from tools.belts import Taps
+
+        def fits(ys, close):
+            taps = Taps(close=close)
+            for i, y in enumerate(ys):
+                if not taps.clear(y, 2 * i, True):
+                    return False
+                taps.rows.append((y, 2 * i))
+            return True
+
+        for close in (False, True):
+            for h in range(MIN_CHANNEL, 11):
+                rows = list(range(-1, -h - 1, -1))[1:]  # south to north, past the southmost
+                most = max(m for m in range(5) if any(fits(ys, close) for ys in product(rows, repeat=m)))
+                self.assertEqual(most, max(m for m in range(5) if compact.least_rows(m, close) <= h), (close, h))
+
+    def test_a_channel_under_its_least_rows_never_lays_out(self):
+        # Circuits at 5/s without cells, on four shelves: four taps or bus entries into
+        # channel 2 (iron, copper and both cable lines riding the bus). One row under its
+        # least, with every other channel roomy, nothing lays out, taps close or not.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="electronic-circuit", rate=5, cells=0)
+            tried = 0
+            for _, _, lines, close, shelves, bus_far, west, least in compact._space(p):
+                for c, rows in enumerate(least):
+                    if rows == MIN_CHANNEL:
+                        continue
+                    heights = [m + 8 for m in least]
+                    heights[c] = rows - 1
+                    with self.assertRaises(compact.Blocked, msg=(close, shelves, bus_far, c)):
+                        compact._attempt(lines, shelves, heights, bus_far, Work(), west, close)
+                    tried += 1
+            restore(p)
+        self.assertGreater(tried, 0)
+
+    def test_no_layout_routes_with_a_channel_under_its_least_rows(self):
+        # Every layout the search routes on its way (channels grown, then trimmed a row at a
+        # time) keeps each channel at least least_channels' rows.
+        real, seen = compact._attempt, []
+
+        def attempt(lines, shelves, heights, bus_far=True, work=None, west=False, close=False):
+            got = real(lines, shelves, heights, bus_far, work, west, close)
+            least = compact.least_channels(lines, shelves, bus_far, close)
+            seen.append((list(heights), least))
+            return got
+
+        from unittest import mock
+
+        with mock.patch.object(compact, "_attempt", attempt), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for params in ITEMS + [{"item": "inserter", "rate": 1}, LANES]:
+                compact.build(factory.rows_and_lines(**params))
+        self.assertTrue(seen)
+        for heights, least in seen:
+            self.assertTrue(all(h >= m for h, m in zip(heights, least)), (heights, least))
+
+    def test_the_shelf_bound_holds_a_row_for_each_tap(self):
+        # Batteries at 2/s tap two lines into a channel on their least shelving: the bound
+        # gives it a row past MIN_CHANNEL, 814 tiles to 836, still under the least layout on
+        # shelves there is (968, the exact pass's).
+        from unittest import mock
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = factory.rows_and_lines(item="battery", rate=2)
+            bound = compact.lower_bound(p)
+            with mock.patch.object(compact, "least_channels",
+                                   lambda lines, shelves, bus_far, close: [MIN_CHANNEL] * (len(shelves) + 1)):
+                thin = compact.lower_bound(p)
+        self.assertEqual((thin["shelves"], bound["shelves"]), (814, 836))
+        self.assertLessEqual(bound["shelves"], 968)
+
     def test_the_shelf_bound_is_met_where_nothing_routes_past_the_least_channels(self):
         # Iron gears at 1/s: one row on one shelf, its channels at their least; the bound
         # is the box laid out, so no bound on shelves can be higher.
@@ -422,7 +502,7 @@ class Compact(unittest.TestCase):
         with contextlib.redirect_stderr(err), warnings.catch_warnings():
             warnings.simplefilter("ignore")
             factory.build(item="battery", rate=2)
-        self.assertIn("factory: compact, 968 tiles, optimal on shelves; at least 814 on shelves", err.getvalue())
+        self.assertIn("factory: compact, 968 tiles, optimal on shelves; at least 836 on shelves", err.getvalue())
 
     def test_the_exact_pass_finds_nothing_under_a_least_box_and_proves_it(self):
         # Iron gears at 1/s lay out in 88 tiles, their least box: nothing to try under it.

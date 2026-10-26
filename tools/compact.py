@@ -238,6 +238,27 @@ def _shared(p):
     return shared
 
 
+def least_rows(held, close) -> int:
+    """The fewest rows a channel holding this many taps and bus entries can have: each on a
+    row of its own past the channel's southmost (a tap's splitter below its branch; belts.tap
+    and entry), three apart without close (belts.Taps.clear); never under MIN_CHANNEL."""
+    return max(MIN_CHANNEL, held + 1 if close else 3 * held - 1)
+
+
+def least_channels(lines, shelves, bus_far, close) -> list:
+    """Per channel, the fewest rows any layout of these (_attempt) gives it: least_rows of the
+    raw lines tapped into it and the lines made here joining the bus in it (_bus), whatever
+    the router does (docs/layout-optimizer.md, "Channels as tall as their taps")."""
+    raw, _, tapped, source = _bus(lines, shelves, bus_far)
+    held = [0] * (len(shelves) + 1)
+    for ln in raw:
+        for s in tapped(ln):
+            held[s] += 1
+        if not ln.supplied:
+            held[source(ln) + 1] += 1
+    return [least_rows(m, close) for m in held]
+
+
 def lower_bound(p) -> dict:
     """Tiles no layout of p's rows can be smaller than (docs/layout-optimizer.md, "How close
     to optimal"), leaving p's lines as they are:
@@ -247,8 +268,9 @@ def lower_bound(p) -> dict:
     - shelves (wide by tall): any layout this search can make of them (build). For each way
       it shelves them, at least as wide as each shelf's rows and gaps east of the bus lines
       running beside them and their yard, and as tall as the input row, each shelf's tallest
-      row and every channel at MIN_CHANNEL rows; the least of those. rows_wide and rows_tall
-      are the rows' share of each: the rest is the bus and yard, and the channels."""
+      row and every channel at its least rows with taps close together (least_channels: no
+      more than without); the least of those. rows_wide and rows_tall are the rows' share of
+      each: the rest is the bus and yard, and the channels."""
     _gated(p)
     rows = p["rows"]
     feeds = [(q, dict(q.feeds)) for r in rows for q in r.ports if q.kind == "in"]
@@ -266,10 +288,11 @@ def lower_bound(p) -> dict:
         for shelves in sorted({tuple(map(tuple, shelve(p, wide))) for wide in widths(rows)}):
             rows_wide = [sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for shelf in shelves]
             rows_tall = sum(max(tallest[k] for k in shelf) for shelf in shelves)
-            # The input row and channel 0 hold the supplied lines' first tiles; above the last
-            # shelf, the product leaves from the top channel's north row.
-            tall = rows_tall + MIN_CHANNEL * len(shelves) + (1 + MIN_CHANNEL if supplied else 0)
             for bus_far in (False, True):
+                # The input row and channel 0 hold the supplied lines' first tiles; above the
+                # last shelf, the product leaves from the top channel's north row.
+                least = least_channels(lines, shelves, bus_far, close=True)
+                tall = rows_tall + sum(least[1:]) + (1 + least[0] if supplied else 0)
                 raw, running, *_ = _bus(lines, shelves, bus_far)
                 for west in (False, True):
                     _, x0s, _ = _columns(lines, shelves, running, len(raw), west)
@@ -307,18 +330,19 @@ def exact(p, beat, work) -> tuple:
     if starts is None or _count(starts, beat) > TRIES:
         return None, False
 
-    def heights(n, extra):  # every way of n channels taking extra rows past MIN_CHANNEL, in order
+    def heights(fewest, extra):  # every way of the channels taking extra rows past their fewest, in order
+        n = len(fewest)
         for bars in combinations(range(extra + n - 1), n - 1):
             edges = (-1, *bars, extra + n - 1)
-            yield [MIN_CHANNEL + b - a - 1 for a, b in zip(edges, edges[1:])]
+            yield [m + b - a - 1 for m, a, b in zip(fewest, edges, edges[1:])]
 
     best, least = None, beat
     queue = [(wide * tall, i, 0) for i, (wide, tall, *_) in enumerate(starts)]
     heapq.heapify(queue)
     while queue[0][0] < least:
         box, i, extra = heapq.heappop(queue)
-        wide, tall, lines, close, shelves, bus_far, west = starts[i]
-        for h in heights(len(shelves) + 1, extra):
+        wide, tall, lines, close, shelves, bus_far, west, fewest = starts[i]
+        for h in heights(fewest, extra):
             if box >= least:
                 break
             work.spend(TRY)
@@ -338,9 +362,10 @@ def exact(p, beat, work) -> tuple:
 
 def _space(p):
     """exact's starts, one per way to lay out the rows but their channel heights: (wide,
-    tall with every channel at MIN_CHANNEL, lines, close, shelves, bus_far, west), the least
-    box first; one only once, though two choices lay out the same (bus_far with no line
-    used far off, west with no shelf moving). None with no supplied item."""
+    tall with every channel at its least rows, lines, close, shelves, bus_far, west, those
+    least rows: least_channels, as no channel under them lays out); one only once, though two
+    choices lay out the same (bus_far with no line used far off, west with no shelf moving).
+    None with no supplied item."""
     rows = p["rows"]
     tallest = [r.box[3] - r.box[1] + 1 for r in rows]
     shelvings = sorted({tuple(map(tuple, shelve(p, wide))) for wide in widths(rows)})
@@ -352,18 +377,22 @@ def _space(p):
             return None
         for shelves in shelvings:
             rows_wide = [sum(width(rows[k]) for k in shelf) + GAP * (len(shelf) - 1) for shelf in shelves]
-            tall = 1 + sum(max(tallest[k] for k in shelf) for shelf in shelves) + MIN_CHANNEL * (len(shelves) + 1)
+            rows_tall = 1 + sum(max(tallest[k] for k in shelf) for shelf in shelves)
             for bus_far in (False, True):
                 raw, running, *_ = _bus(lines, shelves, bus_far)
+                fewest = least_channels(lines, shelves, bus_far, close)
                 for west in (False, True):
                     _, x0s, _ = _columns(lines, shelves, running, len(raw), west)
                     same = (id(lines), close, shelves, tuple(map(id, raw)), tuple(x0s))
                     if same not in seen:
                         seen.add(same)
                         wide = max(x + w for x, w in zip(x0s, rows_wide)) - (0 if raw else min(x0s))
-                        starts.append((wide, tall, lines, close, [list(s) for s in shelves], bus_far, west))
+                        starts.append((wide, rows_tall + sum(fewest), lines, close, [list(s) for s in shelves],
+                                       bus_far, west, fewest))
     restore(p)
-    return sorted(starts, key=lambda s: s[0] * s[1])
+    # Least box first, as if every channel were at MIN_CHANNEL: exact tries starts whose boxes
+    # tie in this order, so a tie keeps the layout it kept before least_channels.
+    return sorted(starts, key=lambda s: s[0] * (s[1] - sum(s[7]) + MIN_CHANNEL * len(s[7])))
 
 
 def _count(starts, beat) -> int:
