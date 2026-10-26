@@ -340,7 +340,9 @@ def main(argv=None):
 
     p = sub.add_parser("gen")
     p.add_argument("name")
-    p.add_argument("params", nargs="*", metavar="key=value")
+    p.add_argument("params", nargs="*", metavar="key=value",
+                   help="the generator's options (its build() arguments), e.g. factory item=X rate=N; "
+                        "factory effort=N spends N times the search's steps for a smaller layout")
     p.add_argument("--json", action="store_true")
     p.add_argument("--validate", action="store_true", help="validate in the game before printing")
     p.add_argument("--factorio", help="Factorio executable for --validate")

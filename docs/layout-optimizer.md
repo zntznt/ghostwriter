@@ -1850,3 +1850,66 @@ Against main (#87), 9 builds at a time on this Mac (main's were 8):
   give up while it can still use more room. Both would change layouts the search keeps.
 - **Not built: more steps for the probe.** Chemical and production science show what 7 and 3
   million more would find; each million is about 5 s here.
+
+## What effort buys (built)
+
+`factory ... effort=N` (a whole number, default 1) multiplies the steps of the compact search
+(`compact.STEPS`) and of the exact pass and its probe (`compact.EXACT`) by N. The steps are the
+same on any machine, so the same request at the same effort gives the same layout anywhere;
+`effort=1` builds exactly as before. `budget=` seconds, the safety, defaults to
+`compact.BUDGET` times effort, so more steps aren't cut by the clock they'd have had at
+effort 1. Where the seconds do run out first, factory says so on stderr ("budget=... seconds
+ran out before the steps did") and never says optimal: a cut negotiation counts as one that
+doesn't route, and another machine may lay the request out differently.
+
+What stays fixed: `NEGOTIATION` (300,000 steps a negotiation), `TRY` and `TRIES`. More effort
+buys more layouts tried, not longer negotiations.
+
+### The big requests (2.1.23, research 0)
+
+Area in tiles, gap to the on-shelves bound, and build time. Times were measured 6 to 12 builds
+at a time on this Mac, so they compare levels with each other rather than give a time alone.
+
+| Request | effort 1 | effort 2 | effort 5 | Build, effort 1, 2, 5 |
+|---|---|---|---|---|
+| utility science 0.2/s | 6,480 (135%) | 5,035 (82%) | **4,732 (71%), -27%** | 129, 240, 315 s |
+| chemical science 0.5/s | 3,432 (72%) | 3,432 | **2,925 (46%), -15%** | 112, 241, 355 s |
+| chemical science 0.5/s, oil=1 | 4,700 (72%) | 4,700 | **4,000 (46%), -15%** | 116, 311, 486 s |
+| flying robot frames 0.2/s, oil=1 | 4,368 (86%) | 4,316 (84%) | **3,900 (66%), -11%** | 135, 306, 377 s |
+| production science 0.2/s | 2,852 (70%) | 2,852 | **2,610 (56%), -8%** | 89, 236, 527 s |
+| utility science 0.2/s, oil=1 | 6,893 (97%) | 6,466 (85%) | **6,466, -6%** | 123, 284, 636 s |
+| processing units 0.5/s | 3,850 (32%) | 3,850 | 3,850 | 109, 322, 332 s |
+| processing units 0.5/s, oil=1 | 4,810 (26%) | 4,810 | 4,810 | 133, 307, 517 s |
+| flying robot frames 0.2/s | 2,952 (79%) | 2,952 | 2,952 | 99, 114, 176 s |
+| advanced circuits 1/s, oil=1 | 1,806 (19%) | 1,806 | 1,806 | 26, 45, 32 s |
+| electric engines 0.5/s | 1,386 (13%) | 1,386 | 1,386 | 39, 49, 37 s |
+| electric engines 0.5/s, oil=1 | 2,185 (20%) | 2,185 | 2,185 | 70, 100, 84 s |
+
+- **effort=5 for a big factory built once.** Half the big requests come out 6 to 27% smaller,
+  for 2.4 to 6 times the build time; the other half come out the same. effort=2 buys only
+  utility science (-22%) and its crude-oil twin (-6%), and a little on robot frames.
+- **None is proven optimal** at any of these levels: their row sets are still past `TRIES`,
+  so the exact pass probes them.
+- **Requests the search settles inside its steps at effort 1 lay out the same at any effort**,
+  the more so those the exact pass proves optimal on shelves (iron gears at effort 2: the same
+  blueprint, in a test).
+- **effort=10 buys nothing past 5.** On the seven requests effort 5 improves or might, effort
+  10 gives the same blueprints (chemical science with and without crude oil, production and
+  utility science with and without, robot frames from crude oil, processing units), in about
+  as long again.
+- **The same blueprint whatever the hash seed.** Utility science at effort 2 lays out the same
+  (5,035 tiles) under PYTHONHASHSEED 0, 1 and unset.
+- **In game:** every blueprint above that effort changes passes
+  `gen factory ... effort=N --validate` on 2.1.23: utility science 0.206/s (effort 2) and
+  0.201/s (5), from crude oil 0.208/s (2 and 5, one blueprint); chemical science 0.601/s, from
+  crude oil 0.6/s; robot frames from crude oil 0.22/s (2 and 5); production science 0.215/s
+  (5, reaching its rate in the last window of four).
+
+### Not measured
+
+- **`NEGOTIATION` scaled with effort**, measured at effort 5 on three requests: chemical
+  science and robot frames from crude oil lay out the same, production science in 2,523 tiles
+  (-3% more), utility science from crude oil not finished. Not built: one request in three
+  isn't enough to make a negotiation's steps part of effort.
+- **The whole sweep at effort above 1**: only the big requests were measured; the rest end
+  their search inside its steps at effort 1.
