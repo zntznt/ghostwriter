@@ -11,7 +11,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m tools.bp gen gated_requester item=iron-plate count=100 --validate
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 --validate      # rows on shelves, all connected, products handed straight over (the same layout on any machine; effort=N spends N times the search's steps for a smaller big factory, effort=5 for one you'll build once; budget=SECONDS only as a safety, default 300 times effort; stderr says how close it is to a proven lower bound, and "optimal on shelves" where an exact pass tried every layout on shelves under it)
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 layout=bus --validate   # the same rows on a main bus
-.venv/bin/python -m tools.bp gen production item=electronic-circuit rate=5 --validate   # the same rows as a book
+.venv/bin/python -m tools.bp gen production item=electronic-circuit rate=5 --validate   # the same rows as a book (every generator's stderr says how close it is to its template's least and to its parts' own tiles)
 .venv/bin/python -m tools.bp gen fluid_row recipe=processing-unit machine=assembling-machine-3 research=inserter-capacity-bonus=7 --validate   # inserters sized for researched hands: refused without it
 .venv/bin/python -m tools.bp gen cell recipe=electronic-circuit producer=copper-cable --validate   # cable machines handing cable straight to circuit machines
 .venv/bin/python -m tools.bp gen cell recipe=advanced-circuit producer=copper-cable belts=2 --validate   # circuits and plastic on a second input belt, by long-handed inserter

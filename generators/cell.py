@@ -39,6 +39,7 @@ REGULAR = ("inserter", "fast-inserter")
 LONG = "long-handed-inserter"
 LANES = ("left", "right")
 MOST = 12  # consumers per side, at most
+MODEL = ("y", 1)  # gen's bound (tools/density.bound): a handover row between each two machines
 
 
 @dataclass

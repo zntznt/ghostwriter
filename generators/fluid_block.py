@@ -39,6 +39,7 @@ MARGIN = 0.85
 REGULAR = ("inserter", "fast-inserter")
 MACHINES = ("chemical-plant", "oil-refinery")
 FACING = {"north": Direction.NORTH, "south": Direction.SOUTH}
+MODEL = ("x", 0)  # gen's bound (tools/density.bound): machines stand along x in one row
 
 
 @dataclass

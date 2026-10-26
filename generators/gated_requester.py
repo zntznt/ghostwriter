@@ -12,6 +12,8 @@ from draftsman.blueprintable import Blueprint
 from draftsman.constants import LogisticModeOfOperation
 from draftsman.entity import ConstantCombinator, DeciderCombinator, LogisticRequestContainer
 
+MODEL = None  # gen's bound (tools/density.bound): no machines, so its parts are all of it
+
 
 def build(item: str = "iron-plate", count: int = 100) -> Blueprint:
     bp = Blueprint()

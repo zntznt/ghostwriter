@@ -1913,3 +1913,109 @@ at a time on this Mac, so they compare levels with each other rather than give a
   isn't enough to make a negotiation's steps part of effort.
 - **The whole sweep at effort above 1**: only the big requests were measured; the rest end
   their search inside its steps at effort 1.
+
+## Gaps across the app (built)
+
+Every layout generator now says on stderr, after `gen`, how close its layout is to two
+proven lower bounds (`tools/density.bound`), as factory has since "How close to optimal":
+
+```
+assembly_row: 52 tiles; at least 39 in its columns (13 wide by 3: the machines of its fullest column end to end), within 33%; the parts' own tiles 26 (machines 18, inserters 8), within 100%
+```
+
+### The bounds, and what each holds for
+
+- **The parts' own tiles: any layout of the same parts.** The parts are every entity but
+  belts, pipes and poles: machines, inserters, chests, combinators. Entities can't overlap,
+  so no box holding them is smaller than their tiles added up, however its belts, pipes and
+  poles are laid (rectangle packing's area bound, L0, as for factory's rows, at the grain of
+  single entities). It says nothing about other parts (a faster inserter for two, a machine
+  handing straight to another instead of a belt): what lies past it is the transport, the
+  poles and the empty tiles.
+- **In its template: any layout in the generator's own design.** Each row generator stands
+  its machines in lines along one axis (`MODEL`: y for the column generators,
+  `assembly_row`, `fluid_row`, `smelting_column` and `cell`; x for `fluid_block`'s row),
+  across a section its template fixes: the columns of belts, inserters and machines, or the
+  fluid lines above and below. Along the run the machines can't overlap, so the box is at
+  least as wide across as built, and as long as the machines of its fullest line end to
+  end. A cell's template also puts a handover row between each two machines, so those count
+  (`MODEL`'s second number). It holds only for that template: the same machines laid out
+  some other way can be smaller.
+- **Books** (`production`) add up their rows' areas and bounds, each row by its own
+  generator's template (fluid blocks along x, the rest along y).
+- **`gated_requester`** has no machines: its parts, a chest and two combinators, are all of
+  it, 4 tiles, within 0%.
+- **`factory`** keeps its own line: its on-shelves bound plays the template's part.
+
+**Not counted: belt and pipe tiles a machine must touch.** An inserter can take from another
+machine instead of a belt (cells do), two inserters can share a belt tile, and a fluid
+machine can connect straight to another, so the least belt or pipe a design needs depends on
+the layout, and counting one could give a bound that another layout beats.
+
+### Measured (2.1.23)
+
+52 requests: the #56 audit's, more rates, machines, belts and sides for each generator,
+research 2 and 7 where it changes a row, and 9 factories (their template gap is the
+on-shelves one). No blueprint changed: `gen`'s output is byte-identical to main on the 34
+row requests, and the pinned default builds still match.
+
+| Generator | Requests | Area | In its template, median (range) | To its parts, median (range) | Past the parts: belts, pipes, poles, empty | Past the parts a machine |
+|---|---|---|---|---|---|---|
+| assembly_row | 11 | 6,752 | 0% (0 to 33%) | 77% (62 to 115%) | 1,712, 0, 254, 1,019 | 9.0 |
+| fluid_row | 4 | 3,445 | 6% (1 to 44%) | 88% (78 to 135%) | 1,052, 261, 88, 146 | 9.0 |
+| fluid_block | 7 | 1,059 | 8% (5 to 108%) | 215% (117 to 275%) | 54, 395, 18, 256 | 25.8 |
+| smelting_column | 5 | 2,280 | 0% (all) | 83% (77 to 100%) | 600, 0, 66, 366 | 6.1 |
+| cell | 5 | 2,053 | 0% (all) | 119% (90 to 161%) | 583, 0, 52, 556 | 15.7 |
+| production | 10 | 5,219 | 9% (0 to 29%) | 79% (75 to 125%) | 1,162, 388, 206, 846 | 11.6 |
+| gated_requester | 1 | 4 | | 0% | 0 | |
+| factory | 9 | 10,706 | 20% on shelves (14 to 72%) | 392% (308 to 698%) | 2,859, 231, 148, 5,558 | 50.8 |
+
+- **Rows sit at their templates' least,** except where a full inserter column leaves poles a
+  row of their own after every machine: circuits on assembling machines 2 (52 tiles against
+  39), gears on assembling machines 3 on a fast belt (312 against 234) and a one-sided
+  circuit row (28 against 21), 33% each. Research that frees column tiles removes it: the
+  same gear row at level 7 is 234, at its least. Processing units in a fluid row give poles
+  a row after each machine too (169 against 117, 44%), and every fluid row puts its
+  product's exit belts on a row of their own north of its machines (plastic 130 against
+  117, 11%; batteries and engines 1%).
+- **Past their parts, rows are their belts,** which run every column's full length by
+  design: 62 to 135% over the parts, 6 to 9 tiles a machine, a third of it empty in assembly
+  rows and smelting columns, a tenth in fluid rows.
+- **Fluid blocks are the loosest rows.** Sulfuric acid takes 175 tiles where its template's
+  least is 84 (108%) and sulfur 133 against 84 (58%). In the acid block every machine has
+  three columns after it, its inserter, its belt and one that only pipes and a pole use,
+  and the lines end in a pipe column west of the first: 13 of its 25 columns. Blocks of
+  fluids alone sit within 5 to 8%. Past their parts
+  they're pipes (395 of 723 tiles), more pipe tiles than machine tiles in 6 of 7 blocks.
+- **Cells are exactly their template,** handover rows included, but hold the most empty tiles
+  of any row: 556 of their 1,191 past the parts.
+- **Factories hold most of the app's space past the parts:** 50.8 tiles a machine, against
+  6.1 to 25.8 for any row, 63% of it empty (5,558 of 8,796).
+
+### Ranked, and the next target
+
+Tiles past the parts across these requests: factory 8,796, assembly_row 2,985, production
+2,602, fluid_row 1,547, cell 1,191, smelting_column 1,032, fluid_block 723. Past each
+generator's own template bound: factory 2,668 (on shelves), production 566, fluid_block
+255, assembly_row 98, fluid_row 91, cell and smelting_column 0.
+
+1. **factory:** the most space by far, in all and per machine. On its own shelves it's now
+   20% from its bound (median), from 29% before "Thinner channels", and the last slices
+   gained about 1% each: what's left is the shelf model itself, its bus and channels, so a
+   much smaller factory needs a different model rather than more search.
+2. **fluid_block:** the most slack of any row in its own template (up to 108%) and the most
+   space past its parts per machine (25.8 tiles, pipes 55% of it). Every factory and book
+   with `oil=1`, sulfur or acid carries its blocks (pipes 104 to 182 tiles in the oil
+   requests measured).
+3. **Pole rows in assembly and fluid rows:** a third of a row wherever the inserter column is
+   full.
+
+**Recommended next target: `fluid_block`,** for the most slack of any row against its own
+template, and the most transport per machine: the three columns after every machine where
+items ride a belt, and more pipe tiles than machine tiles. Then the pole rows.
+
+### Not built
+
+- Belt and pipe tiles in the any-layout bound (above).
+- `platform`: its layout is set by its railguns, guns and bays, not by packing.
+- A parts line for `factory`: it keeps its own; its parts bound is in this table only.
