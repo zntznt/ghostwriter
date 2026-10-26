@@ -25,6 +25,7 @@ from draftsman.constants import Direction
 from tools import layout, rates
 
 LANES = ("left", "right")
+MODEL = ("y", 0)  # gen's bound (tools/density.bound): furnaces stand along y, none between
 
 
 @dataclass

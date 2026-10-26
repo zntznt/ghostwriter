@@ -112,6 +112,9 @@ def cmd_gen(args):
         data = blueprint.to_dict()
     if _report(check(data)):
         sys.exit(1)
+    gap = _gap(args.name, module, params, data)
+    if gap:
+        print(gap, file=sys.stderr)
     items = [("", data, *_generator_tests(module, params, blueprint, data))]
     if hasattr(module, "parts"):
         # A book of other generators' blueprints: each child runs its own tests.
@@ -139,6 +142,43 @@ def cmd_gen(args):
     if args.validate and not _validate(items, args.factorio):
         sys.exit(1)
     sys.stdout.write(dump_json(data) if args.json else encode(data) + "\n")
+
+
+def _gap(name, module, params, data) -> str | None:
+    """How close a generator's layout is to its bounds (tools.density.bound), from its MODEL
+    (a book's from each row's generator); None for one without (factory says its own)."""
+    from tools.density import bound, density
+
+    if "blueprint_book" in data and hasattr(module, "parts"):
+        children = {c["index"]: c["blueprint"] for c in data["blueprint_book"]["blueprints"]}
+        models = [getattr(importlib.import_module(f"generators.{n}"), "MODEL", None)
+                  for n, _ in module.parts(**params)]
+        bps = [children[i] for i in range(len(models))]
+    elif "blueprint" in data and hasattr(module, "MODEL"):
+        models, bps = [module.MODEL], [data["blueprint"]]
+    else:
+        return None
+    area = sum(density({"blueprint": bp})[0]["area"] for bp in bps)
+    bounds = [bound(bp, *(m or (None,))) for bp, m in zip(bps, models)]
+    parts, roles = sum(b["parts"] for b in bounds), {}
+    for b in bounds:
+        for r, n in b["roles"].items():
+            roles[r] = roles.get(r, 0) + n
+    line = f"{name}: {area:,} tiles"
+    if len(bps) > 1:
+        line += f" in {len(bps)} rows"
+        if all(b["model"] for b in bounds):
+            model = sum(b["model"] for b in bounds)
+            line += f"; at least {model:,} in their own layouts, within {area / model - 1:.0%}"
+    elif bounds[0]["model"]:
+        b, between = bounds[0], ", a row between each two" if models[0][1] else ""
+        where = (f"its columns ({b['across']} wide by {b['along']}: the machines of its fullest column end to end"
+                 if models[0][0] == "y" else f"its row ({b['along']} by {b['across']} tall: the machines end to end")
+        line += f"; at least {b['model']:,} in {where}{between}), within {area / b['model'] - 1:.0%}"
+    if parts:
+        line += (f"; the parts' own tiles {parts:,} ({', '.join(f'{r} {n:,}' for r, n in roles.items())}), "
+                 f"within {area / parts - 1:.0%}")
+    return line
 
 
 def _generator_tests(module, params, blueprint, data) -> tuple:

@@ -95,6 +95,37 @@ def density(data: dict, rate: float | None = None) -> list[dict]:
     return out
 
 
+TRANSPORT = ("belts", "pipes", "poles")  # what a layout lays as it needs; every other entity is a part
+
+
+def bound(bp: dict, run: str | None = None, between: int = 0) -> dict:
+    """Tiles no layout can fit one blueprint in (docs/layout-optimizer.md, "Gaps across the app"):
+    - parts: any layout of the same parts, every entity but belts, pipes and poles (machines,
+      inserters, chests, combinators). They can't overlap, so the box holds their own tiles,
+      however the belts, pipes and poles are laid; roles: those tiles by role.
+    - model, with run (the axis a generator's machines stand along, "x" or "y"): any layout
+      in its own template, as wide across the run as built, whose machines can't overlap
+      along it: across times the machines of the fullest line end to end (along), with
+      between rows between each two where the template needs them. None without run."""
+    tiles, roles, lines = set(), {}, {}
+    for e in bp.get("entities", []):
+        t = footprint(e)
+        tiles |= t
+        r = role(e["name"])
+        if r not in TRANSPORT:
+            roles[r] = roles.get(r, 0) + len(t)
+        if r == "machines":
+            xs, ys = sorted({x for x, _ in t}), sorted({y for _, y in t})
+            across, length = ((xs[0], xs[-1]), len(ys)) if run == "y" else ((ys[0], ys[-1]), len(xs))
+            lines.setdefault(across, []).append(length)
+    xs, ys = {x for x, _ in tiles}, {y for _, y in tiles}
+    across = (max(xs) - min(xs) + 1 if run == "y" else max(ys) - min(ys) + 1) if tiles else 0
+    along = max((sum(n) + between * (len(n) - 1) for n in lines.values()), default=0)
+    roles = {r: roles[r] for r in [*ROLES, "other"] if r in roles}
+    return {"parts": sum(roles.values()), "roles": roles, "across": across, "along": along,
+            "model": across * along if run and lines else None}
+
+
 def report(measures: list[dict]) -> str:
     lines = []
     for d in measures:

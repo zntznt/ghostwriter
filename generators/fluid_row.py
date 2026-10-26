@@ -39,6 +39,7 @@ MACHINES = ("chemical-plant", "assembling-machine-2", "assembling-machine-3")
 # 100% (NOTES.md). Above this fill, outputs use fast inserters.
 BASIC_FILL = 0.85
 SIDES = ("left", "right")
+MODEL = ("y", 0)  # gen's bound (tools/density.bound): machines stand along y, none between
 
 
 @dataclass

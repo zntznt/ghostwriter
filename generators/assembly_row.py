@@ -32,6 +32,7 @@ MARGIN = 0.85  # use at most this share of an inserter's measured rate
 REGULAR = ("inserter", "fast-inserter")
 LONG = "long-handed-inserter"
 LANES = ("left", "right")
+MODEL = ("y", 0)  # gen's bound (tools/density.bound): machines stand along y, none between
 
 
 @dataclass
