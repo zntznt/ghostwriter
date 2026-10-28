@@ -50,9 +50,13 @@ Objective, minimised:
     sum_r ( tiles_per_machine_r * m_r + block_tiles_r * u_r ) + eps * crude (or coal) used
 
 - `tiles_per_machine_r` and `block_tiles_r` are measured, not assumed: build the
-  block with the real `fluid_block` generator at 1 and 2 machines and take the
-  bounding-box area (`bp density`). The difference is the per-machine area; the
-  rest is the block's fixed area. Measured on first use per recipe and cached in
+  block with the real `fluid_block` generator at 1 and 3 machines and take the
+  bounding-box area (`bp density`). Half the difference is the per-machine area;
+  the rest of the 1-machine area is the block's fixed area. Measured on 2.1.23 /
+  Draftsman 4.0.1, areas for 1..6 machines are linear for the crude recipes
+  (basic 40, advanced 75, both cracking 24 tiles a machine) but alternate for coal
+  liquefaction (75, 120, ...: a coal belt gap every second machine), which is why
+  it's measured over a pair; the average is within 23 tiles of the real area. Measured on first use per recipe and cached in
   memory (`functools.cache`), so importing `production` stays cheap.
 - `eps` is small enough never to outweigh a tile; it breaks ties toward the plan
   that uses less feedstock, so equal-tile plans don't flip between solver versions.
@@ -61,6 +65,23 @@ After solving, machines are `m_r` directly (no `ceil` for oil steps); `Step`s an
 non-oil inputs (water, steam, crude, coal) are built from `c_r` as today.
 
 A solver status other than optimal raises `ValueError` naming the request.
+
+### Consequence: space over crude
+
+Minimising tiles puts every request that needs only petroleum gas (plastic,
+sulfur, sulfuric acid) on basic oil processing, at every rate: about 4.4 tiles per
+petroleum gas/s against about 5.2 for advanced oil processing with cracking (no
+water, no cracking blocks). It burns 2.2 times the crude (100 crude oil makes 45
+petroleum gas, against 97.5 advanced). Requests needing heavy or light oil still
+get advanced oil processing. This is chosen deliberately: tiles are the cost.
+
+To keep the trade visible, `factory` and `production` print the oil plan to stderr
+under their existing `say` guard, for example
+
+    oil: basic-oil-processing x4; crude oil 70/s (advanced with cracking would use 33/s)
+
+A crude weight (`crude_cost=` tiles per crude oil/s, default 0) is the follow-up if
+that turns out to pinch; it's one more objective term.
 
 What the model does not see: water and gate lines at the factory level (bus and
 compact layouts). The density check below is what catches it if that matters.
@@ -82,7 +103,9 @@ In `tests/test_tools.py`, class `Production`:
    gas meets it. Independent of the solver.
 4. `oil=coal` uses coal liquefaction and needs no crude.
 5. An unknown `oil=` value raises `ValueError` listing the allowed values.
-6. The estimate agrees with reality: for a few requests, build the factory with
+6. The stderr oil line names the recipes, machines and crude per second, and the
+   crude an advanced-with-cracking plan would use.
+7. The estimate agrees with reality: for a few requests, build the factory with
    each refinery choice and check the model's pick is the one `bp density` measures
    smaller.
 
@@ -102,7 +125,9 @@ Full suite: `python -m unittest discover tests`, and the CI shards on push.
 A changed test expectation or `tests/fixtures/default_builds.json` entry is
 accepted only if the new build (a) is no larger in tiles and (b) passes in game.
 Anything else is a regression. Every changed fixture is listed with the reason and
-the tile difference.
+the tile difference. Expected: `factory plastic-bar rate=5` changes (petroleum gas
+only, so basic oil processing); `fluid_block advanced-oil-processing` doesn't (the
+generator is untouched).
 
 ## Later
 
