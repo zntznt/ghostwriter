@@ -1018,6 +1018,16 @@ class Factory(unittest.TestCase):
             factory.build(item="plastic-bar", rate=3, oil=1, layout="bus")
         self.assertIn("oil: basic-oil-processing", err.getvalue())
 
+    def test_chosen_oil_plan_is_no_larger_built(self):
+        # The milp's tile estimate leaves out the factory's water and gate lines: check the
+        # pick against the built factory.
+        from tools.density import density
+
+        for rate in (3, 10):
+            area = {oil: density({"blueprint": factory_built(item="plastic-bar", rate=rate, oil=oil)[2]})[0]["area"]
+                    for oil in (1, "advanced")}
+            self.assertLessEqual(area[1], area["advanced"], rate)
+
     def test_each_fluid_line_is_one_network_of_its_own(self):
         _, p, bp = factory_built(**FACTORIES[1])
         nets = pipe_networks(bp)

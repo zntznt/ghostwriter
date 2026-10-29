@@ -1,6 +1,6 @@
 # Oil planner: choosing refinery recipes by measured tiles
 
-Status: design, not built. Branch `feat/lp-planner`.
+Status: built, without `oil=coal` (see [Later](#later)). Branch `feat/lp-planner`.
 
 ## Problem
 
@@ -21,8 +21,7 @@ blocks, gates and a water line.
 - `oil=advanced` (new): advanced oil processing with cracking only, exactly today's
   `oil=1` plan. The crude-efficient choice, and what the tests of the cracking gate and
   its layout use, since `oil=1` no longer cracks for petroleum-only requests.
-- `oil=coal` (new): coal and steam in; coal liquefaction plus cracking. Crude is
-  never mixed in. Any other `oil=` value raises `ValueError` naming the allowed ones.
+- Any other `oil=` value raises `ValueError` naming the allowed ones.
 - Output shape is unchanged: `Step`s for `fluid_block` rows, inputs including water
   and steam, petroleum gas surplus as a negative input. `factory`, `compact`, the
   site and chain tests consume it as before.
@@ -105,7 +104,7 @@ In `tests/test_tools.py`, class `Production`:
 3. Balance invariant on every planned case: recompute net production per fluid from
    the recipes and the returned crafts; heavy and light equal the demand, petroleum
    gas meets it. Independent of the solver.
-4. `oil=coal` uses coal liquefaction and needs no crude.
+4. (`oil=coal`: dropped, see Later.)
 4b. `oil=advanced` reproduces today's plan: `test_oil_balance`'s numbers unchanged.
 5. An unknown `oil=` value raises `ValueError` listing the allowed values.
 6. The stderr oil line names the recipes, machines and crude per second, and the
@@ -124,7 +123,7 @@ In game (`--validate`, flow tests):
 - an `oil=coal` request (coal liquefaction: heavy oil both in and out of one block).
   A liquefaction block needs heavy oil to start, and its only heavy oil is its own
   output, so it may never start. If this fails in game, `oil=coal` moves to a follow-up
-  and this change ships crude only.
+  and this change ships crude only. It failed: see Later.
 
 Full suite: `python -m unittest discover tests`, and the CI shards on push.
 
@@ -139,6 +138,12 @@ the benchmark tables in `docs/layout-optimizer.md` were measured with the old ch
 they get a note saying so (they are `oil=advanced` now).
 
 ## Later
+
+`oil=coal` (coal liquefaction plus cracking, no crude) was built and failed in game on
+2.1.23: a liquefaction block's heavy oil input has nothing to start it, so it reports
+`fluid_ingredient_shortage` and makes nothing, even in its own block flow test. It needs
+a start-up supply of heavy oil (a tank primed once, or a crude refinery to kick it off)
+before the planner can offer it; the model is one more `RECIPES` entry.
 
 Recipe choice beyond oil, and Space Age by-product chains, reuse the same model
 with more recipes; the generators would also need to build multi-output and

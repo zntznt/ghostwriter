@@ -370,7 +370,7 @@ request is a row's last machine rounding up.
 | processing-unit 0.5/s, oil=1 | 10,556 | bus kept (13,689) | | 0.531/s | 0.531/s (the bus) | 46 s |
 | production-science-pack 0.2/s | 4,784 | bus (doesn't route) | | 0.21/s | 0.21/s (the bus) | 8 s |
 
-Every factory with oil (`oil=1`) refines crude oil and cracks both heavy and light oil
+Every factory with oil (`oil=1` when this was measured, `oil=advanced` since docs/oil-planner.md) refines crude oil and cracks both heavy and light oil
 through gates (lubricant cracks only light oil: its heavy oil is the lubricant's).
 Electric engines from crude oil are the case the gate is for (NOTES.md): heavy-oil
 cracking and lubricant on one heavy oil line, the lubricant first. The bus builds in 0
