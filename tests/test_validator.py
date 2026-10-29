@@ -344,7 +344,7 @@ class Validator(unittest.TestCase):
 
     def test_factory_reaches_its_rate(self):
         # A whole book on a bus: only inputs fed at the bottom, the product drained at the top.
-        for params in ({"item": "electronic-circuit", "rate": 5}, {"item": "advanced-circuit", "rate": 1, "oil": 1}):
+        for params in ({"item": "electronic-circuit", "rate": 5}, {"item": "advanced-circuit", "rate": 1, "oil": "advanced"}):
             bp = factory.build(**params, layout="bus")
             data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
             self.assertPasses(data)
@@ -361,7 +361,7 @@ class Validator(unittest.TestCase):
         steps = {s.item: s for s in factory._compact("compact", shared)[0]["steps"]}
         self.assertEqual({steps[i].params.get("producer") for i in ("inserter", "transport-belt")}, {"iron-gear-wheel"})
         for params in ({"item": "automation-science-pack", "rate": 1}, {"item": "electronic-circuit", "rate": 5},
-                       {"item": "plastic-bar", "rate": 5}, {"item": "advanced-circuit", "rate": 1, "oil": 1}, shared):
+                       {"item": "plastic-bar", "rate": 5}, {"item": "advanced-circuit", "rate": 1, "oil": "advanced"}, shared):
             bp = factory.build(**params, layout="compact")
             self.assertIn("compact", bp.label)
             data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}

@@ -1,7 +1,9 @@
 """Run: python -m unittest discover tests"""
 
+import contextlib
 import copy
 import inspect
+import io
 import json
 import math
 import tempfile
@@ -623,15 +625,69 @@ class Production(unittest.TestCase):
         self.assertEqual(errors(data), [])
         self.assertIn("Supply", data["blueprint_book"]["description"])
 
+    def test_oil_block_tiles_are_measured(self):
+        # Bounding-box areas at 1 and 3 machines (2.1.23 / Draftsman 4.0.1): basic 48, 128;
+        # advanced 90, 240; cracking 32, 80.
+        self.assertEqual(production._tiles("basic-oil-processing"), (40, 8))
+        self.assertEqual(production._tiles("advanced-oil-processing"), (75, 15))
+        self.assertEqual(production._tiles("heavy-oil-cracking"), (24, 8))
+
     def test_oil_balance(self):
-        # 10 plastic/s needs 100 petroleum gas/s: refining 100/97.5 crafts/s with all
-        # heavy and light oil cracked down; water and crude oil follow.
-        steps, inputs = production.solve("plastic-bar", 10, oil=1)
+        # oil=advanced is the old fixed chain: 10 plastic/s needs 100 petroleum gas/s, refining
+        # 100/97.5 crafts/s with all heavy and light oil cracked down; water and crude follow.
+        steps, inputs = production.solve("plastic-bar", 10, oil="advanced")
         self.assertAlmostEqual(inputs["crude-oil"], 100 * 100 / 97.5, places=6)
         self.assertAlmostEqual(inputs["water"], 135.897, places=3)
         self.assertEqual([s.item for s in steps[:3]],
                          ["advanced-oil-processing", "heavy-oil-cracking", "light-oil-cracking"])
         self.assertEqual(steps[0].params["machines"], 6)  # 1.03 crafts/s at 0.2 per refinery
+
+    def test_oil_picks_basic_for_petroleum_only(self):
+        # Fewer tiles: 12 basic refineries (488 tiles) against advanced with cracking (649).
+        steps, inputs = production.solve("plastic-bar", 10, oil=1)
+        self.assertEqual([(s.item, s.params["machines"]) for s in steps if s.generator == "fluid_block"
+                          and s.item in production.RECIPES[1]], [("basic-oil-processing", 12)])
+        self.assertAlmostEqual(inputs["crude-oil"], 100 * 100 / 45, places=3)
+        self.assertNotIn("water", inputs)
+        steps, _ = production._oil({"heavy-oil": 0, "light-oil": 0, "petroleum-gas": 3})
+        self.assertEqual([(s.item, s.params["machines"]) for s in steps], [("basic-oil-processing", 1)])
+
+    def test_oil_picks_advanced_for_mixed_demand(self):
+        steps, _ = production._oil({"heavy-oil": 5, "light-oil": 20, "petroleum-gas": 20})
+        self.assertEqual([(s.item, s.params["machines"]) for s in steps],
+                         [("advanced-oil-processing", 2), ("heavy-oil-cracking", 1)])
+
+    def test_oil_plans_balance(self):
+        # Independent of the solver: recompute net oil from the recipes and the planned crafts.
+        from tools import rates
+
+        cases = [({"heavy-oil": 0, "light-oil": 0, "petroleum-gas": p}, oil) for p in (3, 100) for oil in (1, "advanced")]
+        cases += [({"heavy-oil": 20, "light-oil": 0, "petroleum-gas": 0}, 1),  # lubricant
+                  ({"heavy-oil": 0, "light-oil": 30, "petroleum-gas": 0}, 1),  # light oil only: basic can't
+                  ({"heavy-oil": 5, "light-oil": 20, "petroleum-gas": 20}, 1)]
+        for need, oil in cases:
+            steps, inputs = production._oil(need, oil)
+            made = dict.fromkeys(production.OIL, 0.0)
+            for s in steps:
+                self.assertGreaterEqual(s.rate, s.demand * production.SLACK - 1e-6, (need, oil, s))
+                r = rates.recipe_any(s.item)
+                for f in production.OIL:
+                    made[f] += s.demand * (r.results.get(f, 0) - r.fluids.get(f, 0))
+            self.assertAlmostEqual(made["heavy-oil"], need["heavy-oil"], places=6, msg=(need, oil))
+            self.assertAlmostEqual(made["light-oil"], need["light-oil"], places=6, msg=(need, oil))
+            self.assertAlmostEqual(made["petroleum-gas"] - need["petroleum-gas"],
+                                   -inputs.get("petroleum-gas", 0), places=6, msg=(need, oil))
+
+    def test_oil_line_names_the_plan_and_its_crude(self):
+        self.assertEqual(production.oil_line("plastic-bar", 10, oil=1),
+                         "oil: basic-oil-processing x12; crude oil 222/s (advanced with cracking would use 103/s)")
+        self.assertEqual(production.oil_line("electronic-circuit", 5, oil=1), "")  # no oil in it
+        self.assertEqual(production.oil_line("plastic-bar", 10, oil="advanced"), "")
+
+    def test_unknown_oil_value_is_refused(self):
+        for oil in ("crude", "Advanced", 2):
+            with self.assertRaisesRegex(ValueError, "advanced"):
+                production.solve("plastic-bar", 1, oil=oil)
 
     def test_oil_surplus_is_reported(self):
         _, inputs = production.solve("lubricant", 20, oil=1)  # heavy oil only: petroleum gas left over
@@ -654,7 +710,7 @@ class Production(unittest.TestCase):
     def test_chain_packs_every_row(self):
         from tools.check import check
 
-        params = {"item": "advanced-circuit", "rate": 1, "oil": 1}
+        params = {"item": "advanced-circuit", "rate": 1, "oil": "advanced"}
         data, (flow,) = production.chain_tests(**params)
         book = production.build(**params).to_dict()["blueprint_book"]["blueprints"]
         entities = data["blueprint"]["entities"]
@@ -668,7 +724,7 @@ class Production(unittest.TestCase):
         self.assertLessEqual({f.entity for f in flow.feed + flow.fluids} | set(flow.drain), named)
 
     def test_chain_pools_intermediates_only(self):
-        _, (flow,) = production.chain_tests(item="advanced-circuit", rate=1, oil=1)
+        _, (flow,) = production.chain_tests(item="advanced-circuit", rate=1, oil="advanced")
         self.assertTrue(flow.at_least)
         self.assertEqual(flow.expect, {"advanced-circuit": 1.0})
         self.assertNotIn("advanced-circuit", flow.caps)
@@ -687,7 +743,7 @@ class Production(unittest.TestCase):
 
 FACTORIES = [
     {"item": "electronic-circuit", "rate": 5},
-    {"item": "advanced-circuit", "rate": 1, "oil": 1},  # refinery, cracking, a fluid row
+    {"item": "advanced-circuit", "rate": 1, "oil": "advanced"},  # refinery, cracking, a fluid row
     {"item": "electronic-circuit", "rate": 5, "smelt": 1},  # burner furnaces: coal comes up the bus too
 ]
 
@@ -955,6 +1011,25 @@ class Factory(unittest.TestCase):
             tiles = Counter(t for e in bp["entities"] for t in footprint(e))
             self.assertEqual([t for t, n in tiles.items() if n > 1], [], params)
 
+    def test_build_prints_the_oil_line(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            factory.build(item="plastic-bar", rate=3, oil=1, layout="bus")
+        self.assertIn("oil: basic-oil-processing", err.getvalue())
+
+    def test_chosen_oil_plan_is_no_larger_built(self):
+        # The milp's tile estimate leaves out the factory's water and gate lines: check the
+        # pick against the built factory.
+        from tools.density import density
+
+        # Utility packs need lubricant (heavy oil) and a lot of petroleum gas: basic mixed in
+        # with advanced measured 21,255 tiles built against 17,655 for advanced alone.
+        for item, rate in (("plastic-bar", 3), ("plastic-bar", 10), ("utility-science-pack", 0.5)):
+            area = {oil: density({"blueprint": factory_built(item=item, rate=rate, oil=oil)[2]})[0]["area"]
+                    for oil in (1, "advanced")}
+            self.assertLessEqual(area[1], area["advanced"], (item, rate))
+
     def test_each_fluid_line_is_one_network_of_its_own(self):
         _, p, bp = factory_built(**FACTORIES[1])
         nets = pipe_networks(bp)
@@ -977,7 +1052,7 @@ class Factory(unittest.TestCase):
     def test_a_row_can_feed_two_lines(self):
         # 80 cable/s from three rows of 30 for two belts' worth of users: the middle
         # row splits as it leaves, half to each line.
-        _, p, bp = factory_built(item="processing-unit", rate=1, oil=1, machine="assembling-machine-3",
+        _, p, bp = factory_built(item="processing-unit", rate=1, oil="advanced", machine="assembling-machine-3",
                                  belt="express-transport-belt")
         outs = [len(q.outs) for r in p["rows"] if r.step.item == "copper-cable" for q in r.ports if q.kind == "out"]
         self.assertEqual(outs, [1, 2, 1])
