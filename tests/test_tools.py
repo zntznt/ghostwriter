@@ -623,6 +623,13 @@ class Production(unittest.TestCase):
         self.assertEqual(errors(data), [])
         self.assertIn("Supply", data["blueprint_book"]["description"])
 
+    def test_oil_block_tiles_are_measured(self):
+        # Bounding-box areas at 1 and 3 machines (2.1.23 / Draftsman 4.0.1): basic 48, 128;
+        # advanced 90, 240; cracking 32, 80.
+        self.assertEqual(production._tiles("basic-oil-processing"), (40, 8))
+        self.assertEqual(production._tiles("advanced-oil-processing"), (75, 15))
+        self.assertEqual(production._tiles("heavy-oil-cracking"), (24, 8))
+
     def test_oil_balance(self):
         # 10 plastic/s needs 100 petroleum gas/s: refining 100/97.5 crafts/s with all
         # heavy and light oil cracked down; water and crude oil follow.

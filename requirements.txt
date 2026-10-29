@@ -1,3 +1,5 @@
 # Pinned: Draftsman bundles its own Factorio prototype data, so its version
 # decides which entity names and fields it knows about.
 factorio-draftsman==4.0.1
+# The oil planner's mixed-integer program (generators/production.py); brings numpy.
+scipy==1.18.1

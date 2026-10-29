@@ -17,6 +17,7 @@ goes on which input lane; the book says what each row makes and how much of
 it is needed. `--validate` runs every row's own flow test in game.
 """
 
+import functools
 import math
 from dataclasses import dataclass
 
@@ -135,6 +136,18 @@ def _oil(need: dict[str, float]) -> tuple[list[Step], dict[str, float]]:
     if surplus > 1e-6:
         inputs["petroleum-gas"] = -surplus
     return steps, inputs
+
+
+@functools.cache
+def _tiles(recipe: str) -> tuple[float, float]:
+    """(tiles per machine, fixed tiles) of a fluid_block of RECIPE, measured as bounding-box
+    area at 1 and 3 machines. Over a pair because coal liquefaction alternates (a coal belt
+    gap every second machine)."""
+    from tools.density import density
+
+    one, three = (density(fluid_block.build(recipe=recipe, machines=n).to_dict())[0]["area"] for n in (1, 3))
+    per = (three - one) / 2
+    return per, one - per
 
 
 def _root(f, lo):
