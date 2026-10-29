@@ -105,7 +105,7 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
 def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
     """Oil processing and cracking for heavy oil, light oil and petroleum gas per second,
     from RECIPES[oil]: the fewest measured tiles (a mixed-integer program over crafts,
-    machines and which blocks exist), ties to less feedstock. Heavy and light oil are made
+    machines and which blocks exist), ties to less crude oil. Heavy and light oil are made
     exactly; petroleum gas left over is reported as a negative input."""
     import numpy as np
     from scipy.optimize import Bounds, LinearConstraint, milp
@@ -115,7 +115,7 @@ def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
     rs = [rates.recipe_any(r) for r in names]
     per_machine = np.array([fluid_block.plan(recipe=r).crafts for r in names])
     per, fixed = zip(*map(_tiles, names))
-    feed = [r.fluids.get("crude-oil", 0) + r.ingredients.get("coal", 0) for r in rs]
+    feed = [r.fluids.get("crude-oil", 0) for r in rs]
     net = np.array([[r.results.get(f, 0) - r.fluids.get(f, 0) for r in rs] for f in OIL])
     eye, zero, big = np.eye(n), np.zeros((n, n)), 10_000  # big: more machines than any block gets
     # x = crafts/s, machines, block exists; rows: net oil, machines cover crafts, no machines without a block.
@@ -137,7 +137,7 @@ def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
         steps.append(Step(name, float(c), "fluid_block", {"recipe": name, "machines": int(m)}, 1, float(m * p)))
         for k, amount in [*r.fluids.items(), *r.ingredients.items()]:
             if k not in OIL:
-                inputs[k] = inputs.get(k, 0) + c * amount
+                inputs[k] = inputs.get(k, 0) + float(c) * amount
     surplus = float(net[OIL.index("petroleum-gas")] @ crafts) - need["petroleum-gas"]
     if surplus > 1e-6:
         inputs["petroleum-gas"] = -surplus
