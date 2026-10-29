@@ -1023,10 +1023,12 @@ class Factory(unittest.TestCase):
         # pick against the built factory.
         from tools.density import density
 
-        for rate in (3, 10):
-            area = {oil: density({"blueprint": factory_built(item="plastic-bar", rate=rate, oil=oil)[2]})[0]["area"]
+        # Utility packs need lubricant (heavy oil) and a lot of petroleum gas: basic mixed in
+        # with advanced measured 21,255 tiles built against 17,655 for advanced alone.
+        for item, rate in (("plastic-bar", 3), ("plastic-bar", 10), ("utility-science-pack", 0.5)):
+            area = {oil: density({"blueprint": factory_built(item=item, rate=rate, oil=oil)[2]})[0]["area"]
                     for oil in (1, "advanced")}
-            self.assertLessEqual(area[1], area["advanced"], rate)
+            self.assertLessEqual(area[1], area["advanced"], (item, rate))
 
     def test_each_fluid_line_is_one_network_of_its_own(self):
         _, p, bp = factory_built(**FACTORIES[1])

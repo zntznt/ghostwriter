@@ -38,8 +38,9 @@ BUFFER_SECONDS, BUFFER_MIN = 20, 5  # chain tests: output pooled before a produc
 # chain made 91% of its target with cable and circuits sized to the last item).
 SLACK = 1.05
 CRACKING = ("heavy-oil-cracking", "light-oil-cracking")
-# The recipes each oil= value plans with: oil=1 picks the fewest tiles among them,
-# oil=advanced is the crude-efficient chain (and the one with cracking to test).
+# The recipes each oil= value plans with: oil=1 picks the fewest tiles among them (basic
+# only when petroleum gas is all that's needed, see _oil), oil=advanced is the
+# crude-efficient chain (and the one with cracking to test).
 RECIPES = {1: ("advanced-oil-processing", "basic-oil-processing", *CRACKING),
            "advanced": ("advanced-oil-processing", *CRACKING)}
 
@@ -110,6 +111,11 @@ def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
     import numpy as np
     from scipy.optimize import Bounds, LinearConstraint, milp
 
+    if oil == 1 and (need["heavy-oil"] or need["light-oil"]):
+        # ponytail: basic only for petroleum gas alone. Block tiles leave out the factory row and
+        # lines each extra block costs: basic mixed into advanced built 20% larger with 75% more
+        # crude (utility packs). A per-block factory cost in the objective would lift this.
+        oil = "advanced"
     names = RECIPES[oil]
     n = len(names)
     rs = [rates.recipe_any(r) for r in names]
