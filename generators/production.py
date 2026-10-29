@@ -38,6 +38,10 @@ BUFFER_SECONDS, BUFFER_MIN = 20, 5  # chain tests: output pooled before a produc
 # chain made 91% of its target with cable and circuits sized to the last item).
 SLACK = 1.05
 CRACKING = ("heavy-oil-cracking", "light-oil-cracking")
+# The recipes each oil= value plans with: oil=1 picks the fewest tiles among them,
+# oil=advanced is the crude-efficient chain (and the one with cracking to test).
+RECIPES = {1: ("advanced-oil-processing", "basic-oil-processing", *CRACKING),
+           "advanced": ("advanced-oil-processing", *CRACKING)}
 
 
 @dataclass
@@ -58,6 +62,8 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     the params of every row whose inserters it sizes, and isn't there without it."""
     if machine not in MACHINES:
         raise ValueError(f"machine is one of {MACHINES}")
+    if oil not in (0, *RECIPES):
+        raise ValueError(f"oil is one of 0, {', '.join(map(str, RECIPES))}, not {oil!r}")
     tiers = MACHINES[MACHINES.index(machine):]
     forced_raw = {i for i in str(raw).split(",") if i}
     how, order = {}, []
@@ -89,50 +95,50 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     steps = [_size(i, demand[i], how[i], belt, furnace, tiers, extra) for i in order if how[i] and how[i][1]]
     inputs = {i: demand[i] for i in order if not how[i]}
     if any((how.get(f) or (None,))[0] == "oil" and demand[f] for f in OIL):
-        oil_steps, oil_inputs = _oil({f: demand.get(f, 0) for f in OIL})
+        oil_steps, oil_inputs = _oil({f: demand.get(f, 0) for f in OIL}, oil)
         steps = oil_steps + steps
         for k, v in oil_inputs.items():
             inputs[k] = inputs.get(k, 0) + v
     return steps, inputs
 
 
-def _oil(need: dict[str, float]) -> tuple[list[Step], dict[str, float]]:
-    """Refineries (advanced oil processing) and cracking for heavy oil, light oil and
-    petroleum gas per second: the fewest refinery crafts that cover all three with
-    heavy and light surplus cracked down. Petroleum gas left over is reported as a
-    negative input."""
-    adv = rates.recipe_any("advanced-oil-processing")
-    heavy_crack, light_crack = rates.recipe_any("heavy-oil-cracking"), rates.recipe_any("light-oil-cracking")
-    out = adv.results
-    h_in, h_out = heavy_crack.fluids["heavy-oil"], heavy_crack.results["light-oil"]
-    l_in, l_out = light_crack.fluids["light-oil"], light_crack.results["petroleum-gas"]
-    H, L, P = need["heavy-oil"], need["light-oil"], need["petroleum-gas"]
-    # x heavy-cracking and y light-cracking crafts/s for a crafts/s of refining:
-    #   heavy:  out_h a - h_in x = H;  light: out_l a + h_out x - l_in y = L;  petroleum: out_p a + l_out y >= P
-    def cracks(a):
-        x = (out["heavy-oil"] * a - H) / h_in
-        y = (out["light-oil"] * a + h_out * x - L) / l_in
-        return x, y
+def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
+    """Oil processing and cracking for heavy oil, light oil and petroleum gas per second,
+    from RECIPES[oil]: the fewest measured tiles (a mixed-integer program over crafts,
+    machines and which blocks exist), ties to less feedstock. Heavy and light oil are made
+    exactly; petroleum gas left over is reported as a negative input."""
+    import numpy as np
+    from scipy.optimize import Bounds, LinearConstraint, milp
 
-    def petroleum(a):
-        return out["petroleum-gas"] * a + l_out * cracks(a)[1]
-
-    lo = max(H / out["heavy-oil"], 0)
-    lo = max(lo, _root(lambda a: cracks(a)[1], lo))  # enough light oil before cracking it
-    a = max(lo, _root(lambda a: petroleum(a) - P, lo))
-    x, y = cracks(a)
+    names = RECIPES[oil]
+    n = len(names)
+    rs = [rates.recipe_any(r) for r in names]
+    per_machine = np.array([fluid_block.plan(recipe=r).crafts for r in names])
+    per, fixed = zip(*map(_tiles, names))
+    feed = [r.fluids.get("crude-oil", 0) + r.ingredients.get("coal", 0) for r in rs]
+    net = np.array([[r.results.get(f, 0) - r.fluids.get(f, 0) for r in rs] for f in OIL])
+    eye, zero, big = np.eye(n), np.zeros((n, n)), 10_000  # big: more machines than any block gets
+    # x = crafts/s, machines, block exists; rows: net oil, machines cover crafts, no machines without a block.
+    a = np.block([[net, np.zeros((len(OIL), 2 * n))],
+                  [-np.diag(SLACK / per_machine), eye, zero],
+                  [zero, eye, -big * eye]])
+    lo = [need[f] for f in OIL] + [0] * n + [-np.inf] * n
+    hi = [need["heavy-oil"], need["light-oil"], np.inf] + [np.inf] * n + [0] * n
+    cost = [*(1e-6 * np.array(feed)), *per, *fixed]  # 1e-6 a unit of feedstock: never worth a tile
+    res = milp(cost, constraints=LinearConstraint(a, lo, hi), integrality=[0] * n + [1] * 2 * n,
+               bounds=Bounds(0, [np.inf] * 2 * n + [1] * n))
+    if res.status != 0:
+        raise ValueError(f"no oil plan for {need} with oil={oil}: {res.message}")
+    crafts, machines = res.x[:n], np.round(res.x[n:2 * n]).astype(int)
     steps, inputs = [], {}
-    for recipe, crafts in (("advanced-oil-processing", a), ("heavy-oil-cracking", x), ("light-oil-cracking", y)):
-        if crafts <= 1e-9:
+    for name, r, c, m, p in zip(names, rs, crafts, machines, per_machine):
+        if m == 0:
             continue
-        p = fluid_block.plan(recipe=recipe)
-        machines = math.ceil(crafts * SLACK / p.crafts - 1e-9)
-        steps.append(Step(recipe, crafts, "fluid_block", {"recipe": recipe, "machines": machines}, 1,
-                          machines * p.crafts))
-        for fluid, amount in rates.recipe_any(recipe).fluids.items():
-            if fluid not in OIL:
-                inputs[fluid] = inputs.get(fluid, 0) + crafts * amount
-    surplus = petroleum(a) - P
+        steps.append(Step(name, float(c), "fluid_block", {"recipe": name, "machines": int(m)}, 1, float(m * p)))
+        for k, amount in [*r.fluids.items(), *r.ingredients.items()]:
+            if k not in OIL:
+                inputs[k] = inputs.get(k, 0) + c * amount
+    surplus = float(net[OIL.index("petroleum-gas")] @ crafts) - need["petroleum-gas"]
     if surplus > 1e-6:
         inputs["petroleum-gas"] = -surplus
     return steps, inputs
@@ -148,14 +154,6 @@ def _tiles(recipe: str) -> tuple[float, float]:
     one, three = (density(fluid_block.build(recipe=recipe, machines=n).to_dict())[0]["area"] for n in (1, 3))
     per = (three - one) / 2
     return per, one - per
-
-
-def _root(f, lo):
-    """The smallest a >= lo with f(a) >= 0, for f increasing and linear."""
-    f0, f1 = f(lo), f(lo + 1)
-    if f0 >= 0:
-        return lo
-    return lo - f0 / (f1 - f0)
 
 
 def _supplied_only(item, furnace, forced_raw) -> str:
