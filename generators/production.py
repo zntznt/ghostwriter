@@ -144,6 +144,22 @@ def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
     return steps, inputs
 
 
+def oil_line(item, rate, oil=0, **kw) -> str:
+    """The oil=1 plan in one line: refinery recipes, machines and crude oil per second, and
+    the crude oil=advanced would use. Empty without crude oil refining."""
+    if oil != 1:
+        return ""
+    steps, inputs = solve(item, rate, oil=1, **kw)
+    if not inputs.get("crude-oil"):
+        return ""
+    line = "oil: " + ", ".join(f"{s.item} x{s.params['machines']}" for s in steps if s.item in RECIPES[1])
+    line += f"; crude oil {inputs['crude-oil']:.3g}/s"
+    advanced = solve(item, rate, oil="advanced", **kw)[1]["crude-oil"]
+    if abs(advanced - inputs["crude-oil"]) > 1e-6:
+        line += f" (advanced with cracking would use {advanced:.3g}/s)"
+    return line
+
+
 @functools.cache
 def _tiles(recipe: str) -> tuple[float, float]:
     """(tiles per machine, fixed tiles) of a fluid_block of RECIPE, measured as bounding-box

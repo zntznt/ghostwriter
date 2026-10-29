@@ -1,7 +1,9 @@
 """Run: python -m unittest discover tests"""
 
+import contextlib
 import copy
 import inspect
+import io
 import json
 import math
 import tempfile
@@ -676,6 +678,12 @@ class Production(unittest.TestCase):
             self.assertAlmostEqual(made["petroleum-gas"] - need["petroleum-gas"],
                                    -inputs.get("petroleum-gas", 0), places=6, msg=(need, oil))
 
+    def test_oil_line_names_the_plan_and_its_crude(self):
+        self.assertEqual(production.oil_line("plastic-bar", 10, oil=1),
+                         "oil: basic-oil-processing x12; crude oil 222/s (advanced with cracking would use 103/s)")
+        self.assertEqual(production.oil_line("electronic-circuit", 5, oil=1), "")  # no oil in it
+        self.assertEqual(production.oil_line("plastic-bar", 10, oil="advanced"), "")
+
     def test_unknown_oil_value_is_refused(self):
         for oil in ("crude", "Advanced", 2):
             with self.assertRaisesRegex(ValueError, "advanced"):
@@ -1002,6 +1010,13 @@ class Factory(unittest.TestCase):
             assert_powered(self, bp, params)
             tiles = Counter(t for e in bp["entities"] for t in footprint(e))
             self.assertEqual([t for t, n in tiles.items() if n > 1], [], params)
+
+    def test_build_prints_the_oil_line(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            factory.build(item="plastic-bar", rate=3, oil=1, layout="bus")
+        self.assertIn("oil: basic-oil-processing", err.getvalue())
 
     def test_each_fluid_line_is_one_network_of_its_own(self):
         _, p, bp = factory_built(**FACTORIES[1])
