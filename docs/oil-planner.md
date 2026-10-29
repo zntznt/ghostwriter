@@ -18,6 +18,9 @@ blocks, gates and a water line.
 
 - `oil=1` (crude): the planner chooses among advanced oil processing, basic oil
   processing, heavy oil cracking and light oil cracking.
+- `oil=advanced` (new): advanced oil processing with cracking only, exactly today's
+  `oil=1` plan. The crude-efficient choice, and what the tests of the cracking gate and
+  its layout use, since `oil=1` no longer cracks for petroleum-only requests.
 - `oil=coal` (new): coal and steam in; coal liquefaction plus cracking. Crude is
   never mixed in. Any other `oil=` value raises `ValueError` naming the allowed ones.
 - Output shape is unchanged: `Step`s for `fluid_block` rows, inputs including water
@@ -75,13 +78,14 @@ water, no cracking blocks). It burns 2.2 times the crude (100 crude oil makes 45
 petroleum gas, against 97.5 advanced). Requests needing heavy or light oil still
 get advanced oil processing. This is chosen deliberately: tiles are the cost.
 
-To keep the trade visible, `factory` and `production` print the oil plan to stderr
-under their existing `say` guard, for example
+To keep the trade visible, `factory.build` prints the oil plan to stderr for `oil=1`
+(where it already reports its layout), for example
 
     oil: basic-oil-processing x4; crude oil 70/s (advanced with cracking would use 33/s)
 
-A crude weight (`crude_cost=` tiles per crude oil/s, default 0) is the follow-up if
-that turns out to pinch; it's one more objective term.
+The comparison is `oil=advanced`'s plan, so the fix for a factory short of crude is
+to pass that. A crude weight (`crude_cost=` tiles per crude oil/s) is the follow-up only
+if a middle ground is wanted.
 
 What the model does not see: water and gate lines at the factory level (bus and
 compact layouts). The density check below is what catches it if that matters.
@@ -102,21 +106,25 @@ In `tests/test_tools.py`, class `Production`:
    the recipes and the returned crafts; heavy and light equal the demand, petroleum
    gas meets it. Independent of the solver.
 4. `oil=coal` uses coal liquefaction and needs no crude.
+4b. `oil=advanced` reproduces today's plan: `test_oil_balance`'s numbers unchanged.
 5. An unknown `oil=` value raises `ValueError` listing the allowed values.
 6. The stderr oil line names the recipes, machines and crude per second, and the
    crude an advanced-with-cracking plan would use.
-7. The estimate agrees with reality: for a few requests, build the factory with
-   each refinery choice and check the model's pick is the one `bp density` measures
-   smaller.
+7. The estimate agrees with reality: for a few petroleum-only requests, the factory
+   built with `oil=1` is no larger (`bp density`) than with `oil=advanced`.
 
-Existing `test_oil_balance` and `test_oil_surplus_is_reported` keep passing, or
-change under the rule below.
+Existing tests that exercise cracking and its gate (`advanced-circuit` and
+`processing-unit` with `oil=1` in `test_tools`, `test_compact`, `test_validator`) move
+to `oil=advanced` with their assertions unchanged; `test_oil_balance` too, with a new
+`oil=1` twin expecting basic oil processing.
 
 In game (`--validate`, flow tests):
 
 - a small petroleum gas request (basic oil processing block);
 - an `oil=coal` request (coal liquefaction: heavy oil both in and out of one block).
-  If this fails in game, `oil=coal` moves to a follow-up and this change ships crude only.
+  A liquefaction block needs heavy oil to start, and its only heavy oil is its own
+  output, so it may never start. If this fails in game, `oil=coal` moves to a follow-up
+  and this change ships crude only.
 
 Full suite: `python -m unittest discover tests`, and the CI shards on push.
 
@@ -125,9 +133,10 @@ Full suite: `python -m unittest discover tests`, and the CI shards on push.
 A changed test expectation or `tests/fixtures/default_builds.json` entry is
 accepted only if the new build (a) is no larger in tiles and (b) passes in game.
 Anything else is a regression. Every changed fixture is listed with the reason and
-the tile difference. Expected: `factory plastic-bar rate=5` changes (petroleum gas
-only, so basic oil processing); `fluid_block advanced-oil-processing` doesn't (the
-generator is untouched).
+the tile difference. Expected: none. No `default_builds.json` request passes `oil=`,
+and the moved tests keep their expectations under `oil=advanced`. The `oil=1` rows of
+the benchmark tables in `docs/layout-optimizer.md` were measured with the old chain;
+they get a note saying so (they are `oil=advanced` now).
 
 ## Later
 
