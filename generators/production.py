@@ -42,7 +42,8 @@ CRACKING = ("heavy-oil-cracking", "light-oil-cracking")
 # only when petroleum gas is all that's needed, see _oil), oil=advanced is the
 # crude-efficient chain (and the one with cracking to test).
 RECIPES = {1: ("advanced-oil-processing", "basic-oil-processing", *CRACKING),
-           "advanced": ("advanced-oil-processing", *CRACKING)}
+           "advanced": ("advanced-oil-processing", *CRACKING),
+           "coal": ("coal-liquefaction", *CRACKING)}
 # Solid fuel's recipes, by the oil each takes. With oil= the oil plan picks one (a fluid row);
 # without, solid fuel is made from light oil, the least oil a piece.
 SOLID_FUEL = {f: f"solid-fuel-from-{f}" for f in OIL}
@@ -414,6 +415,11 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     plan = "; ".join(f"{s.item}: {s.rows} row{'s' if s.rows > 1 else ''} of {s.rate:.3g}/s "
                      f"for {s.demand:.3g}/s" for s in steps)
     tail = "The rows aren't connected: belt each row's product to the rows that use it."
+    primed = [(s, f) for s in steps if s.generator == "fluid_block"
+              for f in rates.recipe_any(s.params["recipe"]).fluids if f in rates.recipe_any(s.params["recipe"]).results]
+    if primed:
+        tail += " " + " ".join(f"Prime {s.item}'s {f} line once with {_prime(s, f):g}, or it never starts."
+                               for s, f in primed)
     if any(s.item in CRACKING for s in steps):
         tail += (" Crack only surplus oil: feed cracking through a pump that runs while the oil's tank is "
                  "nearly full, or it starves lubricant and the other oil users.")
@@ -460,7 +466,10 @@ def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2
 
         feeds += [replace(f, entity=at(f.entity), pooled=f.item in made) for f in flow.feed]
         drains += [at(x) for x in flow.drain]
-        fluids += [replace(f, entity=at(f.entity), pooled=not f.sink and f.fluid in made) for f in flow.fluids]
+        # A fluid a block takes back from its own output (heavy oil in coal liquefaction) comes
+        # from a source: the game's statistics, which credit the pool, leave that part out.
+        fluids += [replace(f, entity=at(f.entity), pooled=not f.sink and f.fluid in made and f.fluid not in flow.expect)
+                   for f in flow.fluids]
     # Pooled fluids go to feeds in order: cracking takes only what the rest leave,
     # as the book tells the player to build it (a pump switched by tank level).
     cracking = {at for (d, ids, flow, s), renumber in zip(rows, numbers) if s.item in CRACKING
@@ -480,6 +489,12 @@ def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2
     return data, [Flow(f"chain of {len(rows)} rows: {rate:g} {item}/s", feeds, drains, {item: float(rate)},
                        warmup=warmup, window=window, fluids=fluids, at_least=True, caps=caps,
                        research=rates.research_levels(research))]
+
+
+def _prime(s: Step, fluid: str) -> float:
+    """Fluid a block takes and makes (heavy oil in coal liquefaction) for a player to start it
+    with once: four crafts' worth for each machine."""
+    return 4 * rates.recipe_any(s.params["recipe"]).fluids[fluid] * s.params["machines"]
 
 
 def _pack(blueprints: list[dict], gap: int = 4) -> tuple[dict, list[dict[int, int]]]:

@@ -57,6 +57,7 @@ class Plan:
     feeders: tuple[str, int] = ("inserter", 0)
     output: tuple[str, int] = ("inserter", 0)
     per_belt: int = 2  # machines a belt serves: one on each side, or one when two need too much
+    outlets: frozenset = frozenset()  # (side, fluid) the block's outputs leave by: a fluid can be both
 
     def fluids(self, side: str) -> list[str]:
         """Fluids on a side, nearest line first."""
@@ -87,7 +88,7 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
     s = rates.size(machine)
 
     # Fluid boxes take the recipe's fluids in order: inputs to input boxes, outputs to output boxes.
-    sides = {"north": [], "south": []}
+    sides, outlets = {"north": [], "south": []}, set()
     queues = {"input": [f for f, _ in fluids_in], "output": [f for f, _ in fluids_out]}
     for box in entities.raw[machine]["fluid_boxes"]:
         kind = box.get("production_type")
@@ -99,11 +100,13 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
             if side is None:
                 raise ValueError(f"{machine}: connections on east or west faces aren't supported")
             sides[side].append((math.floor(s / 2 + c["position"][0]), fluid))
+            if kind == "output":
+                outlets.add((side, fluid))
     if queues["input"] or queues["output"]:
         raise ValueError(f"{recipe}: more fluids than {machine} has boxes")
 
     p = Plan(recipe, machine, machines, belt, s, crafts, dict(fluids_in + items_in), dict(fluids_out + items_out),
-             sides, [i for i, _ in items_in])
+             sides, [i for i, _ in items_in], outlets=frozenset(outlets))
     if items_out:
         if len(items_out) > 1 or items_in:
             raise ValueError(f"{recipe}: a block's belts carry ingredients or one product, not both")
@@ -253,13 +256,16 @@ def flow_tests(**params):
     fluids, feeds, drains = [], [], []
     for side in ("north", "south"):
         for fluid in p.fluids(side):
-            fluids.append(FluidFeed(f"{side}_{fluid}", fluid, side="west", sink=fluid in p.outputs))
+            fluids.append(FluidFeed(f"{side}_{fluid}", fluid, side="west", sink=(side, fluid) in p.outlets))
     for g in range(n_gaps):
         for lane, item in zip(("left", "right"), p.items_in * 2 if len(p.items_in) == 1 else p.items_in):
             feeds.append(Feed(f"belt{g}_in", lane, item))
         if p.item_out:
             drains.append(f"belt{g}_out")
-    expect = {o: p.rate(o) for o in p.outputs}
+    # What the game's statistics count: a result's ignored_by_stats part (heavy oil coal
+    # liquefaction takes back) isn't.
+    ignored = {r["name"]: r.get("ignored_by_stats", 0) for r in recipes.raw[p.recipe]["results"]}
+    expect = {o: p.rate(o) * (1 - ignored.get(o, 0) / p.outputs[o]) for o in p.outputs}
     length = rates.size(p.machine) + 8
     return [Flow(f"{p.machines} {p.machine}: " + ", ".join(f"{v:g} {k}/s" for k, v in expect.items()),
                  feeds, drains, expect, fluids=fluids,
