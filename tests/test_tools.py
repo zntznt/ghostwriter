@@ -695,6 +695,36 @@ class Production(unittest.TestCase):
             self.assertIn("petroleum-gas", inputs)
             self.assertFalse(any(s.item in production.RECIPES[1] for s in steps))
 
+    def test_solid_fuel_row_tiles_are_measured(self):
+        # A fluid row of 1 and 3 machines a side (2 and 6 machines): 44 and 110 tiles.
+        self.assertEqual(production._tiles("solid-fuel-from-light-oil"), (16.5, 11))
+
+    def test_solid_fuel_without_oil_is_made_from_light_oil(self):
+        steps, inputs = production.solve("solid-fuel", 1)
+        self.assertEqual([(s.item, s.generator, s.params["recipe"]) for s in steps],
+                         [("solid-fuel", "fluid_row", "solid-fuel-from-light-oil")])
+        self.assertAlmostEqual(inputs["light-oil"], 10)
+
+    def test_solid_fuel_joins_the_oil_plan(self):
+        from tools import rates
+
+        for item, rate, oil in (("solid-fuel", 2, 1), ("solid-fuel", 2, "advanced"), ("rocket-fuel", 1, 1)):
+            steps, inputs = production.solve(item, rate, oil=oil)
+            fuel = [s for s in steps if s.item == "solid-fuel"]
+            self.assertEqual(len(fuel), 1, (item, oil))  # one recipe, one row
+            self.assertIn(fuel[0].params["recipe"], production.SOLID_FUEL.values())
+            self.assertEqual(fuel[0].generator, "fluid_row")
+            self.assertGreaterEqual(fuel[0].rate * fuel[0].rows, fuel[0].demand * production.SLACK - 1e-6)
+            made = sum(s.demand * rates.recipe_any(s.item).results.get("solid-fuel", 0)
+                       for s in steps if s.generator == "fluid_block")
+            self.assertEqual(made, 0)  # solid fuel comes from its row, not a block
+            self.assertNotIn("solid-fuel", inputs)
+
+    def test_rocket_fuel_burns_surplus_petroleum(self):
+        # Before solid fuel joined the oil plan, rocket fuel at 1/s left 8.63 petroleum gas/s over.
+        _, inputs = production.solve("rocket-fuel", 1, oil=1)
+        self.assertGreater(inputs.get("petroleum-gas", 0), -8.6)
+
     def test_unknown_oil_value_is_refused(self):
         for oil in ("crude", "Advanced", 2):
             with self.assertRaisesRegex(ValueError, "advanced"):

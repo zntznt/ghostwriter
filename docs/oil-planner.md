@@ -89,6 +89,28 @@ if a middle ground is wanted.
 What the model does not see: water and gate lines at the factory level (bus and
 compact layouts). The density check below is what catches it if that matters.
 
+## Solid fuel
+
+Solid fuel has three recipes, one per oil (`SOLID_FUEL`), none named after the item, so
+`solve("solid-fuel")` used to refuse it. Now:
+
+- Without `oil=`, it's a fluid row of solid fuel from light oil (10 light oil a piece,
+  the least oil); light oil is the input to supply.
+- With `oil=1` or `oil=advanced`, solid fuel is a fourth exact demand in the program, and
+  its three recipes are options priced at measured fluid-row tiles (16.5 a machine, 11 a
+  row). At most one is used, so the factory gets one solid fuel row, sized by `_size`.
+- Petroleum gas left over now costs 1,000 tiles a unit/s in the objective: it stops the
+  refineries, and solid fuel from petroleum gas is what burns it. Least surplus comes
+  first, then tiles. On 298 oil-only demands this changes no plan; with solid fuel it
+  takes rocket fuel at 1/s from 95 petroleum gas/s left over (light-oil fuel, fewest
+  tiles) to none (petroleum-gas fuel).
+- Side effect: `rocket-fuel` now makes its solid fuel instead of listing it as an input
+  (`raw=solid-fuel` supplies it as before).
+
+In game (2.1.23): `gen production` solid fuel 1/s (no oil), 2/s `oil=1`, rocket fuel 1/s
+`oil=1`, and `gen factory` solid fuel 2/s and rocket fuel 1/s `oil=1` (compact, 533 and
+5,330 tiles) all pass `--validate`.
+
 ## Dependency
 
 `scipy` in `requirements.txt`, pinned like Draftsman (it brings numpy). Wheels

@@ -43,6 +43,9 @@ CRACKING = ("heavy-oil-cracking", "light-oil-cracking")
 # crude-efficient chain (and the one with cracking to test).
 RECIPES = {1: ("advanced-oil-processing", "basic-oil-processing", *CRACKING),
            "advanced": ("advanced-oil-processing", *CRACKING)}
+# Solid fuel's recipes, by the oil each takes. With oil= the oil plan picks one (a fluid row);
+# without, solid fuel is made from light oil, the least oil a piece.
+SOLID_FUEL = {f: f"solid-fuel-from-{f}" for f in OIL}
 
 
 @dataclass
@@ -96,8 +99,10 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     extra = {"research": rates.research_key(research)} if rates.research_key(research) else {}
     steps = [_size(i, demand[i], how[i], belt, furnace, tiers, extra) for i in order if how[i] and how[i][1]]
     inputs = {i: demand[i] for i in order if not how[i]}
-    if any((how.get(f) or (None,))[0] == "oil" and demand[f] for f in OIL):
-        oil_steps, oil_inputs = _oil({f: demand.get(f, 0) for f in OIL}, oil)
+    if any((how.get(f) or (None,))[0] == "oil" and demand[f] for f in (*OIL, "solid-fuel")):
+        oil_steps, oil_inputs = _oil({f: demand.get(f, 0) for f in (*OIL, "solid-fuel")}, oil)
+        oil_steps = [_size("solid-fuel", s.demand, ("fluid_row", rates.recipe(s.item, fluids=True)), belt,
+                           furnace, tiers, extra) if s.item in SOLID_FUEL.values() else s for s in oil_steps]
         steps = oil_steps + steps
         for k, v in oil_inputs.items():
             inputs[k] = inputs.get(k, 0) + v
@@ -105,10 +110,12 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
 
 
 def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
-    """Oil processing and cracking for heavy oil, light oil and petroleum gas per second,
-    from RECIPES[oil]: the fewest measured tiles (a mixed-integer program over crafts,
-    machines and which blocks exist), ties to less crude oil. Heavy and light oil are made
-    exactly; petroleum gas left over is reported as a negative input."""
+    """Oil processing and cracking for heavy oil, light oil and petroleum gas per second, and
+    solid fuel (need["solid-fuel"], optional) from one of SOLID_FUEL: from RECIPES[oil], the
+    fewest measured tiles (a mixed-integer program over crafts, machines and which blocks
+    exist), ties to less crude oil. Heavy oil, light oil and solid fuel are made exactly;
+    petroleum gas left over is reported as a negative input. A solid fuel step's demand is
+    solid fuel per second, for the caller to size as a fluid row."""
     import numpy as np
     from scipy.optimize import Bounds, LinearConstraint, milp
 
@@ -117,23 +124,36 @@ def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
         # lines each extra block costs: basic mixed into advanced built 20% larger with 75% more
         # crude (utility packs). A per-block factory cost in the objective would lift this.
         oil = "advanced"
-    names = RECIPES[oil]
+    fuel = need.get("solid-fuel", 0)
+    names = (*RECIPES[oil], *(SOLID_FUEL.values() if fuel else ()))
     n = len(names)
     rs = [rates.recipe_any(r) for r in names]
-    per_machine = np.array([fluid_block.plan(recipe=r).crafts for r in names])
+    per_machine = np.array([(fluid_row if r in SOLID_FUEL.values() else fluid_block).plan(recipe=r).crafts
+                            for r in names])
     per, fixed = zip(*map(_tiles, names))
     feed = [r.fluids.get("crude-oil", 0) for r in rs]
-    net = np.array([[r.results.get(f, 0) - r.fluids.get(f, 0) for r in rs] for f in OIL])
+    made = (*OIL, "solid-fuel") if fuel else OIL
+    net = np.array([[r.results.get(f, 0) - r.fluids.get(f, 0) for r in rs] for f in made])
     # big: more machines than any block gets. Every block here takes well under one machine per
-    # unit/s of oil asked for (a basic refinery makes 9 petroleum gas/s, the others move more).
-    eye, zero, big = np.eye(n), np.zeros((n, n)), 10 + math.ceil(sum(need.values()))
-    # x = crafts/s, machines, block exists; rows: net oil, machines cover crafts, no machines without a block.
-    a = np.block([[net, np.zeros((len(OIL), 2 * n))],
+    # unit/s of oil asked for (a basic refinery makes 9 petroleum gas/s, the others move more);
+    # a unit/s of solid fuel takes up to 20 oil/s, about 2.3 basic refineries.
+    eye, zero = np.eye(n), np.zeros((n, n))
+    big = 10 + math.ceil(sum(need.get(f, 0) for f in OIL) + 3 * fuel)
+    one_fuel = [[0] * 2 * n + [r in SOLID_FUEL.values() for r in names]]  # one solid fuel recipe: one row
+    # x = crafts/s, machines, block exists; rows: net oil (and solid fuel), machines cover crafts,
+    # no machines without a block, at most one solid fuel recipe.
+    a = np.block([[net, np.zeros((len(made), 2 * n))],
                   [-np.diag(SLACK / per_machine), eye, zero],
                   [zero, eye, -big * eye]])
-    lo = [need[f] for f in OIL] + [0] * n + [-np.inf] * n
-    hi = [need["heavy-oil"], need["light-oil"], np.inf] + [np.inf] * n + [0] * n
-    cost = [*(1e-6 * np.array(feed)), *per, *fixed]  # 1e-6 a unit of feedstock: never worth a tile
+    a = np.vstack([a, one_fuel])
+    lo = [need[f] for f in OIL] + [fuel] * (len(made) - len(OIL)) + [0] * n + [-np.inf] * n + [0]
+    hi = ([need["heavy-oil"], need["light-oil"], np.inf] + [fuel] * (len(made) - len(OIL)) + [np.inf] * n
+          + [0] * n + [1])
+    # Petroleum gas left over stops the refineries unless something else takes it, so the least of it
+    # comes first (1,000 tiles a unit/s), then the fewest tiles, then the least crude (1e-6 a unit:
+    # never worth a tile). Solid fuel from petroleum gas is what burns it.
+    surplus = 1_000 * net[OIL.index("petroleum-gas")]
+    cost = [*(1e-6 * np.array(feed) + surplus), *per, *fixed]
     res = milp(cost, constraints=LinearConstraint(a, lo, hi), integrality=[0] * n + [1] * 2 * n,
                bounds=Bounds(0, [np.inf] * 2 * n + [1] * n))
     if res.status != 0:
@@ -143,7 +163,11 @@ def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
     for name, r, c, m, p in zip(names, rs, crafts, machines, per_machine):
         if m == 0:
             continue
-        steps.append(Step(name, float(c), "fluid_block", {"recipe": name, "machines": int(m)}, 1, float(m * p)))
+        if name in SOLID_FUEL.values():
+            steps.append(Step(name, float(c) * r.results["solid-fuel"], "fluid_row", {"recipe": name}, 1, 0.0))
+        else:
+            steps.append(Step(name, float(c), "fluid_block", {"recipe": name, "machines": int(m)}, 1,
+                              float(m * p)))
         for k, amount in [*r.fluids.items(), *r.ingredients.items()]:
             if k not in OIL:
                 inputs[k] = inputs.get(k, 0) + float(c) * amount
@@ -176,6 +200,10 @@ def _tiles(recipe: str) -> tuple[float, float]:
     gap every second machine)."""
     from tools.density import density
 
+    if recipe in SOLID_FUEL.values():  # a two-sided fluid row: 1 and 3 machines a side
+        one, three = (density(fluid_row.build(recipe=recipe, machines=n).to_dict())[0]["area"] for n in (1, 3))
+        per = (three - one) / 4
+        return per, one - 2 * per
     one, three = (density(fluid_block.build(recipe=recipe, machines=n).to_dict())[0]["area"] for n in (1, 3))
     per = (three - one) / 2
     return per, one - per
@@ -203,6 +231,8 @@ def _how(item, tiers, smelt, furnace, forced_raw, oil=0):
         return None
     if item in OIL:
         return ("oil", None) if oil else None
+    if item == "solid-fuel":
+        return ("oil", None) if oil else ("fluid_row", rates.recipe(SOLID_FUEL["light-oil"], fluids=True))
     if item not in recipes.raw:
         return None
     try:
@@ -230,15 +260,15 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     extra = extra or {}
     need = demand * SLACK
     if kind == "fluid_block":  # one block, as many machines as the demand needs
-        p = fluid_block.plan(recipe=item, **extra)
+        p = fluid_block.plan(recipe=r.name, **extra)
         machines = math.ceil(need / (p.crafts * r.results[item]) - 1e-9)
-        p = fluid_block.plan(recipe=item, machines=machines, belt=belt, **extra)
-        return Step(item, demand, kind, {"recipe": item, "machines": machines, "belt": belt, **extra}, 1,
+        p = fluid_block.plan(recipe=r.name, machines=machines, belt=belt, **extra)
+        return Step(item, demand, kind, {"recipe": r.name, "machines": machines, "belt": belt, **extra}, 1,
                     p.rate(item))
     errors = []
     machines = {"assembly_row": tiers, "fluid_row": _fluid_machines(tiers)}.get(kind, ())
-    options = ([{"recipe": item, "machine": m, "belt": belt, **extra} for m in machines if _crafts(m, r)]
-               if kind != "smelting_column" else [{"recipe": item, "furnace": furnace, "belt": belt}])
+    options = ([{"recipe": r.name, "machine": m, "belt": belt, **extra} for m in machines if _crafts(m, r)]
+               if kind != "smelting_column" else [{"recipe": r.name, "furnace": furnace, "belt": belt}])
     count_key = "furnaces" if kind == "smelting_column" else "machines"
     for base in options:
         try:
