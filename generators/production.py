@@ -63,6 +63,7 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     the params of every row whose inserters it sizes, and isn't there without it."""
     if machine not in MACHINES:
         raise ValueError(f"machine is one of {MACHINES}")
+    oil = oil or 0  # the CLI's oil= arrives as ""
     if oil not in (0, *RECIPES):
         raise ValueError(f"oil is one of 0, {', '.join(map(str, RECIPES))}, not {oil!r}")
     tiers = MACHINES[MACHINES.index(machine):]
@@ -123,7 +124,9 @@ def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
     per, fixed = zip(*map(_tiles, names))
     feed = [r.fluids.get("crude-oil", 0) for r in rs]
     net = np.array([[r.results.get(f, 0) - r.fluids.get(f, 0) for r in rs] for f in OIL])
-    eye, zero, big = np.eye(n), np.zeros((n, n)), 10_000  # big: more machines than any block gets
+    # big: more machines than any block gets. Every block here takes well under one machine per
+    # unit/s of oil asked for (a basic refinery makes 9 petroleum gas/s, the others move more).
+    eye, zero, big = np.eye(n), np.zeros((n, n)), 10 + math.ceil(sum(need.values()))
     # x = crafts/s, machines, block exists; rows: net oil, machines cover crafts, no machines without a block.
     a = np.block([[net, np.zeros((len(OIL), 2 * n))],
                   [-np.diag(SLACK / per_machine), eye, zero],

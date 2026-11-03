@@ -38,8 +38,8 @@ For each allowed recipe r:
 - `c_r >= 0`, continuous: crafts per second.
 - `m_r`, integer `>= 0`: machines, with `m_r >= c_r * SLACK / p_r`, where `p_r` is
   crafts per machine per second from `fluid_block.plan(recipe=r).crafts`.
-- `u_r` in {0, 1}: the block exists, with `m_r <= M * u_r` (M = a bound on machines
-  from the demand).
+- `u_r` in {0, 1}: the block exists, with `m_r <= M * u_r` (M = 10 + the total oil
+  demand per second: every block takes well under a machine per unit/s).
 
 Constraints on net production (results minus ingredients, over all recipes):
 

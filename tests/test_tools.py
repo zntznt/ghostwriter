@@ -684,6 +684,17 @@ class Production(unittest.TestCase):
         self.assertEqual(production.oil_line("electronic-circuit", 5, oil=1), "")  # no oil in it
         self.assertEqual(production.oil_line("plastic-bar", 10, oil="advanced"), "")
 
+    def test_oil_plans_past_ten_thousand_machines(self):
+        # 10,000 plastic/s: 100,000 petroleum gas/s takes ceil(100,000 * 1.05 / 9) basic refineries.
+        steps, _ = production._oil({"heavy-oil": 0, "light-oil": 0, "petroleum-gas": 100_000})
+        self.assertEqual([(s.item, s.params["machines"]) for s in steps], [("basic-oil-processing", 11_667)])
+
+    def test_empty_oil_means_none(self):
+        for oil in ("", None):  # the CLI's oil= arrives as ""
+            steps, inputs = production.solve("plastic-bar", 1, oil=oil)
+            self.assertIn("petroleum-gas", inputs)
+            self.assertFalse(any(s.item in production.RECIPES[1] for s in steps))
+
     def test_unknown_oil_value_is_refused(self):
         for oil in ("crude", "Advanced", 2):
             with self.assertRaisesRegex(ValueError, "advanced"):
