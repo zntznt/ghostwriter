@@ -499,6 +499,9 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     sized without it, and keeps them if smaller."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill, **({"research": research} if research else {}))
+    if line := production.oil_line(item, rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace,
+                                   raw=raw, oil=oil, research=research):
+        print(line, file=sys.stderr)
     compact = _compact(layout, params, budget, say=True, cells=cells, effort=effort)
     return compact[1].bp if compact else _build(plan(**params))[0]
 

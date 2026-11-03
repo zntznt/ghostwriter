@@ -19,7 +19,7 @@ FLUID_ROWS = [{"item": "plastic-bar", "rate": 5}, {"item": "advanced-circuit", "
 # Fluid blocks, their lines at their west end: fluids made here, and a fluid product out at the top.
 BLOCKS = [{"item": "sulfuric-acid", "rate": 10}, {"item": "lubricant", "rate": 10}]
 # Oil processed here, cracking through a gate: a pump that runs while a tank on the oil line holds some.
-OIL = [{"item": "advanced-circuit", "rate": 1, "oil": 1}]
+OIL = [{"item": "advanced-circuit", "rate": 1, "oil": "advanced"}]
 # Shared products fused (production.fuse(shared=True)): cable into circuit cells while a cable
 # row feeds the advanced circuits, and gears into both inserter and belt cells.
 SHARED = [{"item": "advanced-circuit", "rate": 1, "cells": 2}, {"item": "logistic-science-pack", "rate": 1, "cells": 2}]
