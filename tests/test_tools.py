@@ -750,7 +750,8 @@ class Production(unittest.TestCase):
         self.assertEqual(sorted(f.pooled for f in heavy), [False, True])  # liquefaction's, lubricant's
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            self.assertIn("Prime", production.build(item="plastic-bar", rate=1.5, oil="coal").description)
+            self.assertIn("Put 100 heavy-oil in each coal-liquefaction once",
+                          production.build(item="plastic-bar", rate=1.5, oil="coal").description)
             # Priming, cracking and a surplus in one book still fit the game's description.
             text = production.build(item="lubricant", rate=10, oil="coal").description
         from tools.check import TEXT_LIMITS
@@ -1101,6 +1102,22 @@ class Factory(unittest.TestCase):
             area = {oil: density({"blueprint": factory_built(item=item, rate=rate, oil=oil)[2]})[0]["area"]
                     for oil in (1, "advanced")}
             self.assertLessEqual(area[1], area["advanced"], (item, rate))
+
+    def test_a_row_fed_fluid_on_its_bottom_tile_clears_its_corridor(self):
+        # Coal liquefaction takes coal by belt (a corridor tap south of the row) and steam on the
+        # row's bottom tile: the row stands a tile further north so steam can come up past the tap.
+        _, _, bp = factory_built(item="plastic-bar", rate=1.5, oil="coal")
+        self.assertEqual(check({"blueprint": bp}), [])
+
+    def test_coal_factory_primes_liquefaction_once(self):
+        # Its heavy oil line starts empty, as in a player's game: the flow test puts four crafts'
+        # worth into each liquefaction refinery once, and the factory tells the player to.
+        steps, _ = production.solve("plastic-bar", 1.5, oil="coal")
+        self.assertEqual(production.primes(steps), {"coal-liquefaction": {"heavy-oil": 100}})
+        self.assertEqual(production.primes(production.solve("plastic-bar", 1.5, oil=1)[0]), {})
+        for layout in ("bus", "compact"):
+            (flow,) = factory.flow_tests(item="plastic-bar", rate=1.5, oil="coal", layout=layout)
+            self.assertEqual(flow.prime, {"coal-liquefaction": {"heavy-oil": 100}}, layout)
 
     def test_each_fluid_line_is_one_network_of_its_own(self):
         _, p, bp = factory_built(**FACTORIES[1])

@@ -402,7 +402,10 @@ def _allocate(rows, jobs, lines):
         if not corridor:  # rows never touch: a block's pipes would join its neighbour's
             cursor -= BAND
         x0, y0, x1, y1 = row.box
-        bottom = cursor - 1
+        # A fluid coming in on the row's bottom tile past a corridor's crossings (steam beside
+        # coal liquefaction's coal tap): a free row between them, where its line comes back up.
+        bottom = cursor - 1 - (bool(corridor) and any(j.kind == "side_in" and j.port.y == y1
+                                                     for j in by_row.get((True, k), [])))
         row.dy = bottom - y1
         cursor = row.dy + y0
         for job in by_row.get((True, k), []):
@@ -1003,7 +1006,8 @@ def _description(p) -> str:
     gates = " Cracking takes oil only while the tank by its pump holds over %d." % GATE_LEVEL \
         if any(j.kind == "gate" for j in p["jobs"]) else ""
     text = (f"{len(p['rows'])} rows on a bus. Inputs enter at the bottom of the bus, west to east: "
-            f"{', '.join(supplied) or 'none'}. Out at the top: {', '.join(out)}.{gates} Connect any pole to your grid.")
+            f"{', '.join(supplied) or 'none'}. Out at the top: {', '.join(out)}.{gates}{production.prime_text(p['steps'])}"
+            f" Connect any pole to your grid.")
     if len(text.encode()) > TEXT_LIMITS["description"]:
         text = (f"{len(p['rows'])} rows on a bus. Inputs ({len(supplied)} lines) enter at the bottom, "
                 f"the product leaves at the top. Connect any pole to your grid.")
@@ -1043,4 +1047,5 @@ def flow_tests(layout="compact", budget=None, cells=1, effort=1, **params):
     window = max(r.flow.window for r in p["rows"])
     return [Flow(f"factory of {len(p['rows'])} rows: {p['rate']:g} {p['item']}/s", feeds, drains,
                  {p["item"]: float(p["rate"])}, warmup=warmup, window=window, fluids=fluids, at_least=True,
-                 settle=SETTLE, research=rates.research_levels(params.get("research", "")))]
+                 settle=SETTLE, research=rates.research_levels(params.get("research", "")),
+                 prime=production.primes(p["steps"]))]

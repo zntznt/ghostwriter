@@ -415,11 +415,7 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     plan = "; ".join(f"{s.item}: {s.rows} row{'s' if s.rows > 1 else ''} of {s.rate:.3g}/s "
                      f"for {s.demand:.3g}/s" for s in steps)
     tail = "The rows aren't connected: belt each row's product to the rows that use it."
-    primed = [(s, f) for s in steps if s.generator == "fluid_block"
-              for f in rates.recipe_any(s.params["recipe"]).fluids if f in rates.recipe_any(s.params["recipe"]).results]
-    if primed:
-        tail += " " + " ".join(f"Prime {s.item}'s {f} line once with {_prime(s, f):g}, or it never starts."
-                               for s, f in primed)
+    tail += prime_text(steps)
     if any(s.item in CRACKING for s in steps):
         tail += (" Crack only surplus oil: feed cracking through a pump that runs while the oil's tank is "
                  "nearly full, or it starves lubricant and the other oil users.")
@@ -491,10 +487,23 @@ def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2
                        research=rates.research_levels(research))]
 
 
-def _prime(s: Step, fluid: str) -> float:
-    """Fluid a block takes and makes (heavy oil in coal liquefaction) for a player to start it
-    with once: four crafts' worth for each machine."""
-    return 4 * rates.recipe_any(s.params["recipe"]).fluids[fluid] * s.params["machines"]
+def primes(steps: list[Step]) -> dict[str, dict[str, float]]:
+    """Recipe -> fluid -> units a player puts once into each machine of a block that takes back
+    a fluid it makes (heavy oil in coal liquefaction), or it never starts: four crafts' worth."""
+    out = {}
+    for s in steps:
+        if s.generator == "fluid_block":
+            r = rates.recipe_any(s.params["recipe"])
+            for fluid, amount in r.fluids.items():
+                if fluid in r.results:
+                    out.setdefault(r.name, {})[fluid] = 4 * amount
+    return out
+
+
+def prime_text(steps: list[Step]) -> str:
+    """What a player puts in once, for a description; empty without such a block."""
+    return "".join(f" Put {amount:g} {fluid} in each {recipe} once, or it never starts."
+                   for recipe, fluids in primes(steps).items() for fluid, amount in fluids.items())
 
 
 def _pack(blueprints: list[dict], gap: int = 4) -> tuple[dict, list[dict[int, int]]]:
