@@ -1085,6 +1085,14 @@ remote.add_interface("ghostwriter", {
       ::next_fluid::
     end
     for name, cap in pairs(args.caps or {}) do f.caps[name] = cap end
+    -- Fluid a player puts once into each machine of a loop that never starts empty.
+    for recipe, fluids in pairs(args.prime or {}) do
+      for _, e in pairs(f.built) do
+        if e.valid and e.type == "assembling-machine" and e.get_recipe() and e.get_recipe().name == recipe then
+          for fluid, amount in pairs(fluids) do e.insert_fluid{name = fluid, amount = amount} end
+        end
+      end
+    end
     f.started = true
     reply{ok = true}
   end,

@@ -463,6 +463,14 @@ def block(**params) -> dict:
 
 
 class FluidBlock(unittest.TestCase):
+    def test_a_fluid_both_in_and_out_is_fed_on_its_input_side(self):
+        # Coal liquefaction takes heavy oil in on the south and makes more on the north.
+        (flow,) = fluid_block.flow_tests(recipe="coal-liquefaction", machines=2)
+        sinks = {(f.entity, f.sink) for f in flow.fluids if f.fluid == "heavy-oil"}
+        self.assertEqual(sinks, {("south_heavy-oil", False), ("north_heavy-oil", True)})
+        # The game's statistics leave out the 25 heavy oil a craft takes back (ignored_by_stats).
+        self.assertAlmostEqual(flow.expect["heavy-oil"], 2 * 0.2 * 65)
+
     def test_variants_check_clean_and_are_powered(self):
         for params in BLOCK_VARIANTS:
             bp = block(**params)
@@ -664,7 +672,9 @@ class Production(unittest.TestCase):
         cases = [({"heavy-oil": 0, "light-oil": 0, "petroleum-gas": p}, oil) for p in (3, 100) for oil in (1, "advanced")]
         cases += [({"heavy-oil": 20, "light-oil": 0, "petroleum-gas": 0}, 1),  # lubricant
                   ({"heavy-oil": 0, "light-oil": 30, "petroleum-gas": 0}, 1),  # light oil only: basic can't
-                  ({"heavy-oil": 5, "light-oil": 20, "petroleum-gas": 20}, 1)]
+                  ({"heavy-oil": 5, "light-oil": 20, "petroleum-gas": 20}, 1),
+                  ({"heavy-oil": 0, "light-oil": 0, "petroleum-gas": 30}, "coal"),
+                  ({"heavy-oil": 20, "light-oil": 0, "petroleum-gas": 0}, "coal")]
         for need, oil in cases:
             steps, inputs = production._oil(need, oil)
             made = dict.fromkeys(production.OIL, 0.0)
@@ -724,6 +734,28 @@ class Production(unittest.TestCase):
         # Before solid fuel joined the oil plan, rocket fuel at 1/s left 8.63 petroleum gas/s over.
         _, inputs = production.solve("rocket-fuel", 1, oil=1)
         self.assertGreater(inputs.get("petroleum-gas", 0), -8.6)
+
+    def test_oil_from_coal_needs_no_crude(self):
+        steps, inputs = production._oil({"heavy-oil": 0, "light-oil": 0, "petroleum-gas": 30}, "coal")
+        self.assertEqual(steps[0].item, "coal-liquefaction")
+        self.assertNotIn("crude-oil", inputs)
+        self.assertGreater(inputs["coal"], 0)
+        self.assertGreater(inputs["steam"], 0)
+
+    def test_coal_chain_feeds_liquefactions_own_heavy_oil_from_a_source(self):
+        # The game's statistics leave out the heavy oil liquefaction takes back, so the chain
+        # test feeds it from a source: pooled, it was taken twice (lubricant 7.96 of 10/s).
+        _, (flow,) = production.chain_tests(item="lubricant", rate=10, oil="coal")
+        heavy = [f for f in flow.fluids if f.fluid == "heavy-oil" and not f.sink]
+        self.assertEqual(sorted(f.pooled for f in heavy), [False, True])  # liquefaction's, lubricant's
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.assertIn("Put 100 heavy-oil in each coal-liquefaction once",
+                          production.build(item="plastic-bar", rate=1.5, oil="coal").description)
+            # Priming, cracking and a surplus in one book still fit the game's description.
+            text = production.build(item="lubricant", rate=10, oil="coal").description
+        from tools.check import TEXT_LIMITS
+        self.assertLessEqual(len(text.encode()), TEXT_LIMITS["description"])
 
     def test_unknown_oil_value_is_refused(self):
         for oil in ("crude", "Advanced", 2):
@@ -1070,6 +1102,22 @@ class Factory(unittest.TestCase):
             area = {oil: density({"blueprint": factory_built(item=item, rate=rate, oil=oil)[2]})[0]["area"]
                     for oil in (1, "advanced")}
             self.assertLessEqual(area[1], area["advanced"], (item, rate))
+
+    def test_a_row_fed_fluid_on_its_bottom_tile_clears_its_corridor(self):
+        # Coal liquefaction takes coal by belt (a corridor tap south of the row) and steam on the
+        # row's bottom tile: the row stands a tile further north so steam can come up past the tap.
+        _, _, bp = factory_built(item="plastic-bar", rate=1.5, oil="coal")
+        self.assertEqual(check({"blueprint": bp}), [])
+
+    def test_coal_factory_primes_liquefaction_once(self):
+        # Its heavy oil line starts empty, as in a player's game: the flow test puts four crafts'
+        # worth into each liquefaction refinery once, and the factory tells the player to.
+        steps, _ = production.solve("plastic-bar", 1.5, oil="coal")
+        self.assertEqual(production.primes(steps), {"coal-liquefaction": {"heavy-oil": 100}})
+        self.assertEqual(production.primes(production.solve("plastic-bar", 1.5, oil=1)[0]), {})
+        for layout in ("bus", "compact"):
+            (flow,) = factory.flow_tests(item="plastic-bar", rate=1.5, oil="coal", layout=layout)
+            self.assertEqual(flow.prime, {"coal-liquefaction": {"heavy-oil": 100}}, layout)
 
     def test_each_fluid_line_is_one_network_of_its_own(self):
         _, p, bp = factory_built(**FACTORIES[1])

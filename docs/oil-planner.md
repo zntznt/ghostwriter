@@ -1,6 +1,6 @@
 # Oil planner: choosing refinery recipes by measured tiles
 
-Status: built, without `oil=coal` (see [Later](#later)). Branch `feat/lp-planner`.
+Status: built, `oil=coal` included (see [Coal](#coal)).
 
 ## Problem
 
@@ -21,6 +21,7 @@ blocks, gates and a water line.
 - `oil=advanced` (new): advanced oil processing with cracking only, exactly today's
   `oil=1` plan. The crude-efficient choice, and what the tests of the cracking gate and
   its layout use, since `oil=1` no longer cracks for petroleum-only requests.
+- `oil=coal`: coal and steam in; coal liquefaction plus cracking, never crude. See [Coal](#coal).
 - Any other `oil=` value raises `ValueError` naming the allowed ones.
 - Output shape is unchanged: `Step`s for `fluid_block` rows, inputs including water
   and steam, petroleum gas surplus as a negative input. `factory`, `compact`, the
@@ -111,6 +112,26 @@ In game (2.1.23): `gen production` solid fuel 1/s (no oil), 2/s `oil=1`, rocket 
 `oil=1`, and `gen factory` solid fuel 2/s and rocket fuel 1/s `oil=1` (compact, 533 and
 5,330 tiles) all pass `--validate`.
 
+## Coal
+
+`oil=coal` plans coal liquefaction with cracking (`RECIPES["coal"]`). It first failed in game
+and was dropped; three fixes brought it back:
+
+- `fluid_block.flow_tests` decided which fluid lines to drain by name. Heavy oil is both an
+  input (south) and an output (north) of liquefaction, so it drained the input. `Plan.outlets`
+  now records the side each output leaves by.
+- The game's statistics count 65 heavy oil a craft, not 90 (`ignored_by_stats`: the 25 it
+  takes back). Block flow tests expect that, and chain tests feed liquefaction's heavy oil
+  from a source, since the pool is credited from those statistics.
+- A new factory's heavy oil line is empty, and liquefaction needs heavy oil to make any.
+  Books and factories say "Put 100 heavy-oil in each coal-liquefaction once, or it never
+  starts", and factory flow tests do exactly that (`Flow.prime`).
+- The factory moves a row one tile north when a fluid comes in on its bottom tile beside a
+  belt tap south of it (steam beside liquefaction's coal), so the fluid's line can pass.
+
+In game (2.1.23): plastic at 1.5/s from coal 1.93/s (compact 1,026 tiles, and bus), lubricant
+at 10/s 12.9/s (608 tiles).
+
 ## Dependency
 
 `scipy` in `requirements.txt`, pinned like Draftsman (it brings numpy). Wheels
@@ -126,7 +147,7 @@ In `tests/test_tools.py`, class `Production`:
 3. Balance invariant on every planned case: recompute net production per fluid from
    the recipes and the returned crafts; heavy and light equal the demand, petroleum
    gas meets it. Independent of the solver.
-4. (`oil=coal`: dropped, see Later.)
+4. `oil=coal` uses coal liquefaction and needs no crude.
 4b. `oil=advanced` reproduces today's plan: `test_oil_balance`'s numbers unchanged.
 5. An unknown `oil=` value raises `ValueError` listing the allowed values.
 6. The stderr oil line names the recipes, machines and crude per second, and the
@@ -145,7 +166,7 @@ In game (`--validate`, flow tests):
 - an `oil=coal` request (coal liquefaction: heavy oil both in and out of one block).
   A liquefaction block needs heavy oil to start, and its only heavy oil is its own
   output, so it may never start. If this fails in game, `oil=coal` moves to a follow-up
-  and this change ships crude only. It failed: see Later.
+  and this change ships crude only. It failed, then came back: see Coal.
 
 Full suite: `python -m unittest discover tests`, and the CI shards on push.
 
@@ -161,11 +182,6 @@ they get a note saying so (they are `oil=advanced` now).
 
 ## Later
 
-`oil=coal` (coal liquefaction plus cracking, no crude) was built and failed in game on
-2.1.23: a liquefaction block's heavy oil input has nothing to start it, so it reports
-`fluid_ingredient_shortage` and makes nothing, even in its own block flow test. It needs
-a start-up supply of heavy oil (a tank primed once, or a crude refinery to kick it off)
-before the planner can offer it; the model is one more `RECIPES` entry.
 
 Recipe choice beyond oil, and Space Age by-product chains, reuse the same model
 with more recipes; the generators would also need to build multi-output and

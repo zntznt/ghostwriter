@@ -80,6 +80,8 @@ class Flow:
     at_least: bool = False  # a target to reach, not a rate to match
     caps: dict[str, float] = field(default_factory=dict)  # pool level that stops draining an item or fluid
     research: dict[str, int] = field(default_factory=dict)  # technology series -> levels the rate assumes
+    prime: dict[str, dict[str, float]] = field(default_factory=dict)  # recipe -> fluid -> units put once
+    # into each machine making it at the start, as a player primes a loop (coal liquefaction's heavy oil)
     # Windows to measure in all, stopping at the first that passes: a big factory
     # fills its belts slowly, with only its rows' slack to spare.
     settle: int = 1
@@ -128,6 +130,7 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
                 "fluids": [{"entity": number(f.entity), "fluid": f.fluid, "side": f.side or None, "sink": f.sink,
                             "pooled": f.pooled, "level": f.level} for f in flow.fluids],
                 "caps": flow.caps or None,
+                "prime": flow.prime or None,
             })))
             _wait_ticks(server, int(flow.warmup * 60), timeout=_timeout(flow.warmup))
             for window in range(flow.settle):

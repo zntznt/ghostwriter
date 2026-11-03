@@ -1025,7 +1025,7 @@ def _description(p, raw, outlets) -> str:
             f"{'; by pipe: ' + ', '.join(piped) if piped else ''}. The product leaves at the top"
             f"{' on ' + str(outlets) + ' belts' if outlets > 1 else ''}"
             f"{', with ' + ', '.join(left) + ' left over (use or store it, or refining stops)' if left else ''}."
-            f"{gates} Connect any pole to your grid.")
+            f"{gates}{factory.production.prime_text(p['steps'])} Connect any pole to your grid.")
     if len(text.encode()) > factory.TEXT_LIMITS["description"]:
         text = (f"{len(p['rows'])} rows on shelves. Inputs ({len(raw) + len(piped)} lines) enter at the bottom, "
                 f"the product leaves at the top. Connect any pole to your grid.")
@@ -1048,4 +1048,4 @@ def flow_tests(p, result):
     window = max(r.flow.window for r in p["rows"])
     return [Flow(f"compact factory of {len(p['rows'])} rows: {p['rate']:g} {p['item']}/s", feeds, drains,
                  {p["item"]: float(p["rate"])}, warmup=warmup, window=window, fluids=fluids, at_least=True,
-                 settle=factory.SETTLE)]
+                 settle=factory.SETTLE, prime=factory.production.primes(p["steps"]))]
