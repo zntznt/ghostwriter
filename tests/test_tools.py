@@ -1232,6 +1232,89 @@ class Beacons(unittest.TestCase):
         self.assertTrue(any(e["name"] == "beacon" for e in bp["entities"]))
 
 
+class Power(unittest.TestCase):
+    GEAR = rates.recipe("iron-gear-wheel")
+
+    def test_a_machine_draws_its_usage_with_modules_plus_its_drain(self):
+        # Measured in game: an am2 draws 155 kW crafting, 5 kW (usage / 30) idle; 365 kW with two speed 3s.
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-2", self.GEAR), 155e3)
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-2", self.GEAR, utilisation=0), 5e3)
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-2", self.GEAR, utilisation=0.5), 80e3)
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-2", self.GEAR, "speed-module-3"), 365e3)
+
+    def test_consumption_is_floored_at_minus_80_percent(self):
+        # Two efficiency 1s (-60%) drew 65 kW in game, two efficiency 3s (-100%) 35 kW: the floor.
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-2", self.GEAR, "efficiency-module"), 65e3)
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-2", self.GEAR, "efficiency-module-3"), 35e3)
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-3", self.GEAR, "efficiency-module-3",
+                                                   "efficiency-module-3", 4), 0.2 * 375e3 + 12.5e3)
+
+    def test_beacons_pass_on_their_modules_consumption(self):
+        bonus = 2 * 2 * 0.7 * 1.5 * 0.7071
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-3", self.GEAR, "", "speed-module-3", 2),
+                               375e3 * (1 + bonus) + 12.5e3)
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-3", self.GEAR, "productivity-module-3",
+                                                   "speed-module-3", 2), 375e3 * (1 + 3.2 + bonus) + 12.5e3)
+        # An am1 takes no beacon effects.
+        self.assertAlmostEqual(rates.machine_watts("assembling-machine-1", self.GEAR, "", "speed-module-3", 2), 77.5e3)
+
+    def test_burner_machines_draw_no_electricity(self):
+        plate = rates.recipe("iron-plate")
+        for furnace in ("stone-furnace", "steel-furnace"):
+            self.assertEqual(rates.machine_watts(furnace, plate), 0)
+        self.assertAlmostEqual(rates.machine_watts("electric-furnace", plate), 186e3)
+
+    def test_a_beacon_draws_the_same_whatever_it_holds(self):
+        # 480 kW in game with two speed 3s and no machine to reach.
+        self.assertEqual(rates.beacon_watts(), 480e3)
+
+    def test_inserters_draw_their_drain_and_measured_energy_per_item(self):
+        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", 2, 0), 1e3)
+        per_item = rates.inserter_watts("fast-inserter", 1, 1) - 500
+        self.assertGreater(per_item, 5e3)  # several kJ an item: a quarter of a gear row's draw
+        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", 3, 2), 1500 + 2 * per_item)
+
+    def test_power_reads_in_megawatts(self):
+        self.assertEqual(rates.megawatts(2.43e6), "2.4 MW")
+        self.assertEqual(rates.megawatts(310e3), "0.31 MW")
+
+    def test_rows_state_their_draw(self):
+        rows = [(assembly_row, {"recipe": "electronic-circuit"}),
+                (assembly_row, {"recipe": "automation-science-pack", "machine": "assembling-machine-3",
+                                "modules": "productivity-module-3", "beacons": "speed-module-3"}),
+                (fluid_row, {"recipe": "plastic-bar", "modules": "productivity-module-3"}),
+                (smelting_column, {"furnace": "electric-furnace"}), (smelting_column, {}),
+                (cell, {}), (fluid_block, {"recipe": "sulfuric-acid"})]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for gen, params in rows:
+                with self.subTest(gen.__name__, **params):
+                    w = gen.plan(**params).watts()
+                    self.assertIn(f"Draws about {rates.megawatts(w)}.", gen.build(**params).description)
+
+    def test_a_row_draws_its_machines_beacons_and_inserters(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            p = assembly_row.plan(recipe="automation-science-pack", machine="assembling-machine-3",
+                                  modules="productivity-module-3", beacons="speed-module-3", sides=1, machines=2)
+        machines = 2 * rates.machine_watts(p.machine, p.recipe, p.modules, p.beacons, 2)
+        self.assertGreater(p.watts(), machines + 3 * rates.beacon_watts())
+        self.assertLess(p.watts(), 1.3 * (machines + 3 * rates.beacon_watts()))
+        # Half the output: the machines idle half the time, beacons draw the same.
+        self.assertLess(p.watts(0.5), p.watts() - 0.45 * machines)
+
+    def test_the_planner_reports_power_and_the_beacon_tradeoff(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            steps, _ = production.solve("automation-science-pack", 2, machine="assembling-machine-3",
+                                        modules="productivity-module-3", beacons="speed-module-3")
+            lines = production.power_lines(steps)
+        self.assertTrue(all(production.watts(s) > 0 for s in steps))
+        self.assertTrue(any(s.tradeoff for s in steps))
+        self.assertRegex("\n".join(lines), r"beacons (kept|dropped): [+-]\d+ tiles, [+-][\d.]+ MW")
+        self.assertEqual(f"{rates.megawatts(sum(map(production.watts, steps)))} in all", lines[-1])
+
+
 class Factory(unittest.TestCase):
     def test_rows_with_cells_take_the_producers_ingredients(self):
         # Fused, the circuits' rows take copper plates and iron; no cable row or line is left.

@@ -7,11 +7,17 @@ come from the game itself: tools/inserter_rates.json, written by
 
 A machine crafts at its crafting_speed and its modules' speed effect (as bp
 takes them, "modules=speed-module-3"), plus that of the beacons around it
-("beacons=speed-module-3", each beacon's two slots filled); no power. Productivity modules
+("beacons=speed-module-3", each beacon's two slots filled). Productivity modules
 also make more per craft (made()), only in machines and recipes that allow
 productivity; elsewhere they aren't placed. An inserter moves what the
 measurement saw. Inserter rates take research (as bp takes it,
 "inserter-capacity-bonus=7"): none unless given, else the rates measured at it.
+
+Power, as measured in game (2.1.23): a crafting machine draws its energy_usage
+times 1 + its modules' and beacons' consumption bonus (floored at -80%) while
+crafting, plus a drain of energy_usage / 30 always; burner machines none. A
+beacon draws 480 kW whatever it holds. An inserter draws its drain plus the
+energy it was measured to take per item moved (energy_per_item, no research).
 """
 
 import json
@@ -93,13 +99,13 @@ def check_beacon_modules(beacons: str = "") -> None:
         raise ValueError(f"a beacon doesn't take {beacons}")
 
 
-def beacon_speed(machine: str, beacons: str = "", n: int = 0) -> float:
-    """The speed bonus `n` beacons with `beacons` in their slots give a machine."""
+def beacon_effect(machine: str, beacons: str = "", n: int = 0, effect: str = "speed") -> float:
+    """The bonus to `effect` that `n` beacons with `beacons` in their slots give a machine."""
     check_beacon_modules(beacons)
     if not beacons or not n or not entities.raw[machine].get("effect_receiver", {}).get("uses_beacon_effects", True):
         return 0
     b = entities.raw["beacon"]
-    return n * b["module_slots"] * items.raw[beacons]["effect"].get("speed", 0) * b["distribution_effectivity"] \
+    return n * b["module_slots"] * items.raw[beacons]["effect"].get(effect, 0) * b["distribution_effectivity"] \
         * b["profile"][n - 1]
 
 
@@ -142,8 +148,50 @@ def crafts_per_second(machine: str, r: Recipe, modules: str = "", beacons: str =
     slots = module_slots(machine, modules, r)
     speed = slots * items.raw[modules]["effect"].get("speed", 0) if slots else 0
     if recipes.raw.get(r.name, {}).get("allow_speed", True):
-        speed += beacon_speed(machine, beacons, n)
+        speed += beacon_effect(machine, beacons, n)
     return proto["crafting_speed"] * max(0.2, 1 + speed) / r.time  # the game keeps 20% speed at least
+
+
+def watts(text: str) -> float:
+    """'90kW' or '4MJ' as a number (watts or joules)."""
+    number = text.rstrip("WJ")
+    scale = {"k": 1e3, "M": 1e6, "G": 1e9}.get(number[-1], 1)
+    return float(number.rstrip("kMG")) * scale
+
+
+def machine_watts(machine: str, r: Recipe, modules: str = "", beacons: str = "", n: int = 0,
+                  utilisation: float = 1) -> float:
+    """Average electric W of one machine crafting `r` for `utilisation` of the time, with
+    `modules` in its slots and `n` beacons of `beacons` around it."""
+    proto = entities.raw[machine]
+    if not electric(machine):
+        return 0
+    usage = watts(proto["energy_usage"])
+    drain = watts(proto["energy_source"]["drain"]) if "drain" in proto["energy_source"] else usage / 30
+    slots = module_slots(machine, modules, r)
+    bonus = slots * items.raw[modules]["effect"].get("consumption", 0) if slots else 0
+    bonus += beacon_effect(machine, beacons, n, "consumption")
+    return drain + utilisation * usage * max(0.2, 1 + bonus)  # the game keeps 20% consumption at least
+
+
+def beacon_watts() -> float:
+    return watts(entities.raw["beacon"]["energy_usage"])
+
+
+def inserter_watts(inserter: str, n: int, items_per_second: float) -> float:
+    """Average electric W of `n` inserters moving `items_per_second` between them."""
+    # ponytail: energy per item is measured with no research; researched hands move more a
+    # swing, so this overestimates them (measure it per research, as rates are, if that matters).
+    if not n:
+        return 0
+    per_item = _inserter_file().get("energy_per_item", {})
+    if inserter not in per_item:
+        raise ValueError(f"no measured energy per item for {inserter} (python -m validator.measure --energy)")
+    return n * watts(entities.raw[inserter]["energy_source"]["drain"]) + per_item[inserter] * items_per_second
+
+
+def megawatts(w: float) -> str:
+    return f"{w / 1e6:.2g} MW"
 
 
 def request_modules(entity, machine: str, r: Recipe, modules: str = "") -> None:

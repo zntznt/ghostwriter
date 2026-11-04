@@ -29,7 +29,8 @@ item's rate must be within `tolerance` of its target.
 Unlike circuit tests, power comes only through the blueprint's own poles: a
 script-wired pole joins them to an unlimited source. An inserter outside
 every supply area, or a pole off the network, starves its machine and the
-rate falls short. The force has no research, so inserters move one item
+rate falls short. Each window also measures the electric energy every entity
+type took from that source (Measured.power, in W). The force has no research, so inserters move one item
 per swing, unless the case sets `research` (as bp takes it, a series and its
 level), as a generator sized for research does.
 """
@@ -94,7 +95,13 @@ class Measured:
     windows: list[dict[str, float]] = field(default_factory=list)  # per window: item or fluid -> per second
     stalled: dict[str, int] = field(default_factory=dict)  # at the end: "entity: status" -> how many
     passed: int | None = None  # the window (from 1) that met expect, or None
+    power: dict[str, float] = field(default_factory=dict)  # last window: entity type -> average electric W
     error: str = ""  # the case couldn't run
+
+    @property
+    def watts(self) -> float:
+        """Average electric draw of the whole build in the last window measured."""
+        return sum(self.power.values())
 
     def rate(self, name: str) -> float:
         """Per second in the last window measured: the most settled."""
@@ -139,6 +146,8 @@ def run_flow_tests(server: Server, data: dict, flows: list[Flow], ids: dict[str,
                 got = server.call("flow_read")
                 _ok(got)
                 result.windows.append(_rates(got))
+                energy = got.get("energy") if isinstance(got.get("energy"), dict) else {}
+                result.power = {name: j / (got["ticks"] / 60) for name, j in energy.items()}
                 result.stalled = got.get("stalled") if isinstance(got.get("stalled"), dict) else {}
                 errors = _shortfalls(flow, got)
                 if not errors:

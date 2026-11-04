@@ -215,14 +215,7 @@ def _fuel(step, recipe, fuel) -> float:
     furnace = step.params["furnace"]
     proto = entities.raw[furnace]
     seconds = recipe.time / proto["crafting_speed"]
-    return _joules(proto["energy_usage"]) * seconds / _joules(items.raw[fuel]["fuel_value"])
-
-
-def _joules(text: str) -> float:
-    """'90kW' or '4MJ' as a number (watts or joules)."""
-    number = text.rstrip("WJ")
-    scale = {"k": 1e3, "M": 1e6, "G": 1e9}.get(number[-1], 1)
-    return float(number.rstrip("kMG")) * scale
+    return rates.watts(proto["energy_usage"]) * seconds / rates.watts(items.raw[fuel]["fuel_value"])
 
 
 def _lines(rows: list[Row], inputs: dict[str, float], item: str, rate: float, belt: str, fill: float
@@ -513,7 +506,10 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
                                    raw=raw, oil=oil, research=research, modules=modules):
         print(line, file=sys.stderr)
     compact = _compact(layout, params, budget, say=True, cells=cells, effort=effort)
-    return compact[1].bp if compact else _build(plan(**params))[0]
+    p = compact[0] if compact else plan(**params)
+    for line in production.power_lines(p["steps"]):
+        print(f"factory power: {line}", file=sys.stderr)
+    return compact[1].bp if compact else _build(p)[0]
 
 
 _COMPACT = {}  # params -> (parts, compact.Result) or the reason it isn't compact: build and flow_tests share one search

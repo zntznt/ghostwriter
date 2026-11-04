@@ -260,6 +260,30 @@ class Validator(unittest.TestCase):
             '/sc local r = game.forces.player.recipes rcon.print(tostring(r["steel-plate"].enabled))')
         self.assertEqual(recipes.strip(), "false")
 
+    def assertDraws(self, gen, **params):
+        """The build's average electric draw in its flow test is the plan's estimate within 5%: the
+        machines draw for the rate the test holds to 3%, and inserters (a quarter of a plain row's
+        draw at most) take their measured energy per item to a few percent."""
+        bp = gen.build(**params)
+        report = Report(self.server.version)
+        [got] = run_flow_tests(self.server, bp.to_dict(), gen.flow_tests(**params),
+                               {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}, report)
+        self.assertTrue(report.ok, report.lines())
+        self.assertAlmostEqual(got.watts / gen.plan(**params).watts(), 1, delta=0.05, msg=got.power)
+
+    def test_a_plain_assembly_row_draws_its_estimate(self):
+        self.assertDraws(assembly_row, recipe="electronic-circuit")
+
+    def test_an_assembly_row_with_speed_modules_and_beacons_draws_its_estimate(self):
+        self.assertDraws(assembly_row, recipe="automation-science-pack", modules="speed-module-3",
+                         beacons="speed-module-3", sides=1, machines=2)
+
+    def test_a_fluid_row_with_modules_draws_its_estimate(self):
+        self.assertDraws(fluid_row, recipe="plastic-bar", modules="productivity-module-3")
+
+    def test_an_electric_smelting_column_draws_its_estimate(self):
+        self.assertDraws(smelting_column, furnace="electric-furnace")
+
     def test_requested_modules_are_installed_on_build(self):
         # A built ghost leaves its modules as an item request for bots; a test has none.
         bp = Blueprint()

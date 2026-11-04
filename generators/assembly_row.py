@@ -71,6 +71,18 @@ class Plan:
                 caps.append(n * lane / r.ingredients[item] * out)
         return min(caps)
 
+    def watts(self, share: float = 1) -> float:
+        """Average electric W making `share` of the rated output."""
+        m = self.machines * self.sides
+        crafts = share * self.sides * self.per_side / self.recipe.results[self.product]  # all machines, per second
+        w = m * rates.machine_watts(self.machine, self.recipe, self.modules, self.beacons, BEACONS_PER_MACHINE,
+                                    crafts / (m * self.crafts))
+        w += self.sides * (self.machines + 1) * rates.beacon_watts() if self.beacons else 0
+        for (inserter, k), lanes in zip(self.feeders, self.lanes):
+            moved = crafts * sum(self.recipe.ingredients[i] for i in set(lanes.values()))
+            w += rates.inserter_watts(inserter, m * k, moved)
+        return w + rates.inserter_watts(self.output[0], m * self.output[1], crafts * self.recipe.results[self.product])
+
 
 def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,
           machines=0, inserter="", input_belts=0, research="", modules="", beacons="") -> list[Plan]:
@@ -199,7 +211,8 @@ def _build(p: Plan, pole: str) -> Blueprint:
     bp.description = (
         f"{n} {p.machine} per side x{p.sides}: {p.sides * p.per_side:g} {p.product}/s "
         f"(belt-limited at {p.limit} per side). Ingredients enter at the bottom of each side's "
-        f"input belts, {belts_text}. {p.product} leaves at the top. Connect any pole to your grid."
+        f"input belts, {belts_text}. {p.product} leaves at the top. Draws about {rates.megawatts(p.watts())}. "
+        "Connect any pole to your grid."
     )
     bp.icons = [p.machine, p.product]
 
