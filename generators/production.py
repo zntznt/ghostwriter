@@ -273,7 +273,10 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
                     p.rate(item))
     errors = []
     machines = {"assembly_row": tiers, "fluid_row": _fluid_machines(tiers)}.get(kind, ())
-    options = ([{"recipe": r.name, "machine": m, "belt": belt, **extra} for m in machines if _crafts(m, r)]
+    # Modules speed a machine past what its inserters feed: then the tier runs without them.
+    plain = {k: v for k, v in extra.items() if k != "modules"}
+    options = ([{"recipe": r.name, "machine": m, "belt": belt, **e} for m in machines if _crafts(m, r)
+                for e in ([extra, plain] if extra != plain else [extra])]
                if kind != "smelting_column" else [{"recipe": r.name, "furnace": furnace, "belt": belt,
                                                    **{k: v for k, v in extra.items() if k == "modules"}}])
     count_key = "furnaces" if kind == "smelting_column" else "machines"

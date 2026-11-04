@@ -922,7 +922,7 @@ class Modules(unittest.TestCase):
         fast, _ = production.solve("automation-science-pack", 1, machine="assembling-machine-3", modules="speed-module-3")
         self.assertLess(machines(fast), machines(plain))
         self.assertTrue(all("modules" not in s.params for s in plain))
-        self.assertTrue(all(s.params["modules"] == "speed-module-3" for s in fast))
+        self.assertEqual(fast[-1].params["modules"], "speed-module-3")
         smelted, _ = production.solve("iron-gear-wheel", 5, smelt=1, furnace="electric-furnace", modules="speed-module")
         self.assertTrue(all(s.params["modules"] == "speed-module" for s in smelted))
         red, _ = production.solve("automation-science-pack", 1, modules="speed-module")
@@ -933,10 +933,23 @@ class Modules(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "productivity"):
             production.solve("electronic-circuit", 1, modules="productivity-module")
 
+    def test_modules_never_cost_machines(self):
+        # A sped-up machine can want more inserters than fit; its tier then runs without
+        # modules, instead of dropping to a slower tier with more machines.
+        def machines(steps):
+            return {s.item: (s.params["machine"], s.rows * s.params["sides"] * s.params["machines"]) for s in steps}
+
+        for item, rate in (("electronic-circuit", 10), ("automation-science-pack", 1), ("iron-gear-wheel", 10)):
+            plain, _ = production.solve(item, rate, machine="assembling-machine-3")
+            fast, _ = production.solve(item, rate, machine="assembling-machine-3", modules="speed-module-3")
+            for made, (machine, n) in machines(fast).items():
+                self.assertLessEqual(n, machines(plain)[made][1], (item, made))
+                self.assertEqual(machine, machines(plain)[made][0], (item, made))
+
     def test_factory_threads_modules(self):
-        p = factory.rows_and_lines("electronic-circuit", 5, modules="speed-module")
+        p = factory.rows_and_lines("automation-science-pack", 1, modules="speed-module")
         self.assertTrue(all(r.step.params["modules"] == "speed-module" for r in p["rows"]))
-        bp = factory.build("electronic-circuit", 5, layout="bus", modules="speed-module").to_dict()["blueprint"]
+        bp = factory.build("automation-science-pack", 1, layout="bus", modules="speed-module").to_dict()["blueprint"]
         machines = [e for e in bp["entities"] if e["name"] == "assembling-machine-2"]
         self.assertTrue(machines and all(module_slots_filled(e) == {"speed-module": 2} for e in machines))
 

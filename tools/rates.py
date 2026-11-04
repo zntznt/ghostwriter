@@ -6,9 +6,10 @@ come from the game itself: tools/inserter_rates.json, written by
 `python -m validator.measure`.
 
 A machine crafts at its crafting_speed and its modules' speed effect (speed and
-efficiency modules, as bp takes them, "modules=speed-module-3"; no beacons, and
-no power), and an inserter moves what the measurement saw. Inserter rates take research (as bp takes it,
-"inserter-capacity-bonus=7"): none unless given, else the rates measured at it.
+efficiency modules, as bp takes them, "modules=speed-module-3"; no beacons, no
+power), and an inserter moves what the measurement saw. Inserter rates take
+research (as bp takes it, "inserter-capacity-bonus=7"): none unless given, else
+the rates measured at it.
 """
 
 import json
