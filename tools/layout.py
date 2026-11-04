@@ -1,5 +1,6 @@
-"""Layout helpers shared by generators: inserter facing and pole placement."""
+"""Layout helpers shared by generators: inserter facing, beacon reach and pole placement."""
 
+import math
 from itertools import combinations
 
 from draftsman.constants import Direction
@@ -10,6 +11,14 @@ def facing(pick_from_west: bool) -> Direction:
     # An inserter's direction points at the side it picks up from (prototype
     # pickup_position is north of an unrotated inserter); checked in game.
     return Direction.WEST if pick_from_west else Direction.EAST
+
+
+def beacons_reaching(centre: tuple[float, float], half: float, beacons: list[tuple[float, float]]) -> int:
+    """Beacons (by centre) whose supply area overlaps the collision box (half width `half`)
+    of an entity at `centre`; a beacon's supply area reaches from its tile edge."""
+    b = entities.raw["beacon"]
+    reach = b["supply_area_distance"] + math.ceil(2 * b["collision_box"][1][0]) / 2 + half
+    return sum(all(abs(c - bc) < reach for c, bc in zip(centre, at)) for at in beacons)
 
 
 def poles(pole: str, powered: list[tuple[float, float, float]], free: dict[int, list[int]]) -> list[tuple[int, int]]:

@@ -1149,17 +1149,79 @@ class Beacons(unittest.TestCase):
             with self.subTest(item, modules=modules):
                 self.assertLessEqual(area(modules=modules, beacons="speed-module-3"), area(modules=modules))
 
-    def test_only_assembly_rows_take_beacons(self):
+    def test_only_assembly_and_fluid_rows_take_beacons(self):
         for item, kw in (("automation-science-pack", {"smelt": 1, "furnace": "electric-furnace"}),
                          ("plastic-bar", {"oil": "advanced"})):
             with self.subTest(item):
                 steps, _ = production.solve(item, 2, beacons="speed-module-3", **kw)
-                self.assertEqual(any("beacons" in s.params for s in steps), item != "plastic-bar")
-                self.assertTrue(all("beacons" not in s.params for s in steps if s.generator != "assembly_row"))
+                if item != "plastic-bar":
+                    self.assertTrue(any("beacons" in s.params for s in steps))
+                self.assertTrue(all("beacons" not in s.params for s in steps
+                                    if s.generator not in ("assembly_row", "fluid_row")))
         steps, _ = production.solve("automation-science-pack", 2, machine="assembling-machine-3",
                                     modules="productivity-module-3", beacons="speed-module-3")
         self.assertTrue(any("beacons" in s.params for s in steps))
         self.assertEqual(production.fuse(steps, "automation-science-pack", "transport-belt"), steps)
+
+    def test_fluid_row_machines_take_beacons_from_both_columns(self):
+        from draftsman.data import entities as protos
+
+        reach = protos.raw["beacon"]["supply_area_distance"] + 1.5 + rates.half_width("chemical-plant")
+        # Plastic is inserter-bound with beacons; batteries and explosives aren't.
+        for params in ({"recipe": "battery"}, {"recipe": "battery", "sides": 1, "machines": 3},
+                       {"recipe": "explosives", "machines": 2}):
+            with self.subTest(**params):
+                p = fluid_row.plan(**params, beacons="speed-module-3")
+                bp = fluid(**params, beacons="speed-module-3")
+                beacons = [e for e in bp["entities"] if e["name"] == "beacon"]
+                machines = [e for e in bp["entities"] if e["name"] == "chemical-plant"]
+                self.assertEqual(len(machines), p.sides * p.machines)
+                self.assertEqual(len(beacons), p.sides * (p.machines + 1))
+                self.assertEqual(p.beacons_per_machine, 2 * p.sides)
+                self.assertTrue(all(module_slots_filled(b) == {"speed-module-3": 2} for b in beacons))
+                for m in machines:
+                    near = [b for b in beacons
+                            if all(abs(b["position"][k] - m["position"][k]) < reach for k in "xy")]
+                    self.assertEqual(len(near), p.beacons_per_machine, m)
+                self.assertEqual(check({"blueprint": bp}), [])
+                assert_powered(self, bp, params)
+                # One pipe, beside every machine.
+                nets = pipe_networks(bp)
+                (pipe_x,) = {x for x, _ in nets}
+                self.assertEqual(len(set(nets.values())), 1)
+                for m in machines:
+                    y = int(m["position"]["y"])
+                    self.assertLessEqual({(pipe_x, y + d) for d in (-1, 0, 1)}, set(nets))
+        self.assertFalse(any(e["name"] == "beacon" for e in fluid()["entities"]))
+        self.assertEqual(fluid(beacons=""), fluid())
+
+    def test_fluid_rows_are_sized_with_their_beacons(self):
+        r = rates.recipe("battery", fluids=True)
+        for sides in (1, 2):
+            with self.subTest(sides=sides):
+                p = fluid_row.plan(recipe="battery", sides=sides, beacons="speed-module-3")
+                self.assertAlmostEqual(p.crafts, rates.crafts_per_second("chemical-plant", r, "", "speed-module-3",
+                                                                         p.beacons_per_machine))
+                self.assertGreater(p.crafts, fluid_row.plan(recipe="battery", sides=sides).crafts)
+        (flow,) = fluid_row.flow_tests(recipe="battery", beacons="speed-module-3")
+        p = fluid_row.plan(recipe="battery", beacons="speed-module-3")
+        self.assertAlmostEqual(flow.expect[p.product], p.sides * p.per_side)
+
+    def test_fluid_rows_take_beacons_only_where_they_lay_out_smaller(self):
+        from tools.density import density
+
+        def area(**kw):
+            return density(factory.build(item, rate, layout="bus", oil="advanced", **kw).to_dict())[0]["area"]
+
+        for item, rate in (("plastic-bar", 5), ("battery", 3), ("explosives", 5)):
+            with self.subTest(item):
+                self.assertLessEqual(area(beacons="speed-module-3"), area())
+        steps, _ = production.solve("battery", 3, oil="advanced", beacons="speed-module-3")
+        (battery,) = [s for s in steps if s.item == "battery"]
+        self.assertEqual((battery.generator, battery.params.get("beacons")), ("fluid_row", "speed-module-3"))
+        # Plastic outruns its inserters with beacons: its row runs without.
+        steps, _ = production.solve("plastic-bar", 5, oil="advanced", beacons="speed-module-3")
+        self.assertNotIn("beacons", {s.item: s for s in steps}["plastic-bar"].params)
 
     def test_factory_threads_beacons(self):
         p = factory.rows_and_lines("automation-science-pack", 1, machine="assembling-machine-3",

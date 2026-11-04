@@ -68,7 +68,7 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     the params of every row whose inserters it sizes, and isn't there without it. modules: a
     module in every machine's slots (productivity: ingredients sized for what each
     machine makes); it rides in every row's params the same way. beacons: a module in
-    beacons between an assembly row's machines (only there), where they make it no bigger."""
+    beacons between an assembly or fluid row's machines (only there), where they make it no bigger."""
     if machine not in MACHINES:
         raise ValueError(f"machine is one of {MACHINES}")
     rates.check_modules(modules)
@@ -270,7 +270,7 @@ def _how(item, tiers, smelt, furnace, forced_raw, oil=0):
 def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     """Rows for one item, in the fastest tier whose row can be fed: the fewest
     full-size rows, then just enough machines in each. extra: params every row but
-    a smelting column takes (research; it takes modules); beacons only assembly rows take."""
+    a smelting column takes (research; it takes modules); beacons only assembly and fluid rows take."""
     kind, r = how
     extra = extra or {}
     beaconed, extra = extra, {k: v for k, v in extra.items() if k != "beacons"}
@@ -286,7 +286,7 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     # Modules and beacons speed a machine past what its inserters feed: then the tier runs
     # without beacons, then without modules either.
     plain = {k: v for k, v in extra.items() if k != "modules"}
-    tries = [beaconed] * (kind == "assembly_row") + [extra, plain]
+    tries = [beaconed] * (kind in ("assembly_row", "fluid_row")) + [extra, plain]
     options = ([{"recipe": r.name, "machine": m, "belt": belt, **e} for m in machines if _crafts(m, r)
                 for e in [e for k, e in enumerate(tries) if e not in tries[:k]]]
                if kind != "smelting_column" else [{"recipe": r.name, "furnace": furnace, "belt": belt,
@@ -300,13 +300,14 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
             share = need / rows
             machine = base.get("machine") or base["furnace"]
             modules = base.get("modules", "")
-            per_machine = (rates.crafts_per_second(machine, r, modules, base.get("beacons", ""),
-                                                   assembly_row.BEACONS_PER_MACHINE)
-                           * rates.made(machine, r, modules).results[item])
-            if share <= per_machine + 1e-9:
+            made = rates.made(machine, r, modules).results[item]
+            per_machine = {sides: made * rates.crafts_per_second(machine, r, modules, base.get("beacons", ""),
+                                                                 _beacons_per_machine(kind, machine, sides))
+                           for sides in (1, 2)}
+            if share <= per_machine[1] + 1e-9:
                 params = {**base, "sides": 1, count_key: 1}
             else:
-                params = {**base, "sides": 2, count_key: math.ceil(share / 2 / per_machine - 1e-9)}
+                params = {**base, "sides": 2, count_key: math.ceil(share / 2 / per_machine[2] - 1e-9)}
             step = Step(item, demand, kind, params, rows, _rated(kind, params))
         except ValueError as e:
             errors.append(str(e))
@@ -325,11 +326,17 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     raise ValueError(f"{item}: no row fits ({errors[-1]}); pass raw={item} to supply it instead")
 
 
+def _beacons_per_machine(kind, machine, sides) -> int:
+    if kind == "fluid_row":
+        return fluid_row.beacons_per_machine(machine, sides)
+    return assembly_row.BEACONS_PER_MACHINE
+
+
 def _row_area(s: Step) -> int:
     """Bounding-box tiles of a step's rows."""
     from tools.density import density
 
-    return s.rows * density(assembly_row.build(**s.params).to_dict())[0]["area"]
+    return s.rows * density(GENERATORS[s.generator].build(**s.params).to_dict())[0]["area"]
 
 
 def _block(item):

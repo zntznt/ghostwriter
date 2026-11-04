@@ -18,6 +18,11 @@ with a 15% margin, and poles take the inserter-column tiles left over, or a
 one-row gap after each machine when there are none. `machines` (per side)
 defaults to the most the belts carry; the description names each lane's item
 and the fluid flow the pipe must supply.
+
+With beacons, each machine column runs beacon, machine, beacon, ... beacon.
+The columns are only the pipe apart, so a machine takes the beacons before and
+after it in both columns: four with sides=2, two with sides=1, end machines
+alike. The inserter-column tiles beside the beacons are free for poles.
 """
 
 import math
@@ -39,6 +44,7 @@ MACHINES = ("chemical-plant", "assembling-machine-2", "assembling-machine-3")
 # 100% (NOTES.md). Above this fill, outputs use fast inserters.
 BASIC_FILL = 0.85
 SIDES = ("left", "right")
+BEACON = "beacon"
 
 
 @dataclass
@@ -59,6 +65,8 @@ class Plan:
     size: int
     gap: int = 0
     modules: str = ""
+    beacons: str = ""  # in every beacon's slots; no beacons without
+    beacons_per_machine: int = 0
 
     @property
     def per_side(self) -> float:
@@ -80,7 +88,7 @@ class Plan:
 
 
 def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
-          research="", modules="") -> list[Plan]:
+          research="", modules="", beacons="") -> list[Plan]:
     """Ingredient layouts that fit the belts and inserters, best first."""
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
@@ -90,7 +98,8 @@ def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, mach
     if len(r.results) != 1:
         raise ValueError(f"{recipe}: a row carries one product")
     machine = machine or next((m for m in MACHINES if _crafts(m, r)), MACHINES[0])
-    crafts = rates.crafts_per_second(machine, r, modules)
+    per = beacons_per_machine(machine, sides) if beacons else 0
+    crafts = rates.crafts_per_second(machine, r, modules, beacons, per)
     r = rates.made(machine, r, modules)
     _input_face(machine)  # refuses machines whose fluid inputs aren't on one face
     (product, out), = r.results.items()
@@ -125,7 +134,7 @@ def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, mach
             fewest = used if fewest is None else min(fewest, used)
             continue
         candidates.append(Plan(r, machine, belt, sides, 0, limit, crafts, product, fluid, near, sorted(rest),
-                               feeders, output, s, modules=modules))
+                               feeders, output, s, modules=modules, beacons=beacons, beacons_per_machine=per))
     if fewest is not None:
         why.add(f"one machine needs at least {fewest} inserters on a side where {s} fit")
     if not candidates:
@@ -161,10 +170,32 @@ def plan(pole="medium-electric-pole", **params) -> Plan:
 
 
 def build(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
-          pole="medium-electric-pole", research="", modules="") -> Blueprint:
+          pole="medium-electric-pole", research="", modules="", beacons="") -> Blueprint:
     p = plan(pole, recipe=recipe, machine=machine, belt=belt, sides=sides, machines=machines, inserter=inserter,
-             research=research, modules=modules)
+             research=research, modules=modules, beacons=beacons)
     return _build(p, pole)
+
+
+def beacons_per_machine(machine: str, sides: int) -> int:
+    """Beacons reaching each machine of a beaconed row: the fewest any machine gets (all do
+    alike: the end machines take the end beacons)."""
+    s, bs = rates.size(machine), rates.size(BEACON)
+    machines, beacons = _spots(s, bs, 0, 3, [0, s + 1][:sides])
+    return min(_reaching(machine, m, beacons) for m in machines)
+
+
+def _spots(s, bs, gap, n, xs):
+    """Top-left tiles of the machines and beacons (none if bs is 0) in machine columns at xs."""
+    pitch = s + gap + bs
+    return ([(x, m * pitch + bs) for x in xs for m in range(n)],
+            [(x, b * pitch) for x in xs for b in range(n + 1 if bs else 0)])
+
+
+def _reaching(machine, at, beacons) -> int:
+    """Beacons (top-left tiles) reaching a machine at top-left tile `at`."""
+    s, bs = rates.size(machine), rates.size(BEACON)
+    return layout.beacons_reaching((at[0] + s / 2, at[1] + s / 2), rates.half_width(machine),
+                                   [(x + bs / 2, y + bs / 2) for x, y in beacons])
 
 
 def _crafts(machine, r) -> bool:
@@ -186,8 +217,9 @@ def _input_face(machine) -> int:
 
 def _build(p: Plan, pole: str) -> Blueprint:
     s, n = p.size, p.machines
-    pitch = s + p.gap
-    length = n * pitch
+    bs = rates.size(BEACON) if p.beacons else 0  # beacon rows before each machine and after the last
+    pitch = s + p.gap + bs
+    length = n * pitch + bs
     belts = 2 if p.far else 1
     o = belts - 1
     pipe_x = o + 2 + s
@@ -232,8 +264,12 @@ def _build(p: Plan, pole: str) -> Blueprint:
     used = sum(k for _, k in p.feeders) + p.output[1]
     for side, c in columns.items():
         west = c["west"]
-        for m in range(n):
-            y0 = m * pitch
+        spots, beacons = _spots(s, bs, p.gap, n, [c["machine"]])
+        for x, y in beacons:
+            bp.entities.append(BEACON, tile_position=(x, y))
+            bp.entities[-1].request_modules(p.beacons, range(entities.raw[BEACON]["module_slots"]))
+            powered.append((x + bs / 2, y + bs / 2, rates.half_width(BEACON)))
+        for _, y0 in spots:
             bp.entities.append(p.machine, tile_position=(c["machine"], y0), direction=turn[side],
                                recipe=p.recipe.name)
             rates.request_modules(bp.entities[-1], p.machine, p.recipe, p.modules)
@@ -247,7 +283,12 @@ def _build(p: Plan, pole: str) -> Blueprint:
                     powered.append((c["ins"] + 0.5, y0 + row + 0.5, rates.half_width(inserter)))
                     row += 1
 
-    free = {c["ins"]: [m * pitch + r for m in range(n) for r in range(used, pitch)] for c in columns.values()}
+    if bs:
+        machines, beacons = _spots(s, bs, p.gap, n, [c["machine"] for c in columns.values()])
+        if any(_reaching(p.machine, m, beacons) != p.beacons_per_machine for m in machines):
+            raise ValueError(f"not every machine takes {p.beacons_per_machine} beacons")
+    taken = {m * pitch + bs + r for m in range(n) for r in range(used)}
+    free = {c["ins"]: [y for y in range(length) if y not in taken] for c in columns.values()}
     for x, y in layout.poles(pole, powered, free):
         bp.entities.append(pole, tile_position=(x, y))
     bp.generate_power_connections()
@@ -267,7 +308,8 @@ def flow_tests(**params):
         for lane, item in zip(("left", "right"), p.far * 2 if len(p.far) == 1 else p.far):
             feeds.append(Feed(f"in2_{side}", lane, item))
     total = p.sides * p.per_side
-    length = p.machines * (p.size + p.gap)
+    bs = rates.size(BEACON) if p.beacons else 0
+    length = p.machines * (p.size + p.gap + bs) + bs
     return [Flow(f"{p.machines * p.sides} machines: {total:g} {p.product}/s", feeds,
                  [f"out_{side}" for side in SIDES[:p.sides]], {p.product: total},
                  warmup=rates.warmup_seconds(p.belt, length, 1 / p.crafts),
