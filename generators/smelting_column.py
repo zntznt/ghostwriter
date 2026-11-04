@@ -57,6 +57,7 @@ def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", si
     if len(r.ingredients) != 1 or len(r.results) != 1:
         raise ValueError(f"{recipe}: a column belt carries one ore and one product")
     crafts = rates.crafts_per_second(furnace, r, modules)
+    r = rates.made(furnace, r, modules)
     ((ore, ore_amount),), ((product, product_amount),) = r.ingredients.items(), r.results.items()
     burner = not rates.electric(furnace)
     lane = rates.lane_rate(belt)

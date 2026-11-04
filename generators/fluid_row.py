@@ -91,6 +91,7 @@ def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, mach
         raise ValueError(f"{recipe}: a row carries one product")
     machine = machine or next((m for m in MACHINES if _crafts(m, r)), MACHINES[0])
     crafts = rates.crafts_per_second(machine, r, modules)
+    r = rates.made(machine, r, modules)
     _input_face(machine)  # refuses machines whose fluid inputs aren't on one face
     (product, out), = r.results.items()
     (fluid,) = r.fluids

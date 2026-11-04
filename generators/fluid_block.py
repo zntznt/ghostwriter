@@ -86,6 +86,8 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
     if not machine:
         raise ValueError(f"{recipe}: no chemical plant or refinery crafts it")
     crafts = rates.crafts_per_second(machine, rates.recipe_any(recipe), modules)
+    out = rates.made(machine, rates.recipe_any(recipe), modules).results  # per craft, with productivity
+    fluids_out, items_out = [(f, out[f]) for f, _ in fluids_out], [(i, out[i]) for i, _ in items_out]
     s = rates.size(machine)
 
     # Fluid boxes take the recipe's fluids in order: inputs to input boxes, outputs to output boxes.
@@ -267,7 +269,8 @@ def flow_tests(**params):
     # What the game's statistics count: a result's ignored_by_stats part (heavy oil coal
     # liquefaction takes back) isn't.
     ignored = {r["name"]: r.get("ignored_by_stats", 0) for r in recipes.raw[p.recipe]["results"]}
-    expect = {o: p.rate(o) * (1 - ignored.get(o, 0) / p.outputs[o]) for o in p.outputs}
+    expect = {o: p.rate(o) - p.machines * p.crafts * ignored.get(o, 0) if ignored.get(o) else p.rate(o)
+              for o in p.outputs}
     length = rates.size(p.machine) + 8
     return [Flow(f"{p.machines} {p.machine}: " + ", ".join(f"{v:g} {k}/s" for k, v in expect.items()),
                  feeds, drains, expect, fluids=fluids,

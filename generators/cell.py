@@ -75,6 +75,7 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
     pr, cr = rates.recipe(producer), rates.recipe(recipe)
     if len(pr.results) != 1 or len(cr.results) != 1:
         raise ValueError(f"{producer} into {recipe}: a cell's machines make one product each")
+    pr, cr = rates.made(machine, pr, modules), rates.made(machine, cr, modules)
     (item, made), = pr.results.items()
     (product, out), = cr.results.items()
     if item not in cr.ingredients:
@@ -203,10 +204,11 @@ def _handover(flow: float, research="") -> tuple[str, int]:
     return best[1], best[0][0]
 
 
-def ingredients(recipe="electronic-circuit", producer="copper-cable", **_) -> dict[str, float]:
+def ingredients(recipe="electronic-circuit", producer="copper-cable", machine="assembling-machine-2", modules="",
+                **_) -> dict[str, float]:
     """What a cell takes from its input belt per consumer craft: the consumer's other
     ingredients, and the producer's for the item handed over."""
-    pr, cr = rates.recipe(producer), rates.recipe(recipe)
+    pr, cr = rates.made(machine, rates.recipe(producer), modules), rates.recipe(recipe)
     (item, made), = pr.results.items()
     got = Counter({i: a for i, a in cr.ingredients.items() if i != item})
     got.update({i: a * cr.ingredients[item] / made for i, a in pr.ingredients.items()})

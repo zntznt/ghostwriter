@@ -866,15 +866,93 @@ class Modules(unittest.TestCase):
             self.assertEqual(rates.crafts_per_second("assembling-machine-3", gear, "speed-module-3"), 2.5)
             self.assertEqual(rates.module_slots("assembling-machine-3", "speed-module-3", gear), 0)
 
-    def test_only_speed_and_efficiency_modules(self):
-        for name, why in (("productivity-module", "productivity"), ("iron-plate", "not a module"),
-                          ("nope", "unknown")):
+    def test_only_modules(self):
+        for name, why in (("iron-plate", "not a module"), ("nope", "unknown")):
             with self.subTest(name), self.assertRaisesRegex(ValueError, why):
                 rates.check_modules(name)
-        for name in ("speed-module", "efficiency-module-3", ""):
+        for name in ("speed-module", "efficiency-module-3", "productivity-module-3", ""):
             rates.check_modules(name)
-        with self.assertRaisesRegex(ValueError, "productivity"):
-            assembly_row.plan(modules="productivity-module-3")
+
+    def test_productivity_makes_more_per_craft(self):
+        gear, inserter = rates.recipe("iron-gear-wheel"), rates.recipe("inserter")
+        self.assertEqual(rates.made("assembling-machine-3", gear, "productivity-module-3").results,
+                         {"iron-gear-wheel": 1.4})
+        self.assertEqual(rates.made("assembling-machine-3", gear, "productivity-module-3").ingredients,
+                         gear.ingredients)
+        self.assertIs(rates.made("assembling-machine-3", gear, ""), gear)
+        self.assertIs(rates.made("assembling-machine-3", gear, "speed-module-3"), gear)
+        self.assertEqual(rates.productivity("assembling-machine-2", gear, "productivity-module"), 0.08)
+        self.assertEqual(rates.module_slots("assembling-machine-3", "productivity-module-3", inserter), 0)
+        self.assertEqual(rates.module_slots("assembling-machine-3", "speed-module-3", inserter), 4)
+        self.assertIs(rates.made("assembling-machine-3", inserter, "productivity-module-3"), inserter)
+        self.assertEqual(rates.crafts_per_second("assembling-machine-3", inserter, "productivity-module-3"), 2.5)
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", gear, "productivity-module-3"),
+                               1.25 * (1 - 4 * 0.15) / 0.5)
+
+    def test_productivity_skips_what_the_recipe_takes_back(self):
+        coal = rates.recipe_any("coal-liquefaction")
+        made = rates.made("oil-refinery", coal, "productivity-module-3").results
+        self.assertAlmostEqual(made["heavy-oil"], 90 + 0.3 * (90 - 25))
+        self.assertAlmostEqual(made["light-oil"], 20 * 1.3)
+        (flow,) = fluid_block.flow_tests(recipe="coal-liquefaction", modules="productivity-module-3")
+        p = fluid_block.plan(recipe="coal-liquefaction", modules="productivity-module-3")
+        self.assertAlmostEqual(flow.expect["heavy-oil"], p.machines * p.crafts * (90 - 25) * 1.3)
+
+    def test_rows_make_more_with_productivity(self):
+        plain = assembly_row.plan(machine="assembling-machine-3", machines=2)
+        prod = assembly_row.plan(machine="assembling-machine-3", machines=2, modules="productivity-module")
+        self.assertAlmostEqual(prod.per_side, prod.crafts * 2 * 1.16)
+        self.assertAlmostEqual(prod.crafts, plain.crafts * 0.8)
+        bp = row(machine="assembling-machine-3", machines=2, modules="productivity-module")
+        machines = [e for e in bp["entities"] if e["name"] == "assembling-machine-3"]
+        self.assertTrue(machines and all(module_slots_filled(e) == {"productivity-module": 4} for e in machines))
+        (flow,) = assembly_row.flow_tests(machine="assembling-machine-3", machines=2, modules="productivity-module")
+        self.assertAlmostEqual(flow.expect["iron-gear-wheel"], 2 * prod.per_side)
+        bp = row(recipe="pipe", machine="assembling-machine-3", machines=2, modules="productivity-module")
+        self.assertFalse(any("items" in e for e in bp["entities"]))
+        c = cell.plan(modules="productivity-module")
+        self.assertAlmostEqual(c.per_side, c.chain.count("C") * c.c_crafts * 1.08)
+        furnace = smelting_column.plan("electric-furnace", modules="productivity-module")
+        self.assertAlmostEqual(furnace.product_rate, furnace.ore_rate * 1.08)
+        self.assertAlmostEqual(fluid_row.plan(modules="productivity-module").per_side,
+                               fluid_row.plan(modules="productivity-module").crafts
+                               * fluid_row.plan(modules="productivity-module").machines * 2 * 1.12)
+
+    def test_the_planner_needs_less_with_productivity(self):
+        kw = {"machine": "assembling-machine-3"}
+        plain, plain_in = production.solve("automation-science-pack", 1, **kw)
+        prod, prod_in = production.solve("automation-science-pack", 1, modules="productivity-module-3", **kw)
+        gear = {s.item: s for s in plain}["iron-gear-wheel"], {s.item: s for s in prod}["iron-gear-wheel"]
+        pack = {s.item: s for s in prod}["automation-science-pack"]
+        if rates.module_slots(pack.params["machine"], pack.params.get("modules", "")):
+            self.assertAlmostEqual(gear[1].demand, 1 / 1.4)
+        self.assertLess(gear[1].demand, gear[0].demand)
+        for plate in ("iron-plate", "copper-plate"):
+            self.assertLess(prod_in[plate], plain_in[plate])
+
+    def test_productivity_plans_make_what_they_need(self):
+        for item, kw in (("automation-science-pack", {"machine": "assembling-machine-3"}),
+                         ("electronic-circuit", {"smelt": 1, "furnace": "electric-furnace"}),
+                         ("plastic-bar", {"oil": "advanced"})):
+            with self.subTest(item):
+                steps, inputs = production.solve(item, 2, modules="productivity-module-3", **kw)
+                made = dict.fromkeys([*(s.item for s in steps), *inputs], 0.0)
+                used = dict.fromkeys(made, 0.0)
+                used[item] = 2
+                for s in steps:
+                    r = rates.recipe_any(s.params["recipe"])
+                    m = production._made(s, r)
+                    crafts = s.demand / m.results[s.item] if s.item in m.results else s.demand
+                    for k, v in m.results.items():
+                        made[k] = made.get(k, 0) + crafts * v
+                    for k, v in [*r.ingredients.items(), *r.fluids.items()]:
+                        used[k] = used.get(k, 0) + crafts * v
+                    if s.item in m.results:
+                        self.assertGreaterEqual(s.rows * s.rate, s.demand - 1e-9, s)
+                for k, v in inputs.items():
+                    made[k] += v
+                for k in used:
+                    self.assertGreaterEqual(made.get(k, 0), used[k] - 1e-6, k)
 
     def test_every_crafting_machine_gets_modules(self):
         from draftsman.data import entities as protos
@@ -930,8 +1008,6 @@ class Modules(unittest.TestCase):
         self.assertEqual((fused.generator, fused.params["modules"]), ("cell", "speed-module"))
         oil, _ = production.solve("plastic-bar", 5, oil="advanced", modules="speed-module")
         self.assertTrue(all(s.params.get("modules") == "speed-module" for s in oil), oil)
-        with self.assertRaisesRegex(ValueError, "productivity"):
-            production.solve("electronic-circuit", 1, modules="productivity-module")
 
     def test_modules_never_cost_machines(self):
         # A sped-up machine can want more inserters than fit; its tier then runs without
@@ -952,6 +1028,20 @@ class Modules(unittest.TestCase):
         bp = factory.build("automation-science-pack", 1, layout="bus", modules="speed-module").to_dict()["blueprint"]
         machines = [e for e in bp["entities"] if e["name"] == "assembling-machine-2"]
         self.assertTrue(machines and all(module_slots_filled(e) == {"speed-module": 2} for e in machines))
+
+    def test_factory_feeds_less_with_productivity(self):
+        def demand(modules):
+            got = {}
+            for r in factory.rows_and_lines("automation-science-pack", 1, machine="assembling-machine-3",
+                                            modules=modules)["rows"]:
+                for port in r.ports:
+                    for k, v in port.demand.items():
+                        got[k] = got.get(k, 0) + v
+            return got
+
+        plain, prod = demand(""), demand("productivity-module-3")
+        for plate in ("iron-plate", "copper-plate"):
+            self.assertLess(prod[plate], plain[plate])
 
 
 class Factory(unittest.TestCase):

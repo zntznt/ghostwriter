@@ -73,6 +73,7 @@ def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transp
     if len(r.results) != 1:
         raise ValueError(f"{recipe}: a row carries one product")
     crafts = rates.crafts_per_second(machine, r, modules)
+    r = rates.made(machine, r, modules)
     (product, out_amount), = r.results.items()
     lane = rates.lane_rate(belt)
     s = rates.size(machine)
@@ -157,8 +158,8 @@ def plan(pole="medium-electric-pole", **params) -> Plan:
 def build(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,
           machines=0, inserter="", input_belts=0, pole="medium-electric-pole", research="", modules="") -> Blueprint:
     """research: inserter research the row is sized for (e.g. inserter-capacity-bonus=7), at
-    rates measured in game at it; none by default. modules: a speed or efficiency module in every
-    machine's slots, the row sized for its speed."""
+    rates measured in game at it; none by default. modules: a module in every machine's
+    slots, the row sized for its speed and productivity."""
     p = plan(pole, recipe=recipe, machine=machine, belt=belt, sides=sides, machines=machines,
              inserter=inserter, input_belts=input_belts, research=research, modules=modules)
     return _build(p, pole)
