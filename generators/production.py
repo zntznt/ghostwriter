@@ -60,13 +60,15 @@ class Step:
 
 
 def solve(item: str, rate: float, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, research="") -> tuple[list[Step], dict[str, float]]:
+          furnace="steel-furnace", raw="", oil=0, research="", modules="") -> tuple[list[Step], dict[str, float]]:
     """Steps in build order (ingredients first), and the inputs to supply (item -> items/s,
     fluid -> units/s). A negative input is a surplus the factory makes but doesn't use.
     research: inserter research the rows are sized for (rates measured at it); it rides in
-    the params of every row whose inserters it sizes, and isn't there without it."""
+    the params of every row whose inserters it sizes, and isn't there without it. modules: a
+    speed or efficiency module in every machine's slots; it rides in every row's params the same way."""
     if machine not in MACHINES:
         raise ValueError(f"machine is one of {MACHINES}")
+    rates.check_modules(modules)
     oil = oil or 0  # the CLI's oil= arrives as ""
     if oil not in (0, *RECIPES):
         raise ValueError(f"oil is one of 0, {', '.join(map(str, RECIPES))}, not {oil!r}")
@@ -98,10 +100,12 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
                 demand[ingredient] += crafts * amount
 
     extra = {"research": rates.research_key(research)} if rates.research_key(research) else {}
+    if modules:
+        extra["modules"] = modules
     steps = [_size(i, demand[i], how[i], belt, furnace, tiers, extra) for i in order if how[i] and how[i][1]]
     inputs = {i: demand[i] for i in order if not how[i]}
     if any((how.get(f) or (None,))[0] == "oil" and demand[f] for f in (*OIL, "solid-fuel")):
-        oil_steps, oil_inputs = _oil({f: demand.get(f, 0) for f in (*OIL, "solid-fuel")}, oil)
+        oil_steps, oil_inputs = _oil({f: demand.get(f, 0) for f in (*OIL, "solid-fuel")}, oil, modules)
         oil_steps = [_size("solid-fuel", s.demand, ("fluid_row", rates.recipe(s.item, fluids=True)), belt,
                            furnace, tiers, extra) if s.item in SOLID_FUEL.values() else s for s in oil_steps]
         steps = oil_steps + steps
@@ -110,13 +114,13 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     return steps, inputs
 
 
-def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
+def _oil(need: dict[str, float], oil=1, modules="") -> tuple[list[Step], dict[str, float]]:
     """Oil processing and cracking for heavy oil, light oil and petroleum gas per second, and
     solid fuel (need["solid-fuel"], optional) from one of SOLID_FUEL: from RECIPES[oil], the
     fewest measured tiles (a mixed-integer program over crafts, machines and which blocks
     exist), ties to less crude oil. Heavy oil, light oil and solid fuel are made exactly;
     petroleum gas left over is reported as a negative input. A solid fuel step's demand is
-    solid fuel per second, for the caller to size as a fluid row."""
+    solid fuel per second, for the caller to size as a fluid row. modules: in every machine."""
     import numpy as np
     from scipy.optimize import Bounds, LinearConstraint, milp
 
@@ -129,8 +133,9 @@ def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
     names = (*RECIPES[oil], *(SOLID_FUEL.values() if fuel else ()))
     n = len(names)
     rs = [rates.recipe_any(r) for r in names]
-    per_machine = np.array([(fluid_row if r in SOLID_FUEL.values() else fluid_block).plan(recipe=r).crafts
-                            for r in names])
+    with_modules = {"modules": modules} if modules else {}
+    per_machine = np.array([(fluid_row if r in SOLID_FUEL.values() else fluid_block).plan(recipe=r, **with_modules)
+                            .crafts for r in names])
     per, fixed = zip(*map(_tiles, names))
     feed = [r.fluids.get("crude-oil", 0) for r in rs]
     made = (*OIL, "solid-fuel") if fuel else OIL
@@ -167,8 +172,8 @@ def _oil(need: dict[str, float], oil=1) -> tuple[list[Step], dict[str, float]]:
         if name in SOLID_FUEL.values():
             steps.append(Step(name, float(c) * r.results["solid-fuel"], "fluid_row", {"recipe": name}, 1, 0.0))
         else:
-            steps.append(Step(name, float(c), "fluid_block", {"recipe": name, "machines": int(m)}, 1,
-                              float(m * p)))
+            steps.append(Step(name, float(c), "fluid_block", {"recipe": name, "machines": int(m), **with_modules},
+                              1, float(m * p)))
         for k, amount in [*r.fluids.items(), *r.ingredients.items()]:
             if k not in OIL:
                 inputs[k] = inputs.get(k, 0) + float(c) * amount
@@ -256,7 +261,7 @@ def _how(item, tiers, smelt, furnace, forced_raw, oil=0):
 def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     """Rows for one item, in the fastest tier whose row can be fed: the fewest
     full-size rows, then just enough machines in each. extra: params every row but
-    a smelting column takes (research)."""
+    a smelting column takes (research; it takes modules)."""
     kind, r = how
     extra = extra or {}
     need = demand * SLACK
@@ -269,7 +274,8 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     errors = []
     machines = {"assembly_row": tiers, "fluid_row": _fluid_machines(tiers)}.get(kind, ())
     options = ([{"recipe": r.name, "machine": m, "belt": belt, **extra} for m in machines if _crafts(m, r)]
-               if kind != "smelting_column" else [{"recipe": r.name, "furnace": furnace, "belt": belt}])
+               if kind != "smelting_column" else [{"recipe": r.name, "furnace": furnace, "belt": belt,
+                                                   **{k: v for k, v in extra.items() if k == "modules"}}])
     count_key = "furnaces" if kind == "smelting_column" else "machines"
     for base in options:
         try:
@@ -277,7 +283,7 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
             rows = math.ceil(need / full - 1e-9)
             share = need / rows
             machine = base.get("machine") or base["furnace"]
-            per_machine = rates.crafts_per_second(machine, r) * r.results[item]
+            per_machine = rates.crafts_per_second(machine, r, base.get("modules", "")) * r.results[item]
             if share <= per_machine + 1e-9:
                 params = {**base, "sides": 1, count_key: 1}
             else:
@@ -370,19 +376,20 @@ def _fuse_shared(steps: list[Step], item: str, belt: str, users: dict) -> list[S
             out.append(s)
         elif left[id(s)] > 1e-9 * max(1.0, s.demand):  # the rest, made the old way
             out.append(_size(s.item, left[id(s)], ("assembly_row", rates.recipe(s.item, fluids=True)),
-                             s.params["belt"], None, [s.params["machine"]], _research(s)))
+                             s.params["belt"], None, [s.params["machine"]], _extra(s)))
     return out
 
 
-def _research(s: Step) -> dict:
-    return {"research": s.params["research"]} if "research" in s.params else {}
+def _extra(s: Step) -> dict:
+    """The research and modules a step's rows take, as solve() put them."""
+    return {k: s.params[k] for k in ("research", "modules") if k in s.params}
 
 
 def _cell_step(p: Step, c: Step, belt: str) -> Step:
     """One cell row type sized for the consumer's demand, as _size sizes rows: the fewest
     full-size cells, then just enough consumers in each, in the consumer's machine."""
     base = {"recipe": c.params["recipe"], "producer": p.params["recipe"], "machine": c.params["machine"], "belt": belt,
-            **_research(c)}
+            **_extra(c)}
     need = c.demand * SLACK
     full = _rated("cell", {**base, "sides": 2})
     rows = math.ceil(need / full - 1e-9)
@@ -397,15 +404,15 @@ def _cell_step(p: Step, c: Step, belt: str) -> Step:
 
 
 def parts(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, research="") -> list[tuple[str, dict]]:
+          furnace="steel-furnace", raw="", oil=0, research="", modules="") -> list[tuple[str, dict]]:
     """(generator, params) of each row, in book order."""
-    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research)
+    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules)
     return [(s.generator, s.params) for s in steps for _ in range(s.rows)]
 
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, research="") -> BlueprintBook:
-    steps, inputs = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research)
+          furnace="steel-furnace", raw="", oil=0, research="", modules="") -> BlueprintBook:
+    steps, inputs = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules)
     book = BlueprintBook()
     book.label = f"Production: {rate:g} {item}/s"
     supply = ", ".join(f"{v:.3g} {k}/s" for k, v in inputs.items() if v > 0) or "nothing"
@@ -434,7 +441,7 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
 
 
 def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-                furnace="steel-furnace", raw="", oil=0, research="") -> tuple[dict, list]:
+                furnace="steel-furnace", raw="", oil=0, research="", modules="") -> tuple[dict, list]:
     """The whole book as one blueprint and one flow test: every row built side by
     side, inputs the book supplies fed without limit, and everything the book
     makes passed from its producers to its consumers through a pool. The target
@@ -443,7 +450,7 @@ def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2
 
     from validator.flow import Flow
 
-    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research)
+    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules)
     rows = []  # (blueprint data, ids, flow) per row
     for s in steps:
         gen = GENERATORS[s.generator]

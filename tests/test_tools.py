@@ -840,6 +840,107 @@ def footprint(e) -> list[tuple[int, int]]:
     return [(x0 + dx, y0 + dy) for dx in range(w) for dy in range(h)]
 
 
+def module_slots_filled(e: dict) -> dict[str, int]:
+    """Module -> slots a blueprint entity's item requests fill."""
+    return {r["id"]["name"]: len(r["items"]["in_inventory"]) for r in e.get("items", [])}
+
+
+class Modules(unittest.TestCase):
+    def test_speed_modules_speed_machines_with_slots(self):
+        gear = rates.recipe("iron-gear-wheel")
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", gear, "speed-module-3"), 7.5)
+        self.assertEqual(rates.crafts_per_second("assembling-machine-3", gear, ""), 2.5)
+        self.assertEqual(rates.crafts_per_second("assembling-machine-3", gear, "efficiency-module"), 2.5)
+        self.assertEqual(rates.crafts_per_second("assembling-machine-1", gear, "speed-module-3"), 1)  # no slots
+        self.assertEqual(rates.module_slots("assembling-machine-3", "speed-module"), 4)
+        self.assertEqual(rates.module_slots("assembling-machine-3"), 0)
+        self.assertEqual(rates.module_slots("stone-furnace", "speed-module"), 0)
+
+    def test_a_recipe_without_speed_takes_no_modules(self):
+        from unittest import mock
+
+        from draftsman.data import recipes
+
+        gear = rates.recipe("iron-gear-wheel")
+        with mock.patch.dict(recipes.raw["iron-gear-wheel"], {"allow_speed": False}):
+            self.assertEqual(rates.crafts_per_second("assembling-machine-3", gear, "speed-module-3"), 2.5)
+            self.assertEqual(rates.module_slots("assembling-machine-3", "speed-module-3", gear), 0)
+
+    def test_only_speed_and_efficiency_modules(self):
+        for name, why in (("productivity-module", "productivity"), ("iron-plate", "not a module"),
+                          ("nope", "unknown")):
+            with self.subTest(name), self.assertRaisesRegex(ValueError, why):
+                rates.check_modules(name)
+        for name in ("speed-module", "efficiency-module-3", ""):
+            rates.check_modules(name)
+        with self.assertRaisesRegex(ValueError, "productivity"):
+            assembly_row.plan(modules="productivity-module-3")
+
+    def test_every_crafting_machine_gets_modules(self):
+        from draftsman.data import entities as protos
+
+        cases = [(row, {}, "assembling-machine-2"),
+                 (cell_bp, {}, "assembling-machine-2"),
+                 (fluid, {}, "chemical-plant"),
+                 (block, {}, "chemical-plant"),
+                 (block, {"recipe": "advanced-oil-processing"}, "oil-refinery"),
+                 (column, {"furnace": "electric-furnace"}, "electric-furnace")]
+        for build, params, machine in cases:
+            with self.subTest(machine=machine, **params):
+                bp = build(**params, modules="speed-module")
+                machines = [e for e in bp["entities"] if e["name"] == machine]
+                self.assertTrue(machines)
+                slots = protos.raw[machine]["module_slots"]
+                self.assertTrue(all(module_slots_filled(e) == {"speed-module": slots} for e in machines))
+                self.assertEqual(check({"blueprint": bp}), [])
+                self.assertFalse(any("items" in e for e in build(**params)["entities"]))
+        # No slots, no modules.
+        stone = column(modules="speed-module")
+        self.assertFalse(any("items" in e for e in stone["entities"]))
+
+    def test_rows_are_sized_with_the_speed(self):
+        self.assertEqual(smelting_column.plan("electric-furnace").limit, 12)
+        self.assertEqual(smelting_column.plan("electric-furnace", modules="speed-module").limit, 8)  # 7.5 / 0.875
+        fast = assembly_row.plan(modules="speed-module")
+        self.assertAlmostEqual(fast.crafts, 1.5 * 1.4)
+        self.assertAlmostEqual(cell.plan(modules="speed-module").c_crafts, cell.plan().c_crafts * 1.4)
+        self.assertAlmostEqual(fluid_row.plan(modules="speed-module").crafts, fluid_row.plan().crafts * 1.6)
+        (flow,) = assembly_row.flow_tests(modules="speed-module")
+        self.assertAlmostEqual(flow.expect[fast.product], fast.sides * fast.per_side)
+
+    def test_fluid_blocks_craft_faster(self):
+        plain = fluid_block.plan()
+        self.assertEqual(plain.crafts, 1 / 2)  # chemical plant, heavy oil cracking in 2 s
+        self.assertEqual(fluid_block.plan(modules="").crafts, plain.crafts)
+        self.assertAlmostEqual(fluid_block.plan(modules="speed-module").crafts, plain.crafts * 1.6)
+
+    def test_the_planner_sizes_rows_with_modules(self):
+        def machines(steps):
+            return sum(s.rows * s.params["sides"] * s.params["machines"] for s in steps)
+
+        plain, _ = production.solve("automation-science-pack", 1, machine="assembling-machine-3")
+        fast, _ = production.solve("automation-science-pack", 1, machine="assembling-machine-3", modules="speed-module-3")
+        self.assertLess(machines(fast), machines(plain))
+        self.assertTrue(all("modules" not in s.params for s in plain))
+        self.assertTrue(all(s.params["modules"] == "speed-module-3" for s in fast))
+        smelted, _ = production.solve("iron-gear-wheel", 5, smelt=1, furnace="electric-furnace", modules="speed-module")
+        self.assertTrue(all(s.params["modules"] == "speed-module" for s in smelted))
+        red, _ = production.solve("automation-science-pack", 1, modules="speed-module")
+        (fused,) = production.fuse(red, "automation-science-pack", "transport-belt")
+        self.assertEqual((fused.generator, fused.params["modules"]), ("cell", "speed-module"))
+        oil, _ = production.solve("plastic-bar", 5, oil="advanced", modules="speed-module")
+        self.assertTrue(all(s.params.get("modules") == "speed-module" for s in oil), oil)
+        with self.assertRaisesRegex(ValueError, "productivity"):
+            production.solve("electronic-circuit", 1, modules="productivity-module")
+
+    def test_factory_threads_modules(self):
+        p = factory.rows_and_lines("electronic-circuit", 5, modules="speed-module")
+        self.assertTrue(all(r.step.params["modules"] == "speed-module" for r in p["rows"]))
+        bp = factory.build("electronic-circuit", 5, layout="bus", modules="speed-module").to_dict()["blueprint"]
+        machines = [e for e in bp["entities"] if e["name"] == "assembling-machine-2"]
+        self.assertTrue(machines and all(module_slots_filled(e) == {"speed-module": 2} for e in machines))
+
+
 class Factory(unittest.TestCase):
     def test_rows_with_cells_take_the_producers_ingredients(self):
         # Fused, the circuits' rows take copper plates and iron; no cable row or line is left.

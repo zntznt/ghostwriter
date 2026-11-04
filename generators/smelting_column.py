@@ -49,13 +49,14 @@ class Plan:
                    ore_lanes * self.lane * self.product_rate / self.ore_rate)
 
 
-def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, **_) -> Plan:
+def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, modules="",
+         **_) -> Plan:
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
     r = rates.recipe(recipe)
     if len(r.ingredients) != 1 or len(r.results) != 1:
         raise ValueError(f"{recipe}: a column belt carries one ore and one product")
-    crafts = rates.crafts_per_second(furnace, r)
+    crafts = rates.crafts_per_second(furnace, r, modules)
     ((ore, ore_amount),), ((product, product_amount),) = r.ingredients.items(), r.results.items()
     burner = not rates.electric(furnace)
     lane = rates.lane_rate(belt)
@@ -67,8 +68,8 @@ def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", si
 
 
 def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", inserter="inserter",
-          pole="medium-electric-pole", sides=2, furnaces=0) -> Blueprint:
-    p = plan(furnace, recipe, belt, sides, furnaces)
+          pole="medium-electric-pole", sides=2, furnaces=0, modules="") -> Blueprint:
+    p = plan(furnace, recipe, belt, sides, furnaces, modules)
     s, n = p.size, p.furnaces
     length = n * s
     ins_offset = (s - 1) // 2  # inserter row within each furnace's span; the rest is free for poles
@@ -106,6 +107,7 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
         for k in range(n):
             y = k * s
             bp.entities.append(furnace, tile_position=(furnace_x, y))
+            rates.request_modules(bp.entities[-1], furnace, rates.recipe(recipe), modules)
             if not p.burner:
                 powered.append((furnace_x + s / 2, y + s / 2, rates.half_width(furnace)))
             # Input takes from the ore belt, output drops toward the plate belt.
@@ -121,10 +123,11 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
     return bp
 
 
-def flow_tests(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, **_):
+def flow_tests(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, modules="",
+               **_):
     from validator.flow import Feed, Flow
 
-    p = plan(furnace, recipe, belt, sides, furnaces)
+    p = plan(furnace, recipe, belt, sides, furnaces, modules)
     feeds = []
     for side in LANES[:sides]:
         fuel = "coal" if p.burner else p.ore
