@@ -15,6 +15,10 @@ the fewest inserters, then the cheapest, keeping a 15% margin. They sit in
 the column between belt and machine; poles take the column tiles left over,
 or a one-row gap after each machine when there are none.
 
+With beacons, each machine column runs beacon, machine, beacon, ... beacon:
+every machine between two beacons, which don't reach across the product belt;
+the inserter-column tiles beside the beacons are free for poles.
+
 `machines` (per side) defaults to the most the belts carry. The description
 names each belt lane's item. Recipes with fluids are refused.
 """
@@ -25,6 +29,7 @@ from itertools import permutations
 
 from draftsman.blueprintable import Blueprint
 from draftsman.constants import Direction
+from draftsman.data import entities
 
 from tools import layout, rates
 
@@ -32,6 +37,8 @@ MARGIN = 0.85  # use at most this share of an inserter's measured rate
 REGULAR = ("inserter", "fast-inserter")
 LONG = "long-handed-inserter"
 LANES = ("left", "right")
+BEACON = "beacon"
+BEACONS_PER_MACHINE = 2  # one before and one after it in its column
 
 
 @dataclass
@@ -50,6 +57,7 @@ class Plan:
     size: int  # machine footprint
     gap: int = 0  # empty rows after each machine, for poles when the columns are full
     modules: str = ""  # in every machine's slots
+    beacons: str = ""  # in every beacon's slots; no beacons without
 
     @property
     def per_side(self) -> float:
@@ -65,14 +73,14 @@ class Plan:
 
 
 def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,
-          machines=0, inserter="", input_belts=0, research="", modules="") -> list[Plan]:
+          machines=0, inserter="", input_belts=0, research="", modules="", beacons="") -> list[Plan]:
     """Input layouts that fit the belts and inserters, best first."""
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
     r = rates.recipe(recipe)
     if len(r.results) != 1:
         raise ValueError(f"{recipe}: a row carries one product")
-    crafts = rates.crafts_per_second(machine, r, modules)
+    crafts = rates.crafts_per_second(machine, r, modules, beacons, BEACONS_PER_MACHINE)
     r = rates.made(machine, r, modules)
     (product, out_amount), = r.results.items()
     lane = rates.lane_rate(belt)
@@ -108,7 +116,7 @@ def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transp
             fewest = need if fewest is None else min(fewest, need)
             continue
         candidates.append(Plan(r, machine, belt, sides, 0, limit, crafts, product, lanes, feeders, output, s,
-                               modules=modules))
+                               modules=modules, beacons=beacons))
     if fewest is not None:
         why.add(f"one machine needs at least {fewest} inserters on a side where {s} fit")
     if not candidates:
@@ -156,19 +164,23 @@ def plan(pole="medium-electric-pole", **params) -> Plan:
 
 
 def build(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,
-          machines=0, inserter="", input_belts=0, pole="medium-electric-pole", research="", modules="") -> Blueprint:
+          machines=0, inserter="", input_belts=0, pole="medium-electric-pole", research="", modules="",
+          beacons="") -> Blueprint:
     """research: inserter research the row is sized for (e.g. inserter-capacity-bonus=7), at
     rates measured in game at it; none by default. modules: a module in every machine's
-    slots, the row sized for its speed and productivity."""
+    slots, the row sized for its speed and productivity. beacons: a module in every slot of
+    beacons between the machines, the row sized for their speed."""
     p = plan(pole, recipe=recipe, machine=machine, belt=belt, sides=sides, machines=machines,
-             inserter=inserter, input_belts=input_belts, research=research, modules=modules)
+             inserter=inserter, input_belts=input_belts, research=research, modules=modules,
+             beacons=beacons)
     return _build(p, pole)
 
 
 def _build(p: Plan, pole: str) -> Blueprint:
     s, n, nb = p.size, p.machines, len(p.lanes)
-    pitch = s + p.gap
-    length = n * pitch
+    bs = rates.size(BEACON) if p.beacons else 0  # beacon rows before each machine and after the last
+    pitch = s + p.gap + bs
+    length = n * pitch + bs
     o = nb - 1
     # Columns from the west: [in2,] in1, inserters, machine, out, product (then mirrored).
     product_x = o + 3 + s
@@ -205,8 +217,12 @@ def _build(p: Plan, pole: str) -> Blueprint:
     used_out = p.output[1]
     for side, c in columns.items():
         west = side == "left"
+        for b in range(n + 1 if bs else 0):
+            bp.entities.append(BEACON, tile_position=(c["machine"], b * pitch))
+            bp.entities[-1].request_modules(p.beacons, range(entities.raw[BEACON]["module_slots"]))
+            powered.append((c["machine"] + bs / 2, b * pitch + bs / 2, rates.half_width(BEACON)))
         for m in range(n):
-            y0 = m * pitch
+            y0 = m * pitch + bs
             bp.entities.append(p.machine, tile_position=(c["machine"], y0), recipe=p.recipe.name)
             rates.request_modules(bp.entities[-1], p.machine, p.recipe, p.modules)
             powered.append((c["machine"] + s / 2, y0 + s / 2, rates.half_width(p.machine)))
@@ -223,8 +239,9 @@ def _build(p: Plan, pole: str) -> Blueprint:
 
     free = {}
     for c in columns.values():
-        free[c["ins"]] = [m * pitch + r for m in range(n) for r in range(used_in, pitch)]
-        free[c["out"]] = [m * pitch + r for m in range(n) for r in range(used_out, pitch)]
+        for x, used in ((c["ins"], used_in), (c["out"], used_out)):
+            taken = {m * pitch + bs + r for m in range(n) for r in range(used)}
+            free[x] = [y for y in range(length) if y not in taken]
     for x, y in layout.poles(pole, powered, free):
         bp.entities.append(pole, tile_position=(x, y))
     bp.generate_power_connections()

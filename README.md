@@ -14,6 +14,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m tools.bp gen production item=electronic-circuit rate=5 --validate   # the same rows as a book
 .venv/bin/python -m tools.bp gen fluid_row recipe=processing-unit machine=assembling-machine-3 research=inserter-capacity-bonus=7 --validate   # inserters sized for researched hands: refused without it
 .venv/bin/python -m tools.bp gen factory item=automation-science-pack rate=1 modules=speed-module-3 --validate   # every machine with slots filled, rows sized for the speed (productivity modules too, in machines on recipes that allow it, making more per craft; a row whose faster machines outrun their inserters runs without)
+.venv/bin/python -m tools.bp gen factory item=automation-science-pack rate=2 machine=assembling-machine-3 modules=productivity-module-3 beacons=speed-module-3 --validate   # beacons between assembly rows' machines, two per machine (assembly rows only for now; a row they'd outrun runs without)
 .venv/bin/python -m tools.bp gen cell recipe=electronic-circuit producer=copper-cable --validate   # cable machines handing cable straight to circuit machines
 .venv/bin/python -m tools.bp gen cell recipe=advanced-circuit producer=copper-cable belts=2 --validate   # circuits and plastic on a second input belt, by long-handed inserter
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 | .venv/bin/python -m tools.bp density - --rate 5   # how it spends its tiles

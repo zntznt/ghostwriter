@@ -6,7 +6,8 @@ come from the game itself: tools/inserter_rates.json, written by
 `python -m validator.measure`.
 
 A machine crafts at its crafting_speed and its modules' speed effect (as bp
-takes them, "modules=speed-module-3"; no beacons, no power). Productivity modules
+takes them, "modules=speed-module-3"), plus that of the beacons around it
+("beacons=speed-module-3", each beacon's two slots filled); no power. Productivity modules
 also make more per craft (made()), only in machines and recipes that allow
 productivity; elsewhere they aren't placed. An inserter moves what the
 measurement saw. Inserter rates take research (as bp takes it,
@@ -85,6 +86,23 @@ def check_modules(modules: str = "") -> None:
         raise ValueError(f"{modules} is not a module")
 
 
+def check_beacon_modules(beacons: str = "") -> None:
+    """Refuses what a beacon won't take: only speed and efficiency modules; "" is none."""
+    check_modules(beacons)
+    if beacons and {"productivity", "quality"} & {k for k, v in items.raw[beacons]["effect"].items() if v > 0}:
+        raise ValueError(f"a beacon doesn't take {beacons}")
+
+
+def beacon_speed(machine: str, beacons: str = "", n: int = 0) -> float:
+    """The speed bonus `n` beacons with `beacons` in their slots give a machine."""
+    check_beacon_modules(beacons)
+    if not beacons or not n or not entities.raw[machine].get("effect_receiver", {}).get("uses_beacon_effects", True):
+        return 0
+    b = entities.raw["beacon"]
+    return n * b["module_slots"] * items.raw[beacons]["effect"].get("speed", 0) * b["distribution_effectivity"] \
+        * b["profile"][n - 1]
+
+
 def module_slots(machine: str, modules: str = "", r: Recipe | None = None) -> int:
     """Slots a machine fills with `modules`: none without modules, slots or (for `r`) speed,
     or productivity where the machine or (for `r`) the recipe doesn't allow it."""
@@ -116,13 +134,16 @@ def made(machine: str, r: Recipe, modules: str = "") -> Recipe:
     return replace(r, results={k: v + bonus * (v - ignored.get(k, 0)) for k, v in r.results.items()})
 
 
-def crafts_per_second(machine: str, r: Recipe, modules: str = "") -> float:
+def crafts_per_second(machine: str, r: Recipe, modules: str = "", beacons: str = "", n: int = 0) -> float:
+    """Crafts/s of one machine, with `modules` in its slots and `n` beacons of `beacons` around it."""
     proto = entities.raw[machine]
     if not set(r.categories) & set(proto.get("crafting_categories", [])):
         raise ValueError(f"{machine} can't craft {r.name} (categories {list(r.categories)})")
     slots = module_slots(machine, modules, r)
-    speed = items.raw[modules]["effect"].get("speed", 0) if slots else 0
-    return proto["crafting_speed"] * max(0.2, 1 + slots * speed) / r.time  # the game keeps 20% speed at least
+    speed = slots * items.raw[modules]["effect"].get("speed", 0) if slots else 0
+    if recipes.raw.get(r.name, {}).get("allow_speed", True):
+        speed += beacon_speed(machine, beacons, n)
+    return proto["crafting_speed"] * max(0.2, 1 + speed) / r.time  # the game keeps 20% speed at least
 
 
 def request_modules(entity, machine: str, r: Recipe, modules: str = "") -> None:

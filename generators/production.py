@@ -60,16 +60,19 @@ class Step:
 
 
 def solve(item: str, rate: float, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, research="", modules="") -> tuple[list[Step], dict[str, float]]:
+          furnace="steel-furnace", raw="", oil=0, research="", modules="",
+          beacons="") -> tuple[list[Step], dict[str, float]]:
     """Steps in build order (ingredients first), and the inputs to supply (item -> items/s,
     fluid -> units/s). A negative input is a surplus the factory makes but doesn't use.
     research: inserter research the rows are sized for (rates measured at it); it rides in
     the params of every row whose inserters it sizes, and isn't there without it. modules: a
     module in every machine's slots (productivity: ingredients sized for what each
-    machine makes); it rides in every row's params the same way."""
+    machine makes); it rides in every row's params the same way. beacons: a module in
+    beacons between an assembly row's machines (only there), where they make it no bigger."""
     if machine not in MACHINES:
         raise ValueError(f"machine is one of {MACHINES}")
     rates.check_modules(modules)
+    rates.check_beacon_modules(beacons)
     oil = oil or 0  # the CLI's oil= arrives as ""
     if oil not in (0, *RECIPES):
         raise ValueError(f"oil is one of 0, {', '.join(map(str, RECIPES))}, not {oil!r}")
@@ -94,6 +97,8 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     extra = {"research": rates.research_key(research)} if rates.research_key(research) else {}
     if modules:
         extra["modules"] = modules
+    if beacons:
+        extra["beacons"] = beacons
     demand = {i: 0.0 for i in order}
     demand[item] = float(rate)
     sized = {}
@@ -265,9 +270,10 @@ def _how(item, tiers, smelt, furnace, forced_raw, oil=0):
 def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     """Rows for one item, in the fastest tier whose row can be fed: the fewest
     full-size rows, then just enough machines in each. extra: params every row but
-    a smelting column takes (research; it takes modules)."""
+    a smelting column takes (research; it takes modules); beacons only assembly rows take."""
     kind, r = how
     extra = extra or {}
+    beaconed, extra = extra, {k: v for k, v in extra.items() if k != "beacons"}
     need = demand * SLACK
     if kind == "fluid_block":  # one block, as many machines as the demand needs
         p = fluid_block.plan(recipe=r.name, **extra)
@@ -277,10 +283,12 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
                     p.rate(item))
     errors = []
     machines = {"assembly_row": tiers, "fluid_row": _fluid_machines(tiers)}.get(kind, ())
-    # Modules speed a machine past what its inserters feed: then the tier runs without them.
+    # Modules and beacons speed a machine past what its inserters feed: then the tier runs
+    # without beacons, then without modules either.
     plain = {k: v for k, v in extra.items() if k != "modules"}
+    tries = [beaconed] * (kind == "assembly_row") + [extra, plain]
     options = ([{"recipe": r.name, "machine": m, "belt": belt, **e} for m in machines if _crafts(m, r)
-                for e in ([extra, plain] if extra != plain else [extra])]
+                for e in [e for k, e in enumerate(tries) if e not in tries[:k]]]
                if kind != "smelting_column" else [{"recipe": r.name, "furnace": furnace, "belt": belt,
                                                    **{k: v for k, v in extra.items() if k == "modules"}}])
     count_key = "furnaces" if kind == "smelting_column" else "machines"
@@ -291,7 +299,9 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
             share = need / rows
             machine = base.get("machine") or base["furnace"]
             modules = base.get("modules", "")
-            per_machine = rates.crafts_per_second(machine, r, modules) * rates.made(machine, r, modules).results[item]
+            per_machine = (rates.crafts_per_second(machine, r, modules, base.get("beacons", ""),
+                                                   assembly_row.BEACONS_PER_MACHINE)
+                           * rates.made(machine, r, modules).results[item])
             if share <= per_machine + 1e-9:
                 params = {**base, "sides": 1, count_key: 1}
             else:
@@ -336,7 +346,8 @@ def fuse(steps: list[Step], item: str, belt: str, shared=False) -> list[Step]:
     fused into a cell with it (generators/cell.py): the item handed over by
     inserter, no row or belt between them. Others, and pairs no cell fits, stay.
     shared: a producer whose product several rows use also fuses, into each of them
-    that takes a cell, and keeps a row, sized as rows are, for the rest of the demand."""
+    that takes a cell, and keeps a row, sized as rows are, for the rest of the demand. Rows
+    with beacons stay rows: cells take none."""
     users = {}
     for s in steps:
         r = rates.recipe_any(s.params["recipe"])
@@ -346,10 +357,10 @@ def fuse(steps: list[Step], item: str, belt: str, shared=False) -> list[Step]:
         return _fuse_shared(steps, item, belt, users)
     gone, cells = set(), {}
     for c in steps:
-        if c.generator != "assembly_row":
+        if not _fusable(c):
             continue
         for p in steps:
-            if p.generator != "assembly_row" or id(p) in gone or p.item == item or users.get(p.item) != [c]:
+            if not _fusable(p) or id(p) in gone or p.item == item or users.get(p.item) != [c]:
                 continue
             try:
                 cells[id(c)] = _cell_step(p, c, belt)
@@ -360,15 +371,19 @@ def fuse(steps: list[Step], item: str, belt: str, shared=False) -> list[Step]:
     return [cells.get(id(s), s) for s in steps if id(s) not in gone or id(s) in cells]
 
 
+def _fusable(s: Step) -> bool:
+    return s.generator == "assembly_row" and "beacons" not in s.params
+
+
 def _fuse_shared(steps: list[Step], item: str, belt: str, users: dict) -> list[Step]:
     """fuse(shared=True): producers in build order, each into every consumer that takes a
     cell and has none yet; what the cells don't take stays a row, resized to the rest."""
     cells, left = {}, {}
     for p in steps:
-        if p.generator != "assembly_row" or p.item == item or id(p) in cells:
+        if not _fusable(p) or p.item == item or id(p) in cells:
             continue
         for c in users.get(p.item, []):
-            if c.generator != "assembly_row" or id(c) in cells:
+            if not _fusable(c) or id(c) in cells:
                 continue
             try:
                 cells[id(c)] = _cell_step(p, c, belt)
@@ -421,15 +436,15 @@ def _cell_step(p: Step, c: Step, belt: str) -> Step:
 
 
 def parts(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, research="", modules="") -> list[tuple[str, dict]]:
+          furnace="steel-furnace", raw="", oil=0, research="", modules="", beacons="") -> list[tuple[str, dict]]:
     """(generator, params) of each row, in book order."""
-    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules)
+    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules, beacons)
     return [(s.generator, s.params) for s in steps for _ in range(s.rows)]
 
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, research="", modules="") -> BlueprintBook:
-    steps, inputs = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules)
+          furnace="steel-furnace", raw="", oil=0, research="", modules="", beacons="") -> BlueprintBook:
+    steps, inputs = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules, beacons)
     book = BlueprintBook()
     book.label = f"Production: {rate:g} {item}/s"
     supply = ", ".join(f"{v:.3g} {k}/s" for k, v in inputs.items() if v > 0) or "nothing"
@@ -458,7 +473,7 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
 
 
 def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-                furnace="steel-furnace", raw="", oil=0, research="", modules="") -> tuple[dict, list]:
+                furnace="steel-furnace", raw="", oil=0, research="", modules="", beacons="") -> tuple[dict, list]:
     """The whole book as one blueprint and one flow test: every row built side by
     side, inputs the book supplies fed without limit, and everything the book
     makes passed from its producers to its consumers through a pool. The target
@@ -467,7 +482,7 @@ def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2
 
     from validator.flow import Flow
 
-    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules)
+    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules, beacons)
     rows = []  # (blueprint data, ids, flow) per row
     for s in steps:
         gen = GENERATORS[s.generator]

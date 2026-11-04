@@ -1059,6 +1059,100 @@ class Modules(unittest.TestCase):
             self.assertLess(prod[plate], plain[plate])
 
 
+class Beacons(unittest.TestCase):
+    PACK = {"recipe": "automation-science-pack", "machine": "assembling-machine-3"}
+
+    def test_beacons_speed_machines_that_take_their_effects(self):
+        gear = rates.recipe("iron-gear-wheel")
+        bonus = 2 * 2 * 0.5 * 1.5 * 0.7071
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", gear, "", "speed-module-3", 2),
+                               1.25 * (1 + bonus) / 0.5)
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", gear, "productivity-module-3",
+                                                       "speed-module-3", 2), 1.25 * (1 - 0.6 + bonus) / 0.5)
+        self.assertEqual(rates.crafts_per_second("assembling-machine-1", gear, "", "speed-module-3", 2), 1)
+        self.assertEqual(rates.crafts_per_second("assembling-machine-3", gear, "", "efficiency-module-3", 2), 2.5)
+        self.assertEqual(rates.crafts_per_second("assembling-machine-3", gear, "", "speed-module-3", 0), 2.5)
+        self.assertEqual(rates.crafts_per_second("assembling-machine-3", gear, "", "", 2), 2.5)
+
+    def test_beacons_take_only_speed_and_efficiency_modules(self):
+        for name in ("productivity-module", "quality-module", "iron-plate"):
+            with self.subTest(name), self.assertRaises(ValueError):
+                rates.check_beacon_modules(name)
+        for name in ("speed-module-3", "efficiency-module", ""):
+            rates.check_beacon_modules(name)
+        with self.assertRaises(ValueError):
+            assembly_row.plan(**self.PACK, beacons="productivity-module-3")
+
+    def test_every_machine_sits_between_two_beacons(self):
+        from draftsman.data import entities as protos
+
+        reach = protos.raw["beacon"]["supply_area_distance"] + 1.5 + rates.half_width("assembling-machine-3")
+        for params in ({}, {"modules": "productivity-module-3"}, {"sides": 1, "machines": 3}):
+            with self.subTest(**params):
+                p = assembly_row.plan(**self.PACK, **params, beacons="speed-module-3")
+                bp = row(**self.PACK, **params, beacons="speed-module-3")
+                beacons = [e for e in bp["entities"] if e["name"] == "beacon"]
+                machines = [e for e in bp["entities"] if e["name"] == "assembling-machine-3"]
+                self.assertEqual(len(machines), p.sides * p.machines)
+                self.assertEqual(len(beacons), p.sides * (p.machines + 1))
+                self.assertTrue(all(module_slots_filled(b) == {"speed-module-3": 2} for b in beacons))
+                for m in machines:
+                    near = [b for b in beacons
+                            if all(abs(b["position"][k] - m["position"][k]) < reach for k in "xy")]
+                    self.assertEqual(len(near), 2, m)
+                self.assertEqual(check({"blueprint": bp}), [])
+                assert_powered(self, bp, params)
+        self.assertFalse(any(e["name"] == "beacon" for e in row(**self.PACK)["entities"]))
+        self.assertEqual(row(**self.PACK, beacons=""), row(**self.PACK))
+
+    def test_rows_are_sized_with_the_beacons(self):
+        plain = assembly_row.plan(**self.PACK)
+        fast = assembly_row.plan(**self.PACK, beacons="speed-module-3")
+        r = rates.recipe("automation-science-pack")
+        self.assertAlmostEqual(fast.crafts, rates.crafts_per_second("assembling-machine-3", r, "", "speed-module-3", 2))
+        self.assertGreater(fast.crafts, plain.crafts)
+        (flow,) = assembly_row.flow_tests(**self.PACK, beacons="speed-module-3")
+        self.assertAlmostEqual(flow.expect[fast.product], fast.sides * fast.per_side)
+
+    def test_the_planner_needs_fewer_machines_with_beacons(self):
+        def machines(steps):
+            return {s.item: s.rows * s.params["sides"] * s.params["machines"] for s in steps}
+
+        kw = {"machine": "assembling-machine-3", "modules": "productivity-module-3"}
+        plain, _ = production.solve("automation-science-pack", 2, **kw)
+        fast, _ = production.solve("automation-science-pack", 2, beacons="speed-module-3", **kw)
+        self.assertLess(sum(machines(fast).values()), sum(machines(plain).values()))
+        self.assertEqual({s.item: s for s in fast}["automation-science-pack"].params["beacons"], "speed-module-3")
+        self.assertTrue(all("beacons" not in s.params for s in plain))
+        for item, rate, kw in (("electronic-circuit", 10, {"machine": "assembling-machine-3"}),
+                               ("iron-gear-wheel", 10, {}),
+                               ("logistic-science-pack", 1, {"machine": "assembling-machine-3"}),
+                               ("automation-science-pack", 1, {"modules": "speed-module"})):
+            with self.subTest(item):
+                plain, _ = production.solve(item, rate, **kw)
+                fast, _ = production.solve(item, rate, beacons="speed-module-3", **kw)
+                for made, n in machines(fast).items():
+                    self.assertLessEqual(n, machines(plain)[made], made)
+
+    def test_only_assembly_rows_take_beacons(self):
+        for item, kw in (("automation-science-pack", {"smelt": 1, "furnace": "electric-furnace"}),
+                         ("plastic-bar", {"oil": "advanced"})):
+            with self.subTest(item):
+                steps, _ = production.solve(item, 2, beacons="speed-module-3", **kw)
+                self.assertEqual(any("beacons" in s.params for s in steps), item != "plastic-bar")
+                self.assertTrue(all("beacons" not in s.params for s in steps if s.generator != "assembly_row"))
+        steps, _ = production.solve("automation-science-pack", 1, beacons="speed-module-3")
+        self.assertEqual(production.fuse(steps, "automation-science-pack", "transport-belt"), steps)
+
+    def test_factory_threads_beacons(self):
+        p = factory.rows_and_lines("automation-science-pack", 1, machine="assembling-machine-3",
+                                   beacons="speed-module-3")
+        self.assertTrue(any(r.step.params.get("beacons") == "speed-module-3" for r in p["rows"]))
+        bp = factory.build("automation-science-pack", 1, machine="assembling-machine-3", layout="bus",
+                           beacons="speed-module-3").to_dict()["blueprint"]
+        self.assertTrue(any(e["name"] == "beacon" for e in bp["entities"]))
+
+
 class Factory(unittest.TestCase):
     def test_rows_with_cells_take_the_producers_ingredients(self):
         # Fused, the circuits' rows take copper plates and iron; no cable row or line is left.
