@@ -1134,6 +1134,21 @@ class Beacons(unittest.TestCase):
                 for made, n in machines(fast).items():
                     self.assertLessEqual(n, machines(plain)[made], made)
 
+    def test_beacons_never_lay_out_larger(self):
+        # A beaconed row has a machine every 6 tiles, not 3: it only pays where it saves enough
+        # machines. Measured without this, these came out 15 to 29% larger (compact; bus agrees).
+        from tools.density import density
+
+        def area(**kw):
+            return density(factory.build(item, rate, machine="assembling-machine-3", layout="bus", **kw).to_dict())[0]["area"]
+
+        for item, rate, modules in (("automation-science-pack", 2, "speed-module-3"),
+                                    ("logistic-science-pack", 1, "speed-module-3"),
+                                    ("inserter", 2, "productivity-module-3"),
+                                    ("automation-science-pack", 2, "productivity-module-3")):
+            with self.subTest(item, modules=modules):
+                self.assertLessEqual(area(modules=modules, beacons="speed-module-3"), area(modules=modules))
+
     def test_only_assembly_rows_take_beacons(self):
         for item, kw in (("automation-science-pack", {"smelt": 1, "furnace": "electric-furnace"}),
                          ("plastic-bar", {"oil": "advanced"})):
@@ -1141,7 +1156,9 @@ class Beacons(unittest.TestCase):
                 steps, _ = production.solve(item, 2, beacons="speed-module-3", **kw)
                 self.assertEqual(any("beacons" in s.params for s in steps), item != "plastic-bar")
                 self.assertTrue(all("beacons" not in s.params for s in steps if s.generator != "assembly_row"))
-        steps, _ = production.solve("automation-science-pack", 1, beacons="speed-module-3")
+        steps, _ = production.solve("automation-science-pack", 2, machine="assembling-machine-3",
+                                    modules="productivity-module-3", beacons="speed-module-3")
+        self.assertTrue(any("beacons" in s.params for s in steps))
         self.assertEqual(production.fuse(steps, "automation-science-pack", "transport-belt"), steps)
 
     def test_factory_threads_beacons(self):

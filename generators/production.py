@@ -292,6 +292,7 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
                if kind != "smelting_column" else [{"recipe": r.name, "furnace": furnace, "belt": belt,
                                                    **{k: v for k, v in extra.items() if k == "modules"}}])
     count_key = "furnaces" if kind == "smelting_column" else "machines"
+    beaconed_step = None
     for base in options:
         try:
             full = _rated(kind, {**base, "sides": 2})
@@ -306,11 +307,29 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
                 params = {**base, "sides": 1, count_key: 1}
             else:
                 params = {**base, "sides": 2, count_key: math.ceil(share / 2 / per_machine - 1e-9)}
-            return Step(item, demand, kind, params, rows, _rated(kind, params))
+            step = Step(item, demand, kind, params, rows, _rated(kind, params))
         except ValueError as e:
             errors.append(str(e))
+            continue
+        if beaconed_step and beaconed_step.params["machine"] == machine:
+            # A beaconed row spaces its machines out: kept only where it saves tiles.
+            return min((beaconed_step, step), key=_row_area)
+        if beaconed_step:
+            return beaconed_step
+        if "beacons" not in params:
+            return step
+        beaconed_step = step
+    if beaconed_step:
+        return beaconed_step
     # The slowest tier tried says the most: a faster one only needs more.
     raise ValueError(f"{item}: no row fits ({errors[-1]}); pass raw={item} to supply it instead")
+
+
+def _row_area(s: Step) -> int:
+    """Bounding-box tiles of a step's rows."""
+    from tools.density import density
+
+    return s.rows * density(assembly_row.build(**s.params).to_dict())[0]["area"]
 
 
 def _block(item):
