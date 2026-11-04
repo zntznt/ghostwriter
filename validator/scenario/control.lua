@@ -894,6 +894,15 @@ local function source_for(s, area, poles, at)
   return {helper, eei}
 end
 
+-- Joules each entity type has taken from the flow source's network so far.
+local function energy_used(f)
+  local pole = f.helpers[1]
+  local stats = pole and pole.valid and pole.type == "electric-pole" and pole.electric_network_statistics
+  local out = {}
+  for name, j in pairs(stats and stats.input_counts or {}) do out[name] = j end
+  return out
+end
+
 local function flow_teardown()
   local f = storage.flow
   if not f then return end
@@ -1121,6 +1130,7 @@ remote.add_interface("ghostwriter", {
     local stats = game.forces.player.get_fluid_production_statistics(f.surface)
     f.fluid_base = {}
     for name in pairs(prototypes.fluid) do f.fluid_base[name] = stats.get_input_count(name) end
+    f.energy_base = energy_used(f)
     reply{ok = true}
   end,
 
@@ -1144,7 +1154,13 @@ remote.add_interface("ghostwriter", {
       local made = stats.get_input_count(name) - base
       if made > 0 then fluids[name] = made end
     end
-    reply{counts = f.counts, fluids = fluids, ticks = game.tick - f.since, stalled = stalled, pool = f.pool}
+    -- Electric energy (J) each entity type took from the source's network since flow_count.
+    local energy = {}
+    for name, j in pairs(energy_used(f)) do
+      if j > (f.energy_base[name] or 0) then energy[name] = j - (f.energy_base[name] or 0) end
+    end
+    reply{counts = f.counts, fluids = fluids, ticks = game.tick - f.since, stalled = stalled, pool = f.pool,
+          energy = energy}
   end,
 
   flow_teardown = function()

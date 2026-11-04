@@ -25,6 +25,12 @@ measures only machine_to_machine, keeping the belt rates: items/s an inserter
 moves from a machine's output straight into another machine's input. The rig
 is copper cable in assembling-machine-3 handing over to electronic circuits in
 another (each faster than any inserter), so circuits/s x 3 is cable/s moved.
+
+    python -m validator.measure --energy
+
+measures only energy_per_item, keeping the rest: joules an inserter takes from
+the grid per item it moves, over its drain, on the from_belt rig (transport
+belt, no research), for power estimates.
 """
 
 import argparse
@@ -35,8 +41,10 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint
 from draftsman.constants import Direction
+from draftsman.data import entities
 
 from tools.codec import dump_json, encode
+from tools.rates import watts
 from validator.circuit import _ok, _wait_ticks
 from validator.flow import SPEED
 from validator.server import Server
@@ -71,7 +79,9 @@ def rig(inserter: str, belt: str, from_belt: bool) -> tuple[dict, dict[str, int]
     return bp.to_dict(), ids
 
 
-def measure(server: Server, inserter: str, belt: str, from_belt: bool, research: dict | None = None) -> float:
+def measure(server: Server, inserter: str, belt: str, from_belt: bool, research: dict | None = None,
+            energy: bool = False) -> float:
+    """Items/s per inserter, or with `energy` joules per item moved over the inserters' drain."""
     data, ids = rig(inserter, belt, from_belt)
     chests = [ids[f"chest{k}"] for k in range(RIG_INSERTERS)]
     setup = server.call("flow_setup", json.dumps({"blueprint": encode(data), "speed": SPEED, "research": research or {}}))
@@ -94,6 +104,9 @@ def measure(server: Server, inserter: str, belt: str, from_belt: bool, research:
         _wait_ticks(server, WINDOW * 60, timeout=WINDOW + 60)
         got = server.call("flow_read")
         moved = in_chests() - before if from_belt else (got["counts"] or {}).get(ITEM, 0)
+        if energy:
+            drain = RIG_INSERTERS * watts(entities.raw[inserter]["energy_source"]["drain"]) * got["ticks"] / 60
+            return (got["energy"][inserter] - drain) / moved
         return moved / (got["ticks"] / 60) / RIG_INSERTERS
     finally:
         server.call("flow_teardown")
@@ -150,6 +163,7 @@ def main(argv=None):
     ap.add_argument("--factorio")
     ap.add_argument("--out", default=str(OUT))
     ap.add_argument("--handover", action="store_true", help="measure only machine-to-machine handovers")
+    ap.add_argument("--energy", action="store_true", help="measure only inserters' energy per item")
     ap.add_argument("--research", help="measure everything with this research set, e.g. inserter-capacity-bonus=7")
     args = ap.parse_args(argv)
     if args.research:
@@ -172,6 +186,16 @@ def main(argv=None):
                 print(f"{key} {inserter:22s} machine to machine {got['machine_to_machine'][inserter]}",
                       file=sys.stderr, flush=True)
         data.setdefault("researched", {})[key] = got
+        Path(args.out).write_text(dump_json(data))
+        print(f"-> {args.out}", file=sys.stderr)
+        return
+    if args.energy:
+        data = json.loads(Path(args.out).read_text())
+        with Server(args.factorio) as server:
+            data["energy_per_item"] = {}
+            for inserter in INSERTERS:
+                data["energy_per_item"][inserter] = round(measure(server, inserter, BELTS[0], True, energy=True))
+                print(f"{inserter:22s} {data['energy_per_item'][inserter]} J an item", file=sys.stderr)
         Path(args.out).write_text(dump_json(data))
         print(f"-> {args.out}", file=sys.stderr)
         return

@@ -86,6 +86,18 @@ class Plan:
         r = self.recipe
         return self.sides * self.per_side / r.results[self.product] * r.fluids[self.fluid]
 
+    def watts(self, share: float = 1) -> float:
+        """Average electric W making `share` of the rated output."""
+        r, m = self.recipe, self.machines * self.sides
+        crafts = share * self.sides * self.per_side / r.results[self.product]  # all machines, per second
+        w = m * rates.machine_watts(self.machine, r, self.modules, self.beacons, self.beacons_per_machine,
+                                    crafts / (m * self.crafts))
+        w += self.sides * (self.machines + 1) * rates.beacon_watts() if self.beacons else 0
+        moved = [r.ingredients[self.near] if self.near else 0, sum(r.ingredients[i] for i in self.far)]
+        for (inserter, k), per_craft in zip(self.feeders, moved):
+            w += rates.inserter_watts(inserter, m * k, crafts * per_craft)
+        return w + rates.inserter_watts(self.output[0], m * self.output[1], crafts * r.results[self.product])
+
 
 def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
           research="", modules="", beacons="") -> list[Plan]:
@@ -245,7 +257,8 @@ def _build(p: Plan, pole: str) -> Blueprint:
         f"(belt-limited at {p.limit} per side), drawing {p.fluid_rate:g} {p.fluid}/s from the middle pipe; "
         f"feed it at either end. Items enter at the bottom: {'; '.join(lanes) or 'none'}. "
         f"{p.product} leaves at the top on each side's in1 far lane"
-        + (f", with leftover {p.near} on the near lane" if p.near else "") + ". Connect any pole to your grid."
+        + (f", with leftover {p.near} on the near lane" if p.near else "")
+        + f". Draws about {rates.megawatts(p.watts())}. Connect any pole to your grid."
     )
     bp.icons = [p.machine, p.product]
 

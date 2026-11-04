@@ -43,6 +43,9 @@ class Plan:
     limit: int  # furnaces per side the belts can carry
     craft: float  # seconds per craft
     inserters: tuple[str, str]  # input, output
+    furnace: str = "stone-furnace"
+    recipe: str = "iron-plate"
+    modules: str = ""
 
     @property
     def per_side(self) -> float:
@@ -50,6 +53,14 @@ class Plan:
         ore_lanes = 1 if self.burner else 2
         return min(self.furnaces * self.product_rate, self.lane,
                    ore_lanes * self.lane * self.product_rate / self.ore_rate)
+
+    def watts(self, share: float = 1) -> float:
+        """Average electric W making `share` of the rated output: electric furnaces and inserters."""
+        n, made = self.furnaces * self.sides, share * self.sides * self.per_side
+        w = n * rates.machine_watts(self.furnace, rates.recipe(self.recipe), self.modules,
+                                    utilisation=made / (n * self.product_rate))
+        return w + rates.inserter_watts(self.inserters[0], n, made * self.ore_rate / self.product_rate) \
+            + rates.inserter_watts(self.inserters[1], n, made)
 
 
 def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, modules="",
@@ -77,7 +88,7 @@ def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", si
             raise ValueError(f"one {furnace} moves {demand:g}/s, more than one {picked} does on {belt}")
         inserters.append(picked)
     return Plan(furnaces or limit, sides, rates.size(furnace), burner, ore, product,
-                ore_rate, product_rate, lane, limit, 1 / crafts, tuple(inserters))
+                ore_rate, product_rate, lane, limit, 1 / crafts, tuple(inserters), furnace, recipe, modules)
 
 
 def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", inserter="",
@@ -102,7 +113,7 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
         f"{n} {furnace} per side x{sides}: {sides * p.per_side:g} {p.product}/s "
         f"from {sides * p.per_side * p.ore_rate / p.product_rate:g} {p.ore}/s. {belt} carries {p.lane:g}/s per lane "
         f"(belt-limited at {p.limit} per side). Ore enters at the bottom on {ore_lane}; "
-        f"{p.product} leaves at the top. Connect any pole to your grid."
+        f"{p.product} leaves at the top. Draws about {rates.megawatts(p.watts())}. Connect any pole to your grid."
     )
     bp.icons = [furnace, p.product]
 

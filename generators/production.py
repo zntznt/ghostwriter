@@ -19,6 +19,7 @@ it is needed. `--validate` runs every row's own flow test in game.
 
 import functools
 import math
+import sys
 from dataclasses import dataclass
 
 from draftsman.blueprintable import BlueprintBook
@@ -57,6 +58,7 @@ class Step:
     params: dict  # one row's parameters
     rows: int
     rate: float  # rated per row
+    tradeoff: tuple[int, float] | None = None  # where beacons were weighed: the tiles and W they add
 
 
 def solve(item: str, rate: float, machine="assembling-machine-2", belt="transport-belt", smelt=0,
@@ -314,7 +316,10 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
             continue
         if beaconed_step and beaconed_step.params["machine"] == machine:
             # A beaconed row spaces its machines out: kept only where it saves tiles.
-            return min((beaconed_step, step), key=_row_area)
+            tiles = _row_area(beaconed_step) - _row_area(step)
+            kept = beaconed_step if tiles <= 0 else step
+            kept.tradeoff = (tiles, watts(beaconed_step) - watts(step))
+            return kept
         if beaconed_step:
             return beaconed_step
         if "beacons" not in params:
@@ -324,6 +329,24 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
         return beaconed_step
     # The slowest tier tried says the most: a faster one only needs more.
     raise ValueError(f"{item}: no row fits ({errors[-1]}); pass raw={item} to supply it instead")
+
+
+def watts(s: Step) -> float:
+    """Average electric W of a step's rows making its demand."""
+    p = GENERATORS[s.generator].plan(**s.params)
+    return s.rows * p.watts(min(1.0, s.demand / (s.rows * s.rate))) if s.rate else 0.0
+
+
+def power_lines(steps: list[Step]) -> list[str]:
+    """Each step's draw, with what beacons add where they were weighed, then the total."""
+    lines = []
+    for s in steps:
+        line = f"{s.item} {rates.megawatts(watts(s))}"
+        if s.tradeoff:
+            tiles, w = s.tradeoff
+            line += f" (beacons {'kept' if 'beacons' in s.params else 'dropped'}: {tiles:+d} tiles, {w / 1e6:+.2g} MW)"
+        lines.append(line)
+    return lines + [f"{rates.megawatts(sum(map(watts, steps)))} in all"]
 
 
 def _beacons_per_machine(kind, machine, sides) -> int:
@@ -484,11 +507,14 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     if any(s.item in CRACKING for s in steps):
         tail += (" Crack only surplus oil: feed cracking through a pump that runs while the oil's tank is "
                  "nearly full, or it starves lubricant and the other oil users.")
-    description = f"Supply {supply}. Rows, ingredients first: {plan}. {tail}"
+    power = f" Draws about {rates.megawatts(sum(map(watts, steps)))}."
+    description = f"Supply {supply}. Rows, ingredients first: {plan}.{power} {tail}"
     if len(description.encode()) > TEXT_LIMITS["description"]:  # the game would cut it
-        description = f"Supply {supply}. Each row's description gives its share. {tail}"
+        description = f"Supply {supply}. Each row's description gives its share.{power} {tail}"
     book.description = description
     book.icons = [item]
+    for line in power_lines(steps):
+        print(f"production power: {line}", file=sys.stderr)
     for s in steps:
         for k in range(s.rows):
             bp = GENERATORS[s.generator].build(**s.params)

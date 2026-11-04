@@ -69,6 +69,15 @@ class Plan:
         per_craft = self.outputs.get(name) or self.inputs.get(name, 0)
         return self.machines * self.crafts * per_craft
 
+    def watts(self, share: float = 1) -> float:
+        """Average electric W crafting `share` of the time."""
+        r, crafts = rates.recipe_any(self.recipe), share * self.machines * self.crafts
+        w = self.machines * rates.machine_watts(self.machine, r, self.modules, utilisation=share)
+        w += rates.inserter_watts(self.feeders[0], self.machines * self.feeders[1],
+                                  crafts * sum(self.inputs[i] for i in self.items_in))
+        return w + rates.inserter_watts(self.output[0], self.machines * self.output[1],
+                                        crafts * self.outputs.get(self.item_out, 0))
+
 
 def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-belt", inserter="",
          research="", modules="") -> Plan:
@@ -243,7 +252,7 @@ def build(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-b
         if p.items_in:
             belts = belts.replace("carry ", "carry " + ("both lanes of " if len(p.items_in) == 1 else ""))
     bp.description = (f"{n} {p.machine}: {made} from {used}. Lines, nearest first, fed or emptied at their west "
-                      f"end: {lines}.{belts} Connect any pole to your grid.")
+                      f"end: {lines}.{belts} Draws about {rates.megawatts(p.watts())}. Connect any pole to your grid.")
     bp.icons = [p.machine]
     return bp
 

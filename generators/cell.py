@@ -65,6 +65,21 @@ class Plan:
     def per_side(self) -> float:
         return self.chain.count("C") * self.c_crafts * self.consumer.results[self.product]
 
+    def watts(self, share: float = 1) -> float:
+        """Average electric W making `share` of the rated output: consumers at full speed, producers
+        making only what they take."""
+        pr, cr, c, n = self.producer, self.consumer, self.chain.count("C"), len(self.chain) - self.chain.count("C")
+        c_crafts = share * c * self.c_crafts  # a side, per second
+        p_crafts = c_crafts * cr.ingredients[self.item] / pr.results[self.item]
+        w = c * rates.machine_watts(self.machine, cr, self.modules, utilisation=share)
+        w += n * rates.machine_watts(self.machine, pr, self.modules, utilisation=p_crafts / (n * self.p_crafts))
+        jobs = [(self.feeders["P"], n, p_crafts * sum(pr.ingredients.values())),
+                (self.feeders["C"], c, c_crafts * sum(a for i, a in cr.ingredients.items() if i != self.item)),
+                (self.output, c, c_crafts * cr.results[self.product])]
+        flows = _handed(self.chain, self.p_crafts * pr.results[self.item], self.c_crafts * cr.ingredients[self.item])
+        jobs += [((i, k), 1, share * f) for (i, k), f in zip(self.handover, flows)]
+        return self.sides * (w + sum(rates.inserter_watts(i, k * machines, moved) for (i, k), machines, moved in jobs))
+
 
 def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembling-machine-2",
          belt="transport-belt", sides=2, consumers=0, belts=1, research="", modules="") -> Plan:
@@ -243,7 +258,7 @@ def build(recipe="electronic-circuit", producer="copper-cable", machine="assembl
         f"{p.chain} a side, north to south: {p.item} handed straight from {p.producer.name} (P) to "
         f"{p.consumer.name} (C) machines by inserter. {p.sides * p.per_side:g} {p.product}/s. Ingredients enter "
         f"at the bottom of each side's input belt{'s' if len(belts) > 1 else ''}, {belt_text}. {p.product} leaves "
-        f"at the top. Connect any pole to your grid.")
+        f"at the top. Draws about {rates.megawatts(p.watts())}. Connect any pole to your grid.")
     bp.icons = [p.machine, p.product]
 
     for y in range(length):

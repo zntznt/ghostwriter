@@ -3,7 +3,7 @@
     "item": "blueprint",
     "version": 562954249699328,
     "label": "Smelting column: 48 stone-furnace (iron-plate)",
-    "description": "24 stone-furnace per side x2: 15 iron-plate/s from 15 iron-ore/s. transport-belt carries 7.5/s per lane (belt-limited at 24 per side). Ore enters at the bottom on one lane of each ore belt, fuel on the other; iron-plate leaves at the top. Connect any pole to your grid.",
+    "description": "24 stone-furnace per side x2: 15 iron-plate/s from 15 iron-ore/s. transport-belt carries 7.5/s per lane (belt-limited at 24 per side). Ore enters at the bottom on one lane of each ore belt, fuel on the other; iron-plate leaves at the top. Draws about 0.28 MW. Connect any pole to your grid.",
     "icons": [
       {
         "index": 1,
