@@ -179,8 +179,9 @@ def _row(step: production.Step) -> Row:
         return int(p[0]), int(p[1])
 
     recipe = rates.recipe_any(step.params["recipe"])
+    made = production._made(step, recipe)  # with productivity: fewer crafts for the demand
     # Oil steps count crafts; the rest count their product.
-    crafts = (step.demand / recipe.results[step.item] if step.item in recipe.results else step.demand) / step.rows
+    crafts = (step.demand / made.results[step.item] if step.item in made.results else step.demand) / step.rows
     # A cell's belt also carries its producers' ingredients.
     per_craft_of = gen.ingredients(**step.params) if hasattr(gen, "ingredients") else recipe.ingredients
     ports, lane_count = {}, {}
@@ -501,8 +502,8 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     uses as a cell with that row (generators/cell.py), and keeps the smallest; 0 skips
     them. research: inserter research ("inserter-capacity-bonus=7") the rows are sized
     for; the build moves its rate only with that researched. Compact also tries the rows
-    sized without it, and keeps them if smaller. modules: a speed or efficiency module in
-    every machine (production.solve)."""
+    sized without it, and keeps them if smaller. modules: a module in every
+    machine (production.solve)."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill, **({"research": research} if research else {}),
                   **({"modules": modules} if modules else {}))

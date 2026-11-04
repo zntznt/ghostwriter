@@ -65,7 +65,8 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     fluid -> units/s). A negative input is a surplus the factory makes but doesn't use.
     research: inserter research the rows are sized for (rates measured at it); it rides in
     the params of every row whose inserters it sizes, and isn't there without it. modules: a
-    speed or efficiency module in every machine's slots; it rides in every row's params the same way."""
+    module in every machine's slots (productivity: ingredients sized for what each
+    machine makes); it rides in every row's params the same way."""
     if machine not in MACHINES:
         raise ValueError(f"machine is one of {MACHINES}")
     rates.check_modules(modules)
@@ -90,19 +91,22 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     visit(item, [])
     if not how[item]:
         raise ValueError(_supplied_only(item, furnace, forced_raw))
-    demand = {i: 0.0 for i in order}
-    demand[item] = float(rate)
-    for i in reversed(order):  # consumers before their ingredients
-        if how[i] and how[i][1] and demand[i]:
-            r = how[i][1]
-            crafts = demand[i] / r.results[i]
-            for ingredient, amount in [*r.ingredients.items(), *r.fluids.items()]:
-                demand[ingredient] += crafts * amount
-
     extra = {"research": rates.research_key(research)} if rates.research_key(research) else {}
     if modules:
         extra["modules"] = modules
-    steps = [_size(i, demand[i], how[i], belt, furnace, tiers, extra) for i in order if how[i] and how[i][1]]
+    demand = {i: 0.0 for i in order}
+    demand[item] = float(rate)
+    sized = {}
+    for i in reversed(order):  # consumers before their ingredients
+        if how[i] and how[i][1]:
+            sized[i] = _size(i, demand[i], how[i], belt, furnace, tiers, extra)
+            if demand[i]:
+                # What the rows take per item depends on the machine (and modules) they got.
+                r = _made(sized[i], how[i][1])
+                crafts = demand[i] / r.results[i]
+                for ingredient, amount in [*r.ingredients.items(), *r.fluids.items()]:
+                    demand[ingredient] += crafts * amount
+    steps = [sized[i] for i in order if i in sized]
     inputs = {i: demand[i] for i in order if not how[i]}
     if any((how.get(f) or (None,))[0] == "oil" and demand[f] for f in (*OIL, "solid-fuel")):
         oil_steps, oil_inputs = _oil({f: demand.get(f, 0) for f in (*OIL, "solid-fuel")}, oil, modules)
@@ -132,10 +136,10 @@ def _oil(need: dict[str, float], oil=1, modules="") -> tuple[list[Step], dict[st
     fuel = need.get("solid-fuel", 0)
     names = (*RECIPES[oil], *(SOLID_FUEL.values() if fuel else ()))
     n = len(names)
-    rs = [rates.recipe_any(r) for r in names]
     with_modules = {"modules": modules} if modules else {}
-    per_machine = np.array([(fluid_row if r in SOLID_FUEL.values() else fluid_block).plan(recipe=r, **with_modules)
-                            .crafts for r in names])
+    plans = [(fluid_row if r in SOLID_FUEL.values() else fluid_block).plan(recipe=r, **with_modules) for r in names]
+    per_machine = np.array([p.crafts for p in plans])
+    rs = [rates.made(p.machine, rates.recipe_any(r), modules) for p, r in zip(plans, names)]
     per, fixed = zip(*map(_tiles, names))
     feed = [r.fluids.get("crude-oil", 0) for r in rs]
     made = (*OIL, "solid-fuel") if fuel else OIL
@@ -267,7 +271,7 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     need = demand * SLACK
     if kind == "fluid_block":  # one block, as many machines as the demand needs
         p = fluid_block.plan(recipe=r.name, **extra)
-        machines = math.ceil(need / (p.crafts * r.results[item]) - 1e-9)
+        machines = math.ceil(need / (p.crafts * p.outputs[item]) - 1e-9)
         p = fluid_block.plan(recipe=r.name, machines=machines, belt=belt, **extra)
         return Step(item, demand, kind, {"recipe": r.name, "machines": machines, "belt": belt, **extra}, 1,
                     p.rate(item))
@@ -286,7 +290,8 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
             rows = math.ceil(need / full - 1e-9)
             share = need / rows
             machine = base.get("machine") or base["furnace"]
-            per_machine = rates.crafts_per_second(machine, r, base.get("modules", "")) * r.results[item]
+            modules = base.get("modules", "")
+            per_machine = rates.crafts_per_second(machine, r, modules) * rates.made(machine, r, modules).results[item]
             if share <= per_machine + 1e-9:
                 params = {**base, "sides": 1, count_key: 1}
             else:
@@ -369,7 +374,7 @@ def _fuse_shared(steps: list[Step], item: str, belt: str, users: dict) -> list[S
                 cells[id(c)] = _cell_step(p, c, belt)
             except ValueError:
                 continue
-            r = rates.recipe_any(c.params["recipe"])
+            r = _made(c, rates.recipe_any(c.params["recipe"]))
             left[id(p)] = left.get(id(p), p.demand) - c.demand * r.ingredients[p.item] / r.results[c.item]
     out = []
     for s in steps:
@@ -381,6 +386,15 @@ def _fuse_shared(steps: list[Step], item: str, belt: str, users: dict) -> list[S
             out.append(_size(s.item, left[id(s)], ("assembly_row", rates.recipe(s.item, fluids=True)),
                              s.params["belt"], None, [s.params["machine"]], _extra(s)))
     return out
+
+
+def _made(s: Step, r: rates.Recipe) -> rates.Recipe:
+    """`r` as the step's rows make it: with their machines' productivity."""
+    modules = s.params.get("modules", "")
+    if not modules:
+        return r
+    machine = s.params.get("machine") or s.params.get("furnace") or fluid_block.plan(recipe=r.name).machine
+    return rates.made(machine, r, modules)
 
 
 def _extra(s: Step) -> dict:

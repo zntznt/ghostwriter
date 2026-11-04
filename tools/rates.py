@@ -5,16 +5,17 @@ Recipes, machines and belts come from Draftsman's data, which matches the
 come from the game itself: tools/inserter_rates.json, written by
 `python -m validator.measure`.
 
-A machine crafts at its crafting_speed and its modules' speed effect (speed and
-efficiency modules, as bp takes them, "modules=speed-module-3"; no beacons, no
-power), and an inserter moves what the measurement saw. Inserter rates take
-research (as bp takes it, "inserter-capacity-bonus=7"): none unless given, else
-the rates measured at it.
+A machine crafts at its crafting_speed and its modules' speed effect (as bp
+takes them, "modules=speed-module-3"; no beacons, no power). Productivity modules
+also make more per craft (made()), only in machines and recipes that allow
+productivity; elsewhere they aren't placed. An inserter moves what the
+measurement saw. Inserter rates take research (as bp takes it,
+"inserter-capacity-bonus=7"): none unless given, else the rates measured at it.
 """
 
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
 
@@ -75,23 +76,44 @@ def recipe_any(name: str) -> Recipe:
 
 
 def check_modules(modules: str = "") -> None:
-    """Refuses what isn't a speed or efficiency module; "" is none."""
+    """Refuses what isn't a module; "" is none."""
     if not modules:
         return
     if modules not in items.raw:
         raise ValueError(f"unknown item {modules!r}")
     if items.raw[modules].get("type") != "module" or "effect" not in items.raw[modules]:
         raise ValueError(f"{modules} is not a module")
-    if items.raw[modules]["effect"].get("productivity", 0) > 0:
-        raise ValueError(f"{modules}: productivity modules are not supported yet")
 
 
 def module_slots(machine: str, modules: str = "", r: Recipe | None = None) -> int:
-    """Slots a machine fills with `modules`: none without modules, slots or (for `r`) speed."""
+    """Slots a machine fills with `modules`: none without modules, slots or (for `r`) speed,
+    or productivity where the machine or (for `r`) the recipe doesn't allow it."""
     check_modules(modules)
     if not modules or (r and not recipes.raw.get(r.name, {}).get("allow_speed", True)):
         return 0
+    if items.raw[modules]["effect"].get("productivity", 0) > 0 and (
+            "productivity" not in entities.raw[machine].get("allowed_effects", ())
+            or (r and not recipes.raw.get(r.name, {}).get("allow_productivity"))):
+        return 0
     return entities.raw[machine].get("module_slots") or 0
+
+
+def productivity(machine: str, r: Recipe, modules: str = "") -> float:
+    """The extra share of results a machine's modules make per craft of `r`."""
+    slots = module_slots(machine, modules, r)
+    return slots * items.raw[modules]["effect"].get("productivity", 0) if slots else 0
+
+
+def made(machine: str, r: Recipe, modules: str = "") -> Recipe:
+    """`r` as the machine makes it: results with the productivity bonus, which skips a
+    result's ignored_by_productivity part; `r` itself without one."""
+    bonus = productivity(machine, r, modules)
+    if not bonus:
+        return r
+    ignored = {}
+    for p in recipes.raw[r.name].get("results", []):
+        ignored[p["name"]] = ignored.get(p["name"], 0) + p.get("ignored_by_productivity", 0)
+    return replace(r, results={k: v + bonus * (v - ignored.get(k, 0)) for k, v in r.results.items()})
 
 
 def crafts_per_second(machine: str, r: Recipe, modules: str = "") -> float:
