@@ -59,6 +59,7 @@ class Plan:
     item: str  # handed over
     product: str
     far: dict[str, str] = field(default_factory=dict)  # a second input belt's lanes: the consumer's others
+    modules: str = ""  # in every machine's slots
 
     @property
     def per_side(self) -> float:
@@ -66,7 +67,7 @@ class Plan:
 
 
 def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembling-machine-2",
-         belt="transport-belt", sides=2, consumers=0, belts=1, research="") -> Plan:
+         belt="transport-belt", sides=2, consumers=0, belts=1, research="", modules="") -> Plan:
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
     if belts not in (1, 2):
@@ -96,7 +97,7 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
             raise ValueError(f"{producer} into {recipe}: {', '.join(sorted(set(near) & set(others)))} would "
                              f"be needed on both input belts")
         lanes, far = _lanes(near), _lanes(others)
-    p_crafts, c_crafts = rates.crafts_per_second(machine, pr), rates.crafts_per_second(machine, cr)
+    p_crafts, c_crafts = rates.crafts_per_second(machine, pr, modules), rates.crafts_per_second(machine, cr, modules)
     s = rates.size(machine)
 
     def from_belt(demand, who, options=REGULAR):
@@ -149,7 +150,7 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
             raise ValueError(f"{producer} into {recipe}: no chain is fed and fits its belts and inserters in {machine}")
     chain, handover = best
     return Plan(pr, cr, machine, belt, sides, chain, handover, lanes, feeders, output, p_crafts, c_crafts, s, item,
-                product, far)
+                product, far, modules)
 
 
 def _lanes(items: list[str]) -> dict[str, str]:
@@ -213,8 +214,9 @@ def ingredients(recipe="electronic-circuit", producer="copper-cable", **_) -> di
 
 
 def build(recipe="electronic-circuit", producer="copper-cable", machine="assembling-machine-2",
-          belt="transport-belt", sides=2, consumers=0, belts=1, pole="medium-electric-pole", research="") -> Blueprint:
-    p = plan(recipe, producer, machine, belt, sides, consumers, belts, research)
+          belt="transport-belt", sides=2, consumers=0, belts=1, pole="medium-electric-pole", research="",
+          modules="") -> Blueprint:
+    p = plan(recipe, producer, machine, belt, sides, consumers, belts, research, modules)
     s, n = p.size, len(p.chain)
     pitch = s + 1
     length = n * pitch - 1
@@ -259,6 +261,7 @@ def build(recipe="electronic-circuit", producer="copper-cable", machine="assembl
             y0 = k * pitch
             recipe_name = p.producer.name if m == "P" else p.consumer.name
             bp.entities.append(p.machine, tile_position=(c["machine"], y0), recipe=recipe_name)
+            rates.request_modules(bp.entities[-1], p.machine, p.producer if m == "P" else p.consumer, p.modules)
             powered.append((c["machine"] + s / 2, y0 + s / 2, rates.half_width(p.machine)))
             inserter, count = p.feeders[m]
             for r in range(count):

@@ -260,6 +260,18 @@ class Validator(unittest.TestCase):
             '/sc local r = game.forces.player.recipes rcon.print(tostring(r["steel-plate"].enabled))')
         self.assertEqual(recipes.strip(), "false")
 
+    def test_requested_modules_are_installed_on_build(self):
+        # A built ghost leaves its modules as an item request for bots; a test has none.
+        bp = Blueprint()
+        bp.entities.append("assembling-machine-2", tile_position=(0, 0), recipe="iron-gear-wheel")
+        bp.entities[0].request_modules("efficiency-module", (0, 1))
+        self.server.call("circuit_setup", encode(bp.to_dict()))
+        got = json.loads(self.server.command(
+            '/sc local s = storage.circuit.surface rcon.print(helpers.table_to_json{'
+            'modules = s.find_entities_filtered{name = "assembling-machine-2"}[1].get_module_inventory().get_item_count(), '
+            'proxies = #s.find_entities_filtered{name = "item-request-proxy"}})'))
+        self.assertEqual(got, {"modules": 2, "proxies": 0})
+
     def test_assembly_rows_reach_rated_output(self):
         # One per layout feature: two fast inserters, two ingredients on one
         # belt, a second belt through long-handed inserters, poles in gap rows.

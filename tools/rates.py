@@ -5,9 +5,11 @@ Recipes, machines and belts come from Draftsman's data, which matches the
 come from the game itself: tools/inserter_rates.json, written by
 `python -m validator.measure`.
 
-No modules or beacons: a machine crafts at its crafting_speed and an inserter
-moves what the measurement saw. Inserter rates take research (as bp takes it,
-"inserter-capacity-bonus=7"): none unless given, else the rates measured at it.
+A machine crafts at its crafting_speed and its modules' speed effect (speed and
+efficiency modules, as bp takes them, "modules=speed-module-3"; no beacons, no
+power), and an inserter moves what the measurement saw. Inserter rates take
+research (as bp takes it, "inserter-capacity-bonus=7"): none unless given, else
+the rates measured at it.
 """
 
 import json
@@ -16,7 +18,7 @@ from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 
-from draftsman.data import entities, recipes
+from draftsman.data import entities, items, recipes
 
 INSERTER_RATES = Path(__file__).resolve().parent / "inserter_rates.json"
 DEFAULT_CRAFT_TIME = 0.5  # a recipe without energy_required
@@ -72,11 +74,39 @@ def recipe_any(name: str) -> Recipe:
                   tuple(r.get("categories", DEFAULT_CATEGORIES)), fluids)
 
 
-def crafts_per_second(machine: str, r: Recipe) -> float:
+def check_modules(modules: str = "") -> None:
+    """Refuses what isn't a speed or efficiency module; "" is none."""
+    if not modules:
+        return
+    if modules not in items.raw:
+        raise ValueError(f"unknown item {modules!r}")
+    if items.raw[modules].get("type") != "module" or "effect" not in items.raw[modules]:
+        raise ValueError(f"{modules} is not a module")
+    if items.raw[modules]["effect"].get("productivity", 0) > 0:
+        raise ValueError(f"{modules}: productivity modules are not supported yet")
+
+
+def module_slots(machine: str, modules: str = "", r: Recipe | None = None) -> int:
+    """Slots a machine fills with `modules`: none without modules, slots or (for `r`) speed."""
+    check_modules(modules)
+    if not modules or (r and not recipes.raw.get(r.name, {}).get("allow_speed", True)):
+        return 0
+    return entities.raw[machine].get("module_slots") or 0
+
+
+def crafts_per_second(machine: str, r: Recipe, modules: str = "") -> float:
     proto = entities.raw[machine]
     if not set(r.categories) & set(proto.get("crafting_categories", [])):
         raise ValueError(f"{machine} can't craft {r.name} (categories {list(r.categories)})")
-    return proto["crafting_speed"] / r.time
+    slots = module_slots(machine, modules, r)
+    speed = items.raw[modules]["effect"].get("speed", 0) if slots else 0
+    return proto["crafting_speed"] * max(0.2, 1 + slots * speed) / r.time  # the game keeps 20% speed at least
+
+
+def request_modules(entity, machine: str, r: Recipe, modules: str = "") -> None:
+    """Fills a placed machine's module slots."""
+    if slots := module_slots(machine, modules, r):
+        entity.request_modules(modules, range(slots))
 
 
 def size(entity: str) -> int:

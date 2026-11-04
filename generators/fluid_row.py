@@ -58,6 +58,7 @@ class Plan:
     output: tuple[str, int]
     size: int
     gap: int = 0
+    modules: str = ""
 
     @property
     def per_side(self) -> float:
@@ -79,7 +80,7 @@ class Plan:
 
 
 def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
-          research="") -> list[Plan]:
+          research="", modules="") -> list[Plan]:
     """Ingredient layouts that fit the belts and inserters, best first."""
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
@@ -89,7 +90,7 @@ def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, mach
     if len(r.results) != 1:
         raise ValueError(f"{recipe}: a row carries one product")
     machine = machine or next((m for m in MACHINES if _crafts(m, r)), MACHINES[0])
-    crafts = rates.crafts_per_second(machine, r)
+    crafts = rates.crafts_per_second(machine, r, modules)
     _input_face(machine)  # refuses machines whose fluid inputs aren't on one face
     (product, out), = r.results.items()
     (fluid,) = r.fluids
@@ -123,7 +124,7 @@ def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, mach
             fewest = used if fewest is None else min(fewest, used)
             continue
         candidates.append(Plan(r, machine, belt, sides, 0, limit, crafts, product, fluid, near, sorted(rest),
-                               feeders, output, s))
+                               feeders, output, s, modules=modules))
     if fewest is not None:
         why.add(f"one machine needs at least {fewest} inserters on a side where {s} fit")
     if not candidates:
@@ -159,9 +160,9 @@ def plan(pole="medium-electric-pole", **params) -> Plan:
 
 
 def build(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
-          pole="medium-electric-pole", research="") -> Blueprint:
+          pole="medium-electric-pole", research="", modules="") -> Blueprint:
     p = plan(pole, recipe=recipe, machine=machine, belt=belt, sides=sides, machines=machines, inserter=inserter,
-             research=research)
+             research=research, modules=modules)
     return _build(p, pole)
 
 
@@ -234,6 +235,7 @@ def _build(p: Plan, pole: str) -> Blueprint:
             y0 = m * pitch
             bp.entities.append(p.machine, tile_position=(c["machine"], y0), direction=turn[side],
                                recipe=p.recipe.name)
+            rates.request_modules(bp.entities[-1], p.machine, p.recipe, p.modules)
             powered.append((c["machine"] + s / 2, y0 + s / 2, rates.half_width(p.machine)))
             jobs = [(i, k, west) for i, k in p.feeders] + [(p.output[0], p.output[1], not west)]
             row = 0

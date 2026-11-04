@@ -58,6 +58,7 @@ class Plan:
     output: tuple[str, int] = ("inserter", 0)
     per_belt: int = 2  # machines a belt serves: one on each side, or one when two need too much
     outlets: frozenset = frozenset()  # (side, fluid) the block's outputs leave by: a fluid can be both
+    modules: str = ""  # in every machine's slots
 
     def fluids(self, side: str) -> list[str]:
         """Fluids on a side, nearest line first."""
@@ -70,7 +71,7 @@ class Plan:
 
 
 def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-belt", inserter="",
-         research="") -> Plan:
+         research="", modules="") -> Plan:
     if recipe not in recipes.raw:
         raise ValueError(f"unknown recipe {recipe!r}")
     r = recipes.raw[recipe]
@@ -84,7 +85,7 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
     machine = machine or next((m for m in MACHINES if set(categories) & set(entities.raw[m]["crafting_categories"])), "")
     if not machine:
         raise ValueError(f"{recipe}: no chemical plant or refinery crafts it")
-    crafts = entities.raw[machine]["crafting_speed"] / r.get("energy_required", rates.DEFAULT_CRAFT_TIME)
+    crafts = rates.crafts_per_second(machine, rates.recipe_any(recipe), modules)
     s = rates.size(machine)
 
     # Fluid boxes take the recipe's fluids in order: inputs to input boxes, outputs to output boxes.
@@ -106,7 +107,7 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
         raise ValueError(f"{recipe}: more fluids than {machine} has boxes")
 
     p = Plan(recipe, machine, machines, belt, s, crafts, dict(fluids_in + items_in), dict(fluids_out + items_out),
-             sides, [i for i, _ in items_in], outlets=frozenset(outlets))
+             sides, [i for i, _ in items_in], outlets=frozenset(outlets), modules=modules)
     if items_out:
         if len(items_out) > 1 or items_in:
             raise ValueError(f"{recipe}: a block's belts carry ingredients or one product, not both")
@@ -139,8 +140,8 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
 
 
 def build(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-belt", inserter="",
-          pole="medium-electric-pole", research="") -> Blueprint:
-    p = plan(recipe, machine, machines, belt, inserter, research)
+          pole="medium-electric-pole", research="", modules="") -> Blueprint:
+    p = plan(recipe, machine, machines, belt, inserter, research, modules)
     s, n = p.size, p.machines
     items = bool(p.items_in or p.item_out)
 
@@ -205,6 +206,7 @@ def build(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-b
     powered = []
     for m, x0 in enumerate(x0s):
         put(p.machine, (x0, 0), recipe=p.recipe)
+        rates.request_modules(bp.entities[-1], p.machine, rates.recipe_any(p.recipe), p.modules)
         taken.update((x0 + dx, dy) for dx in range(s) for dy in range(s))
         powered.append((x0 + s / 2, s / 2, rates.half_width(p.machine)))
 

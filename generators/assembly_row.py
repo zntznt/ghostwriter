@@ -49,6 +49,7 @@ class Plan:
     output: tuple[str, int]  # inserter, count per machine
     size: int  # machine footprint
     gap: int = 0  # empty rows after each machine, for poles when the columns are full
+    modules: str = ""  # in every machine's slots
 
     @property
     def per_side(self) -> float:
@@ -64,14 +65,14 @@ class Plan:
 
 
 def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,
-          machines=0, inserter="", input_belts=0, research="") -> list[Plan]:
+          machines=0, inserter="", input_belts=0, research="", modules="") -> list[Plan]:
     """Input layouts that fit the belts and inserters, best first."""
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
     r = rates.recipe(recipe)
     if len(r.results) != 1:
         raise ValueError(f"{recipe}: a row carries one product")
-    crafts = rates.crafts_per_second(machine, r)
+    crafts = rates.crafts_per_second(machine, r, modules)
     (product, out_amount), = r.results.items()
     lane = rates.lane_rate(belt)
     s = rates.size(machine)
@@ -105,7 +106,8 @@ def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transp
             need = max(sum(k for _, k in feeders), output[1])
             fewest = need if fewest is None else min(fewest, need)
             continue
-        candidates.append(Plan(r, machine, belt, sides, 0, limit, crafts, product, lanes, feeders, output, s))
+        candidates.append(Plan(r, machine, belt, sides, 0, limit, crafts, product, lanes, feeders, output, s,
+                               modules=modules))
     if fewest is not None:
         why.add(f"one machine needs at least {fewest} inserters on a side where {s} fit")
     if not candidates:
@@ -153,11 +155,12 @@ def plan(pole="medium-electric-pole", **params) -> Plan:
 
 
 def build(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,
-          machines=0, inserter="", input_belts=0, pole="medium-electric-pole", research="") -> Blueprint:
+          machines=0, inserter="", input_belts=0, pole="medium-electric-pole", research="", modules="") -> Blueprint:
     """research: inserter research the row is sized for (e.g. inserter-capacity-bonus=7), at
-    rates measured in game at it; none by default."""
+    rates measured in game at it; none by default. modules: a speed or efficiency module in every
+    machine's slots, the row sized for its speed."""
     p = plan(pole, recipe=recipe, machine=machine, belt=belt, sides=sides, machines=machines,
-             inserter=inserter, input_belts=input_belts, research=research)
+             inserter=inserter, input_belts=input_belts, research=research, modules=modules)
     return _build(p, pole)
 
 
@@ -204,6 +207,7 @@ def _build(p: Plan, pole: str) -> Blueprint:
         for m in range(n):
             y0 = m * pitch
             bp.entities.append(p.machine, tile_position=(c["machine"], y0), recipe=p.recipe.name)
+            rates.request_modules(bp.entities[-1], p.machine, p.recipe, p.modules)
             powered.append((c["machine"] + s / 2, y0 + s / 2, rates.half_width(p.machine)))
             row = 0
             for inserter, k in p.feeders:
