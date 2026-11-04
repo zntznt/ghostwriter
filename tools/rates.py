@@ -8,15 +8,14 @@ come from the game itself: tools/inserter_rates.json, written by
 A machine crafts at its crafting_speed and its modules' speed effect (as bp
 takes them, "modules=speed-module-3"; no beacons, no power). Productivity modules
 also make more per craft (made()), only in machines and recipes that allow
-productivity; elsewhere they aren't placed. An inserter moves what the measurement saw. Inserter rates take
-research (as bp takes it, "inserter-capacity-bonus=7"): none unless given, else
-the rates measured at it.
+productivity; elsewhere they aren't placed. An inserter moves what the
+measurement saw. Inserter rates take research (as bp takes it,
+"inserter-capacity-bonus=7"): none unless given, else the rates measured at it.
 """
 
 import json
-import dataclasses
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
 
@@ -114,7 +113,7 @@ def made(machine: str, r: Recipe, modules: str = "") -> Recipe:
     ignored = {}
     for p in recipes.raw[r.name].get("results", []):
         ignored[p["name"]] = ignored.get(p["name"], 0) + p.get("ignored_by_productivity", 0)
-    return dataclasses.replace(r, results={k: v + bonus * (v - ignored.get(k, 0)) for k, v in r.results.items()})
+    return replace(r, results={k: v + bonus * (v - ignored.get(k, 0)) for k, v in r.results.items()})
 
 
 def crafts_per_second(machine: str, r: Recipe, modules: str = "") -> float:
