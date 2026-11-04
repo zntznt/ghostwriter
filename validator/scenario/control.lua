@@ -229,6 +229,22 @@ local function site_for(entities, area)
   return best.surface, best.tile
 end
 
+-- Revive a ghost and hand its item requests (modules) straight to the entity:
+-- a bot would bring them in a real game, a test has no bots. Returns the entity.
+local function revive(g)
+  local _, entity, proxy = g.revive{return_item_request_proxy = true}
+  if entity and proxy and proxy.valid then
+    for _, plan in pairs(proxy.insert_plan) do
+      for _, at in pairs(plan.items.in_inventory or {}) do
+        entity.get_inventory(at.inventory)[at.stack + 1].set_stack{
+          name = plan.id.name, quality = plan.id.quality or "normal", count = at.count or 1}
+      end
+    end
+    proxy.destroy()
+  end
+  return entity
+end
+
 -- Build a blueprint where its entities stand in the blueprint (absolute
 -- snapping on a 2-tile grid keeps every position, rails included), on a surface
 -- and tiles that meet its entities' needs, then revive it. Several passes, so
@@ -269,7 +285,7 @@ local function place(stack)
       if g.valid and g.name == "entity-ghost" then
         local number = number_at[key(g.ghost_name, g.position.x, g.position.y)]
         local name = g.ghost_name
-        local _, entity = g.revive()
+        local entity = revive(g)
         if entity then
           progress = true
           count[name] = (count[name] or 0) + 1
@@ -1280,7 +1296,7 @@ remote.add_interface("ghostwriter", {
       local progress = false
       for _, g in pairs(ghosts) do
         if g.valid and g.name == "entity-ghost" then
-          local _, entity = g.revive()
+          local entity = revive(g)
           if entity then progress, built = true, built + 1 end
         end
       end
