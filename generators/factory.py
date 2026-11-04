@@ -139,15 +139,16 @@ class Job:
 
 def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
                    furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, cells=0, research="",
-                   modules=""):
+                   modules="", beacons=""):
     """Rows and their lines (which line feeds each port), before they're laid out.
     cells: 1 fuses each producer only one row uses into a cell with it, 2 also each
     shared producer into every row that takes a cell (production.fuse). research: the
-    inserter research rows are sized for, and modules: the module in every machine
-    (production.solve)."""
+    inserter research rows are sized for, modules: the module in every machine, and
+    beacons: the module in beacons around assembly rows' machines (production.solve)."""
     if belt not in KITS:
         raise ValueError(f"belt is one of {list(KITS)}")
-    steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules)
+    steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules,
+                                     beacons)
     if cells:
         steps = production.fuse(steps, item, belt, shared=cells == 2)
     rows = [_row(s) for s in steps for _ in range(s.rows)]
@@ -156,9 +157,10 @@ def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machin
 
 
 def plan(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-         furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, research="", modules=""):
+         furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, research="", modules="", beacons=""):
     """Rows, lines and corridor jobs, with every row and line placed."""
-    p = rows_and_lines(item, rate, machine, belt, smelt, furnace, raw, oil, fill, research=research, modules=modules)
+    p = rows_and_lines(item, rate, machine, belt, smelt, furnace, raw, oil, fill, research=research, modules=modules,
+                       beacons=beacons)
     jobs = _jobs(p["rows"], p["lines"])
     layout = _allocate(p["rows"], jobs, p["lines"])
     _columns(p["lines"])
@@ -488,7 +490,7 @@ class Canvas:
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
           furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="compact", budget=None, cells=1,
-          research="", effort=1, modules="") -> Blueprint:
+          research="", effort=1, modules="", beacons="") -> Blueprint:
     """fill: the share of a belt a line made here may carry before it's split.
     layout: "compact" (rows on shelves with their products handed over directly,
     tools/compact.py), or "bus" (every row on one bus); compact falls back to the bus,
@@ -503,10 +505,10 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     them. research: inserter research ("inserter-capacity-bonus=7") the rows are sized
     for; the build moves its rate only with that researched. Compact also tries the rows
     sized without it, and keeps them if smaller. modules: a module in every
-    machine (production.solve)."""
+    machine; beacons: a module in beacons around assembly rows' machines (production.solve)."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill, **({"research": research} if research else {}),
-                  **({"modules": modules} if modules else {}))
+                  **({"modules": modules} if modules else {}), **({"beacons": beacons} if beacons else {}))
     if line := production.oil_line(item, rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace,
                                    raw=raw, oil=oil, research=research, modules=modules):
         print(line, file=sys.stderr)
