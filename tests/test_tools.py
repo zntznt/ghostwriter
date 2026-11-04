@@ -976,6 +976,21 @@ class Modules(unittest.TestCase):
         stone = column(modules="speed-module")
         self.assertFalse(any("items" in e for e in stone["entities"]))
 
+    def test_a_smelting_column_picks_inserters_its_furnaces_need(self):
+        # Measured in game: a basic inserter can't feed an electric furnace with speed-module-3s
+        # (1.25 ore/s), and under productivity, out-of-step furnaces leave gaps on the plate
+        # lane too short for basic inserters to drop into: those columns fell 5 to 10% short.
+        def inserters(**params):
+            bp = smelting_column.build(furnace="electric-furnace", **params).to_dict()["blueprint"]
+            return Counter(e["name"] for e in bp["entities"] if "inserter" in e["name"])
+
+        self.assertEqual(inserters(), {"inserter": 48})
+        self.assertEqual(inserters(modules="speed-module-3"), {"fast-inserter": 24})
+        self.assertEqual(inserters(modules="productivity-module-3"), {"inserter": 28, "fast-inserter": 28})
+        self.assertEqual(inserters(modules="productivity-module-3", inserter="inserter"), {"inserter": 56})
+        self.assertEqual(Counter(e["name"] for e in smelting_column.build().to_dict()["blueprint"]["entities"]
+                                 if "inserter" in e["name"]), {"inserter": 96})
+
     def test_rows_are_sized_with_the_speed(self):
         self.assertEqual(smelting_column.plan("electric-furnace").limit, 12)
         self.assertEqual(smelting_column.plan("electric-furnace", modules="speed-module").limit, 8)  # 7.5 / 0.875

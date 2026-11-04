@@ -25,6 +25,8 @@ from draftsman.constants import Direction
 from tools import layout, rates
 
 LANES = ("left", "right")
+INSERTERS = ("inserter", "fast-inserter")
+MARGIN = 0.85  # use at most this share of an inserter's measured rate
 
 
 @dataclass
@@ -40,6 +42,7 @@ class Plan:
     lane: float  # items/s per belt lane
     limit: int  # furnaces per side the belts can carry
     craft: float  # seconds per craft
+    inserters: tuple[str, str]  # input, output
 
     @property
     def per_side(self) -> float:
@@ -50,7 +53,7 @@ class Plan:
 
 
 def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, modules="",
-         **_) -> Plan:
+         inserter="", **_) -> Plan:
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
     r = rates.recipe(recipe)
@@ -64,13 +67,23 @@ def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", si
     ore_rate, product_rate = ore_amount * crafts, product_amount * crafts
     ore_lanes = 1 if burner else 2
     limit = math.floor(min(lane / product_rate, ore_lanes * lane / ore_rate) + 1e-9)
+    # Out-of-step furnaces (productivity) leave gaps on the plate lane too short for a
+    # basic inserter to drop into: measured 5 to 10% short in game, fast inserters keep up.
+    outs = INSERTERS[1:] if rates.productivity(furnace, r, modules) else INSERTERS
+    inserters = []
+    for demand, from_belt, options in ((ore_rate, True, INSERTERS), (product_rate, False, outs)):
+        picked, count = rates.fewest_inserters(demand, belt, from_belt, (inserter,) if inserter else options, MARGIN)
+        if count > 1 and not inserter:
+            raise ValueError(f"one {furnace} moves {demand:g}/s, more than one {picked} does on {belt}")
+        inserters.append(picked)
     return Plan(furnaces or limit, sides, rates.size(furnace), burner, ore, product,
-                ore_rate, product_rate, lane, limit, 1 / crafts)
+                ore_rate, product_rate, lane, limit, 1 / crafts, tuple(inserters))
 
 
-def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", inserter="inserter",
+def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", inserter="",
           pole="medium-electric-pole", sides=2, furnaces=0, modules="") -> Blueprint:
-    p = plan(furnace, recipe, belt, sides, furnaces, modules)
+    """inserter: both inserters of every furnace; by default the slowest that keeps up."""
+    p = plan(furnace, recipe, belt, sides, furnaces, modules, inserter)
     s, n = p.size, p.furnaces
     length = n * s
     ins_offset = (s - 1) // 2  # inserter row within each furnace's span; the rest is free for poles
@@ -102,7 +115,6 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
                                **({"id": f"ore_{side}"} if bottom else {}))
 
     powered = []  # (centre x, centre y, half width) of everything that needs power
-    ins_half = rates.half_width(inserter)
     for side, (ore_x, in_x, furnace_x, out_x) in columns.items():
         west = side == "left"
         for k in range(n):
@@ -112,9 +124,9 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
             if not p.burner:
                 powered.append((furnace_x + s / 2, y + s / 2, rates.half_width(furnace)))
             # Input takes from the ore belt, output drops toward the plate belt.
-            for x, pick_from_west in ((in_x, west), (out_x, west)):
-                bp.entities.append(inserter, tile_position=(x, y + ins_offset), direction=layout.facing(pick_from_west))
-                powered.append((x + 0.5, y + ins_offset + 0.5, ins_half))
+            for x, ins in zip((in_x, out_x), p.inserters):
+                bp.entities.append(ins, tile_position=(x, y + ins_offset), direction=layout.facing(west))
+                powered.append((x + 0.5, y + ins_offset + 0.5, rates.half_width(ins)))
 
     inserter_columns = sorted(c for cols in columns.values() for c in (cols[1], cols[3]))
     free_rows = [k * s + o for k in range(n) for o in range(s) if o != ins_offset]
