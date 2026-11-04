@@ -3105,5 +3105,88 @@ class Trip(unittest.TestCase):
         self.assertIn("best: turn", out.getvalue())
 
 
+class Observe(unittest.TestCase):
+    """The observer's report over two hand-made snapshots a minute apart."""
+
+    @staticmethod
+    def machines(first, recipe, n, speed, crafts, machine="assembling-machine-2", energy=0.5, modules=(),
+                 beacons=(), productivity=0, surface="nauvis"):
+        """n machines from unit `first`, each finishing `crafts` crafts in the minute."""
+        mods = [{"name": m, "quality": "normal", "count": c} for m, c in modules]
+        return [({"unit": u, "surface": surface, "name": machine, "recipe": recipe, "energy": energy, "x": u, "y": 0,
+                  "speed": speed, "productivity": productivity, "finished": 0, "modules": mods,
+                  "beacons": list(beacons)},
+                 crafts) for u in range(first, first + n)]
+
+    @staticmethod
+    def report(groups, statuses, area=None):
+        from tools import observe
+
+        made = [m for g in groups for m in g]
+        first = {"tick": 0, "machines": [m for m, _ in made]}
+        second = {"tick": 3600, "machines": [dict(m, finished=c) for m, c in made]}
+        samples = [{"tick": t * 60, "statuses": {str(m["unit"]): statuses(m, t) for m, _ in made}} for t in range(10)]
+        return observe.report(first, second, samples, area)
+
+    def test_a_starved_group_says_how_many_machines_its_inputs_feed(self):
+        # 12 machines rated 1.5 crafts/s each make 5/s between them: the inputs feed about 4.
+        rows = self.machines(1, "electronic-circuit", 12, 0.75, 25)
+        [g] = self.report([rows], lambda m, t: "working" if t < 3 else "item_ingredient_shortage")
+        self.assertEqual(g["count"], 12)
+        self.assertAlmostEqual(g["products"]["electronic-circuit"]["actual"], 5)
+        self.assertAlmostEqual(g["products"]["electronic-circuit"]["rated"], 18)
+        self.assertAlmostEqual(g["share"], 5 / 18)
+        self.assertAlmostEqual(g["statuses"]["item_ingredient_shortage"], 0.7)
+        self.assertEqual(g["mismatch"], [])
+        self.assertIn("feed about 4 of 12", g["diagnosis"])
+
+    def test_a_group_at_its_rate_is_working(self):
+        rows = self.machines(1, "iron-gear-wheel", 2, 0.75, 90)
+        [g] = self.report([rows], lambda m, t: "working")
+        self.assertAlmostEqual(g["share"], 1)
+        self.assertAlmostEqual(g["products"]["iron-gear-wheel"]["actual"], 3)
+        self.assertEqual(g["diagnosis"], "at rate")
+
+    def test_two_groups_making_the_same_item_are_kept_apart(self):
+        slow = self.machines(1, "copper-cable", 2, 0.75, 45)
+        fast = self.machines(10, "copper-cable", 2, 1.25, 75, machine="assembling-machine-3")
+        a, b = sorted(self.report([slow, fast], lambda m, t: "working"), key=lambda g: g["machine"])
+        self.assertEqual((a["machine"], b["machine"]), ("assembling-machine-2", "assembling-machine-3"))
+        self.assertAlmostEqual(a["products"]["copper-cable"]["actual"], 3)
+        self.assertAlmostEqual(b["products"]["copper-cable"]["actual"], 5)
+
+    def test_an_area_keeps_only_the_machines_in_it(self):
+        rows = self.machines(1, "copper-cable", 6, 0.75, 45)
+        [g] = self.report([rows], lambda m, t: "working", area=(0, -1, 3, 1))
+        self.assertEqual(g["count"], 3)
+
+    def test_a_crafting_speed_the_model_doesnt_predict_is_a_mismatch(self):
+        # Two speed module 3 make an assembling machine 2 craft at 0.75 * 2; the game says 1.2.
+        rows = self.machines(1, "iron-gear-wheel", 3, 1.2, 90, modules=[("speed-module-3", 2)])
+        [g] = self.report([rows], lambda m, t: "working")
+        self.assertEqual(len(g["mismatch"]), 1)
+        self.assertIn("crafting_speed 1.2 in game, model 1.5", g["mismatch"][0])
+        self.assertAlmostEqual(g["model_crafting_speed"], 1.5)
+
+    def test_beacons_count_in_the_model(self):
+        beacon = {"name": "beacon", "modules": [{"name": "speed-module-3", "quality": "normal", "count": 2}]}
+        speed = 0.75 * (1 + 2 * 0.5 + 2 * 2 * 0.5 * 1.5 * 2 ** -0.5)
+        rows = self.machines(1, "automation-science-pack", 2, speed, 30, energy=5, modules=[("speed-module-3", 2)],
+                             beacons=[beacon, beacon])
+        [g] = self.report([rows], lambda m, t: "working")
+        self.assertEqual(g["mismatch"], [])
+        self.assertAlmostEqual(g["model_crafting_speed"], speed, places=4)  # the profile is 0.7071
+
+    def test_a_recipe_the_model_cant_parse_is_reported_unmodelled(self):
+        odd = self.machines(1, "uranium-processing", 2, 0.75, 3, machine="centrifuge", energy=12)
+        modded = self.machines(5, "modded-widget", 1, 1, 6, machine="modded-assembler", energy=1)
+        groups = self.report([odd, modded], lambda m, t: "working")
+        self.assertEqual(len(groups), 2)
+        for g in groups:
+            self.assertTrue(g["unmodelled"], g)
+            self.assertEqual(g["products"], {})
+            self.assertAlmostEqual(g["crafts_per_second"], g["count"] * (3 if g["count"] == 2 else 6) / 60)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,13 +16,13 @@ from tests.test_tools import GAME_21, HANDOFF, generated, make_book
 from generators import (assembly_row, cell, factory, fluid_block, fluid_row, gated_requester, platform, production,
                         smelting_column)
 from tools.codec import decode, encode
-from tools import rates
+from tools import observe, rates
 from tools.factorio import locate
 from tools.library import entries
 from tools.settings import game_settings, registry
-from validator.circuit import Case, Expect, Inject, run_circuit_tests
+from validator.circuit import Case, Expect, Inject, _ok, _wait_ticks, run_circuit_tests
 from validator.flight import SPEED, Flight, _step, run_flight, start_flight
-from validator.flow import Flow, run_flow_tests
+from validator.flow import SPEED as FLOW_SPEED, Flow, run_flow_tests
 from validator.tests_file import library_tests
 from validator.server import Server
 from validator.validate import Report, validate
@@ -1309,6 +1309,40 @@ class Validator(unittest.TestCase):
         self.assertEqual(flown.built, 0)
         self.assertTrue(any("built 0 of 2" in w for w in report.warnings), report.lines())
         self.assertEqual(flown.km, 0)
+
+    def observe_row(self, seconds=120, **params):
+        """The observer's groups for an assembly row run as its flow test, past its warmup."""
+        bp = assembly_row.build(**params)
+        ids = {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+        [flow] = assembly_row.flow_tests(**params)
+        _ok(self.server.call("flow_setup", json.dumps({"blueprint": encode(bp.to_dict()), "speed": FLOW_SPEED})))
+        try:
+            _ok(self.server.call("flow_start", json.dumps({
+                "feeds": [{"entity": ids[f.entity], "lane": f.lane, "item": f.item, "pooled": False} for f in flow.feed],
+                "drains": [ids[d] for d in flow.drain], "fluids": []})))
+            _wait_ticks(self.server, int(flow.warmup * 60), timeout=60)
+            groups = observe.observe(self.server.rcon, seconds)
+            print("\n".join(observe.lines(groups)))
+            return [g for g in groups if g["recipe"] == params["recipe"]]
+        finally:
+            self.server.call("flow_teardown")
+
+    def test_the_observer_finds_an_overbuilt_row_short_of_ingredients(self):
+        # Six circuit machines a side where one belt feeds about four in all.
+        [g] = self.observe_row(recipe="electronic-circuit", machines=6)
+        self.assertEqual(g["count"], 12)
+        self.assertAlmostEqual(g["products"]["electronic-circuit"]["actual"], 5, delta=0.5)
+        self.assertAlmostEqual(g["products"]["electronic-circuit"]["rated"], 18)
+        self.assertIn("ingredient shortage: the inputs feed about", g["diagnosis"])
+        self.assertEqual((g["mismatch"], g["unmodelled"]), ([], None))
+
+    def test_the_observer_models_modules_and_beacons(self):
+        [g] = self.observe_row(recipe="automation-science-pack", modules="speed-module-3", beacons="speed-module-3",
+                               sides=1, machines=2)
+        self.assertEqual((g["mismatch"], g["unmodelled"]), ([], None))
+        self.assertGreater(g["crafting_speed"], 0.75 * 2)  # the beacons count
+        self.assertAlmostEqual(g["crafting_speed"], g["model_crafting_speed"], places=4)
+        self.assertEqual(g["diagnosis"], "at rate")
 
     def test_flow_expectation_is_a_rate(self):
         data, ids = self.column(furnaces=2)
