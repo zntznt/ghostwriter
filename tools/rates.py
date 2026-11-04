@@ -102,11 +102,16 @@ def check_beacon_modules(beacons: str = "") -> None:
 def beacon_effect(machine: str, beacons: str = "", n: int = 0, effect: str = "speed") -> float:
     """The bonus to `effect` that `n` beacons with `beacons` in their slots give a machine."""
     check_beacon_modules(beacons)
-    if not beacons or not n or not entities.raw[machine].get("effect_receiver", {}).get("uses_beacon_effects", True):
+    if not beacons or not n or not takes_beacons(machine):
         return 0
     b = entities.raw["beacon"]
     return n * b["module_slots"] * items.raw[beacons]["effect"].get(effect, 0) * b["distribution_effectivity"] \
         * b["profile"][n - 1]
+
+
+def takes_beacons(machine: str) -> bool:
+    """Whether beacons affect the machine: burner furnaces take none of their effects."""
+    return entities.raw[machine].get("effect_receiver", {}).get("uses_beacon_effects", True)
 
 
 def module_slots(machine: str, modules: str = "", r: Recipe | None = None) -> int:

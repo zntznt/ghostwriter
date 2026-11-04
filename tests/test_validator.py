@@ -22,7 +22,7 @@ from tools.library import entries
 from tools.settings import game_settings, registry
 from validator.circuit import Case, Expect, Inject, run_circuit_tests
 from validator.flight import SPEED, Flight, _step, run_flight, start_flight
-from validator.flow import Flow, run_flow_tests
+from validator.flow import SPEED as FLOW_SPEED, Flow, run_flow_tests
 from validator.tests_file import library_tests
 from validator.server import Server
 from validator.validate import Report, validate
@@ -283,6 +283,26 @@ class Validator(unittest.TestCase):
 
     def test_an_electric_smelting_column_draws_its_estimate(self):
         self.assertDraws(smelting_column, furnace="electric-furnace")
+
+    def test_beaconed_smelting_columns_reach_rated_output_and_draw_their_estimate(self):
+        for params in ({}, {"modules": "productivity-module-3"}):
+            with self.subTest(**params):
+                self.assertDraws(smelting_column, furnace="electric-furnace", beacons="speed-module-3", **params)
+
+    def test_every_built_furnace_takes_the_beacons_it_is_sized_for(self):
+        # The game's own count of the beacons affecting each furnace, as built.
+        params = {"furnace": "electric-furnace", "beacons": "speed-module-3"}
+        data, _ = self.column(**params)
+        self.server.call("flow_setup", json.dumps({"blueprint": encode(data), "speed": FLOW_SPEED}))
+        try:
+            got = json.loads(self.server.command(
+                '/sc local n = {} for _, e in pairs(storage.flow.built) do '
+                'if e.valid and e.name == "electric-furnace" then n[#n + 1] = #e.get_beacons() end end '
+                'rcon.print(helpers.table_to_json(n))'))
+        finally:
+            self.server.call("flow_teardown")
+        p = smelting_column.plan(**params)
+        self.assertEqual(got, [p.beacons_per_furnace] * (p.sides * p.furnaces))
 
     def test_requested_modules_are_installed_on_build(self):
         # A built ghost leaves its modules as an item request for bots; a test has none.
