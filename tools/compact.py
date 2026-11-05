@@ -658,7 +658,7 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False, close=Fal
         if ln in raw:  # used far off: onto the bus, in the channel above its rows
             bus_entry[id(ln)] = trunk
             continue
-        if ln.top == "product":
+        if ln.top:  # the product, or a left-over item (lava's stone) taken away
             column = next((x for d in range(x_max) for x in (trunk[0] + d, trunk[0] - d)
                            if yard[-1][0] <= x <= x_max and free(x, y_out)), None)
             if column is None:
@@ -747,7 +747,8 @@ def _attempt(p, shelves, heights, bus_far=True, work=None, west=False, close=Fal
     except ValueError as e:
         raise Blocked(str(e)) from None
 
-    label, description = f"Factory: {p['rate']:g} {p['item']}/s, compact", _description(p, raw, len(outlets))
+    label = f"Factory: {p['rate']:g} {p['item']}/s, compact"
+    description = _description(p, raw, sum(name == p["item"] for _, _, name in outlets))
 
     def blueprint():  # built only for the layout kept: most of an attempt's time went to it
         bp = Blueprint()
@@ -1017,14 +1018,14 @@ def _description(p, raw, outlets) -> str:
     supplied = [", ".join(f"{i} {d:.3g}/s" for i, d in ln.lanes.values()) if ln.lanes else
                 f"{ln.name} {ln.demand:.3g}/s" for ln in raw]
     piped = [f"{ln.name} {ln.demand:.3g}/s" for ln in lines if ln.fluid and ln.supplied]
-    left = [ln.name for ln in lines if ln.fluid and ln.top == "surplus"]
+    left = [ln.name for ln in lines if ln.top == "surplus"]
     gates = (" Cracking takes oil only while the tank by its pump holds over %d." % factory.GATE_LEVEL
              if any(r.gate for r in p["rows"]) else "")
     text = (f"{len(p['rows'])} rows on shelves, products handed over directly. Inputs enter at the bottom of the "
             f"west bus, west to east: {', '.join(supplied) or 'none'}"
             f"{'; by pipe: ' + ', '.join(piped) if piped else ''}. The product leaves at the top"
             f"{' on ' + str(outlets) + ' belts' if outlets > 1 else ''}"
-            f"{', with ' + ', '.join(left) + ' left over (use or store it, or refining stops)' if left else ''}."
+            f"{', with ' + ', '.join(left) + ' left over (use, store or take it away, or what makes it stops)' if left else ''}."
             f"{gates}{factory.production.prime_text(p['steps'])} Connect any pole to your grid.")
     if len(text.encode()) > factory.TEXT_LIMITS["description"]:
         text = (f"{len(p['rows'])} rows on shelves. Inputs ({len(raw) + len(piped)} lines) enter at the bottom, "
@@ -1042,7 +1043,7 @@ def flow_tests(p, result):
     fluids = [FluidFeed(ident, fluid, side="south") for ident, fluid in result.fluid_inputs]
     fluids += [FluidFeed(ident, fluid, side="north", sink=True, level=factory.SURPLUS_LEVEL if top == "surplus" else 0)
                for ident, fluid, top in result.fluid_outputs]
-    drains = [ident for ident, item in result.outputs if item == p["item"]]
+    drains = [ident for ident, _ in result.outputs]  # left-over items drain too
     warmup = sum(max(r.flow.warmup for r in p["rows"] if r.step is s) for s in p["steps"])
     warmup += rates.travel_seconds(p["belt"], result.height)
     window = max(r.flow.window for r in p["rows"])

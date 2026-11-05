@@ -12,7 +12,11 @@ or research=, would let the plant). Its +50% productivity shrinks what the
 ingredients' rows make. Items made with
 one fluid (plastic, batteries, processing units) get fluid rows
 (generators/fluid_row.py). With smelt=1, items a furnace makes from one ore
-get smelting columns. Everything else is an input to supply: plates by
+get smelting columns. With casting=ore (or lava), whatever a foundry casts
+from molten metal and fits a row (plates, gears, steel, pipes; cable and sticks on
+a belt fast enough) is cast in foundries (fluid rows), and the molten metal is
+melted from ore and calcite (or lava and calcite, leaving stone to take away) in
+a foundry block; the foundry's +50% shrinks what feeds it. Everything else is an input to supply: plates by
 default, fluids (units/s), items made with two fluids or as a fluid (sulfur,
 sulfuric acid), and whatever `raw` lists (comma-separated). The book's
 description gives those input rates.
@@ -28,7 +32,7 @@ import sys
 from dataclasses import dataclass
 
 from draftsman.blueprintable import BlueprintBook
-from draftsman.data import recipes
+from draftsman.data import fluids as fluid_data, recipes
 
 from generators import assembly_row, cell, fluid_block, fluid_row, smelting_column
 from tools import rates
@@ -53,6 +57,14 @@ RECIPES = {1: ("advanced-oil-processing", "basic-oil-processing", *CRACKING),
 # Solid fuel's recipes, by the oil each takes. With oil= the oil plan picks one (a fluid row);
 # without, solid fuel is made from light oil, the least oil a piece.
 SOLID_FUEL = {f: f"solid-fuel-from-{f}" for f in OIL}
+# casting=: item -> the foundry recipe that casts it from molten metal, and where molten metal
+# comes from. An item is cast where a foundry row fits it (_cast); the rest is made as before.
+CASTING = {"iron-plate": "casting-iron", "copper-plate": "casting-copper", "steel-plate": "casting-steel",
+           "iron-gear-wheel": "casting-iron-gear-wheel", "iron-stick": "casting-iron-stick",
+           "copper-cable": "casting-copper-cable", "pipe": "casting-pipe", "pipe-to-ground": "casting-pipe-to-ground",
+           "low-density-structure": "casting-low-density-structure", "concrete": "concrete-from-molten-iron"}
+MOLTEN = {"ore": {"molten-iron": "iron-ore-melting", "molten-copper": "copper-ore-melting"},
+          "lava": {"molten-iron": "molten-iron-from-lava", "molten-copper": "molten-copper-from-lava"}}
 
 
 @dataclass
@@ -69,7 +81,7 @@ class Step:
 
 def solve(item: str, rate: float, machine="assembling-machine-2", belt="transport-belt", smelt=0,
           furnace="steel-furnace", raw="", oil=0, research="", modules="",
-          beacons="") -> tuple[list[Step], dict[str, float]]:
+          beacons="", casting="") -> tuple[list[Step], dict[str, float]]:
     """Steps in build order (ingredients first), and the inputs to supply (item -> items/s,
     fluid -> units/s). A negative input is a surplus the factory makes but doesn't use.
     research: inserter research the rows are sized for (rates measured at it); it rides in
@@ -77,7 +89,8 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     module in every machine's slots (productivity: ingredients sized for what each
     machine makes); it rides in every row's params the same way. beacons: a module in
     beacons between an assembly or fluid row's machines or an electric furnace column's furnaces
-    (only there), where they make it no bigger."""
+    (only there), where they make it no bigger. casting: "ore" or "lava", molten metal's source
+    for what foundries cast (CASTING); a by-product (lava's stone) is a negative input."""
     if machine not in MACHINES:
         raise ValueError(f"machine is one of {MACHINES}")
     rates.check_modules(modules)
@@ -85,6 +98,8 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     oil = oil or 0  # the CLI's oil= arrives as ""
     if oil not in (0, *RECIPES):
         raise ValueError(f"oil is one of 0, {', '.join(map(str, RECIPES))}, not {oil!r}")
+    if casting not in ("", *MOLTEN):
+        raise ValueError(f"casting is one of '', {', '.join(MOLTEN)}, not {casting!r}")
     tiers = MACHINES[MACHINES.index(machine):]
     forced_raw = {i for i in str(raw).split(",") if i}
     how, order = {}, []
@@ -94,23 +109,24 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
             return
         if i in path:
             raise ValueError(f"recipe loop: {' -> '.join(path + [i])}")
-        how[i] = _how(i, tiers, smelt, furnace, forced_raw, oil)
+        how[i] = _how(i, tiers, smelt, furnace, forced_raw, oil, casting, cast)
         if how[i] and how[i][1]:
             for ingredient in [*how[i][1].ingredients, *how[i][1].fluids]:
                 visit(ingredient, path + [i])
         order.append(i)  # after its ingredients
 
-    visit(item, [])
-    if not how[item]:
-        raise ValueError(_supplied_only(item, furnace, forced_raw))
     extra = {"research": rates.research_key(research)} if rates.research_key(research) else {}
     if modules:
         extra["modules"] = modules
     if beacons:
         extra["beacons"] = beacons
+    cast = functools.partial(_cast, belt=belt, research=extra.get("research", "")) if casting else None
+    visit(item, [])
+    if not how[item]:
+        raise ValueError(_supplied_only(item, furnace, forced_raw))
     demand = {i: 0.0 for i in order}
     demand[item] = float(rate)
-    sized = {}
+    sized, left = {}, {}  # left: by-products made (lava's stone)
     for i in reversed(order):  # consumers before their ingredients
         if how[i] and how[i][1]:
             sized[i] = _size(i, demand[i], how[i], belt, furnace, tiers, extra)
@@ -120,8 +136,15 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
                 crafts = demand[i] / r.results[i]
                 for ingredient, amount in [*r.ingredients.items(), *r.fluids.items()]:
                     demand[ingredient] += crafts * amount
+                for k, amount in r.results.items():
+                    if k != i:
+                        left[k] = left.get(k, 0) + crafts * amount
     steps = [sized[i] for i in order if i in sized]
     inputs = {i: demand[i] for i in order if not how[i]}
+    for k, v in left.items():
+        if k in demand:  # ponytail: a by-product feeding the factory needs its line both made and supplied
+            raise ValueError(f"{k}: a by-product here is also an ingredient; pass raw={k} and take it away")
+        inputs[k] = -v
     if any((how.get(f) or (None,))[0] == "oil" and demand[f] for f in (*OIL, "solid-fuel")):
         oil_steps, oil_inputs = _oil({f: demand.get(f, 0) for f in (*OIL, "solid-fuel")}, oil, modules)
         oil_steps = [_size("solid-fuel", s.demand, ("fluid_row", rates.recipe(s.item, fluids=True)), belt,
@@ -244,15 +267,20 @@ def _supplied_only(item, furnace, forced_raw) -> str:
     except ValueError:
         r = None
     if r and len(r.ingredients) == 1 and _crafts(furnace, r):
-        return f"{item} is smelted in a furnace: pass smelt=1 to make it"
+        return f"{item} is smelted in a furnace: pass smelt=1{' or casting=ore' if item in CASTING else ''} to make it"
     return f"{item} has no recipe a factory here can make: it's an input to supply"
 
 
-def _how(item, tiers, smelt, furnace, forced_raw, oil=0):
+def _how(item, tiers, smelt, furnace, forced_raw, oil=0, casting="", cast=None):
     """(generator, recipe), ("oil", None) for oil products when oil=1, or None
-    for an input to supply."""
+    for an input to supply. With casting, molten metal is a foundry block and an item
+    cast(recipe) fits a row for is cast."""
     if item in forced_raw:
         return None
+    if casting and item in MOLTEN[casting]:
+        return "fluid_block", rates.recipe_any(MOLTEN[casting][item])
+    if casting and item in CASTING and (how := cast(CASTING[item])):
+        return how
     if item in OIL:
         return ("oil", None) if oil else None
     if item == "solid-fuel":
@@ -288,13 +316,14 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     beaconed, extra = extra, {k: v for k, v in extra.items() if k != "beacons"}
     need = demand * SLACK
     if kind == "fluid_block":  # one block, as many machines as the demand needs
-        p = fluid_block.plan(recipe=r.name, **extra)
+        p = fluid_block.plan(recipe=r.name, belt=belt, **extra)
         machines = math.ceil(need / (p.crafts * p.outputs[item]) - 1e-9)
         p = fluid_block.plan(recipe=r.name, machines=machines, belt=belt, **extra)
         return Step(item, demand, kind, {"recipe": r.name, "machines": machines, "belt": belt, **extra}, 1,
                     p.rate(item))
     errors = []
-    machines = {"assembly_row": tiers, "fluid_row": _fluid_machines(tiers)}.get(kind, ())
+    casts = ("foundry",) if r.name in CASTING.values() else ()
+    machines = {"assembly_row": tiers, "fluid_row": _fluid_machines(tiers) + casts}.get(kind, ())
     # Modules and beacons speed a machine past what its inserters feed: then the tier runs
     # without beacons, then without modules either.
     plain = {k: v for k, v in extra.items() if k != "modules"}
@@ -382,6 +411,19 @@ def _row_area(s: Step) -> int:
     from tools.density import density
 
     return s.rows * density(GENERATORS[s.generator].build(**s.params).to_dict())[0]["area"]
+
+
+def _cast(recipe, belt, research=""):
+    """How a foundry casts `recipe` on `belt`: a one-sided fluid row for one fluid, a block for
+    two; None if no row fits (cable on a yellow belt: 18/s a foundry), to make it as before."""
+    try:
+        if len(rates.recipe_any(recipe).fluids) == 1:
+            fluid_row.plan(recipe=recipe, machine="foundry", belt=belt, sides=1, research=research)
+            return "fluid_row", rates.recipe(recipe, fluids=True)
+        fluid_block.plan(recipe=recipe, belt=belt, research=research)
+        return "fluid_block", rates.recipe_any(recipe)
+    except ValueError:
+        return None
 
 
 def _block(item):
@@ -476,11 +518,8 @@ def _fuse_shared(steps: list[Step], item: str, belt: str, users: dict) -> list[S
 
 def _made(s: Step, r: rates.Recipe) -> rates.Recipe:
     """`r` as the step's rows make it: with their machines' productivity, modules' and their own."""
-    modules = s.params.get("modules", "")
-    machine = s.params.get("machine") or s.params.get("furnace")
-    if not machine and not modules:  # a fluid block: no machine of its own gives productivity
-        return r
-    return rates.made(machine or fluid_block.plan(recipe=r.name).machine, r, modules)
+    machine = s.params.get("machine") or s.params.get("furnace") or fluid_block.plan(recipe=r.name).machine
+    return rates.made(machine, r, s.params.get("modules", ""))
 
 
 def _extra(s: Step) -> dict:
@@ -507,21 +546,23 @@ def _cell_step(p: Step, c: Step, belt: str) -> Step:
 
 
 def parts(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, research="", modules="", beacons="") -> list[tuple[str, dict]]:
+          furnace="steel-furnace", raw="", oil=0, research="", modules="", beacons="",
+          casting="") -> list[tuple[str, dict]]:
     """(generator, params) of each row, in book order."""
-    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules, beacons)
+    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules, beacons, casting)
     return [(s.generator, s.params) for s in steps for _ in range(s.rows)]
 
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-          furnace="steel-furnace", raw="", oil=0, research="", modules="", beacons="") -> BlueprintBook:
-    steps, inputs = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules, beacons)
+          furnace="steel-furnace", raw="", oil=0, research="", modules="", beacons="",
+          casting="") -> BlueprintBook:
+    steps, inputs = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules, beacons, casting)
     book = BlueprintBook()
     book.label = f"Production: {rate:g} {item}/s"
     supply = ", ".join(f"{v:.3g} {k}/s" for k, v in inputs.items() if v > 0) or "nothing"
     surplus = ", ".join(f"{-v:.3g} {k}/s" for k, v in inputs.items() if v < 0)
     if surplus:
-        supply += f" (left over: {surplus}; use or store it, or the refineries stop)"
+        supply += f" (left over: {surplus}; use or store it, or what makes it stops)"
     plan = "; ".join(f"{s.item}: {s.rows} row{'s' if s.rows > 1 else ''} of {s.rate:.3g}/s "
                      f"for {s.demand:.3g}/s" for s in steps)
     tail = "The rows aren't connected: belt each row's product to the rows that use it."
@@ -550,7 +591,8 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
 
 
 def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-                furnace="steel-furnace", raw="", oil=0, research="", modules="", beacons="") -> tuple[dict, list]:
+                furnace="steel-furnace", raw="", oil=0, research="", modules="", beacons="",
+          casting="") -> tuple[dict, list]:
     """The whole book as one blueprint and one flow test: every row built side by
     side, inputs the book supplies fed without limit, and everything the book
     makes passed from its producers to its consumers through a pool. The target
@@ -559,7 +601,7 @@ def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2
 
     from validator.flow import Flow
 
-    steps, _ = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules, beacons)
+    steps, inputs = solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules, beacons, casting)
     rows = []  # (blueprint data, ids, flow) per row
     for s in steps:
         gen = GENERATORS[s.generator]
@@ -597,7 +639,9 @@ def chain_tests(item="electronic-circuit", rate=5, machine="assembling-machine-2
     for _, _, flow, _ in rows:
         for k, v in flow.expect.items():
             output[k] = output.get(k, 0) + v
-    caps = {k: max(BUFFER_MIN, BUFFER_SECONDS * v) for k, v in output.items() if k != item}
+    # A by-product item (lava's stone) nothing uses drains freely too, as it would off a belt taken away.
+    caps = {k: max(BUFFER_MIN, BUFFER_SECONDS * v) for k, v in output.items()
+            if k != item and not (inputs.get(k, 0) < 0 and k not in fluid_data.raw)}
     return data, [Flow(f"chain of {len(rows)} rows: {rate:g} {item}/s", feeds, drains, {item: float(rate)},
                        warmup=warmup, window=window, fluids=fluids, at_least=True, caps=caps,
                        research=rates.research_levels(research))]

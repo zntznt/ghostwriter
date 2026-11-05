@@ -139,16 +139,17 @@ class Job:
 
 def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
                    furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, cells=0, research="",
-                   modules="", beacons=""):
+                   modules="", beacons="", casting=""):
     """Rows and their lines (which line feeds each port), before they're laid out.
     cells: 1 fuses each producer only one row uses into a cell with it, 2 also each
     shared producer into every row that takes a cell (production.fuse). research: the
     inserter research rows are sized for, modules: the module in every machine, and
-    beacons: the module in beacons around assembly and fluid rows' machines and electric furnaces (production.solve)."""
+    beacons: the module in beacons around assembly and fluid rows' machines and electric furnaces, and
+    casting: molten metal's source for what foundries cast (production.solve)."""
     if belt not in KITS:
         raise ValueError(f"belt is one of {list(KITS)}")
     steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules,
-                                     beacons)
+                                     beacons, casting)
     if cells:
         steps = production.fuse(steps, item, belt, shared=cells == 2)
     rows = [_row(s) for s in steps for _ in range(s.rows)]
@@ -157,10 +158,10 @@ def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machin
 
 
 def plan(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
-         furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, research="", modules="", beacons=""):
+         furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, research="", modules="", beacons="", casting=""):
     """Rows, lines and corridor jobs, with every row and line placed."""
     p = rows_and_lines(item, rate, machine, belt, smelt, furnace, raw, oil, fill, research=research, modules=modules,
-                       beacons=beacons)
+                       beacons=beacons, casting=casting)
     jobs = _jobs(p["rows"], p["lines"])
     layout = _allocate(p["rows"], jobs, p["lines"])
     _columns(p["lines"])
@@ -196,8 +197,8 @@ def _row(step: production.Step) -> Row:
             per_craft = per_craft_of.get(name) or _fuel(step, recipe, name)
             port.demand[name] = port.demand.get(name, 0) + crafts * per_craft / lane_count[name]
     out = [p for p in flow.expect if p not in fluid_data.raw]
-    # A fluid row's near-lane ingredient rides on out with the product.
-    leftovers = step.generator == "fluid_row" and any(len(p.lanes) == 1 for p in ports.values())
+    # A fluid row's near-lane ingredient rides on out with the product, and a block's that has both.
+    leftovers = step.generator in ("fluid_row", "fluid_block") and any(len(p.lanes) == 1 for p in ports.values())
     result = list(ports.values())
     for d in flow.drain:
         result.append(Port("out", *at(d), name=out[0], filter=leftovers))
@@ -240,9 +241,10 @@ def _lines(rows: list[Row], inputs: dict[str, float], item: str, rate: float, be
         units = [(p, tuple(lane for lane, i in p.lanes.items() if i == name), p.demand.get(name, 0))
                  for _, p in users.get(name, [])]
         top = "product" if name == item else "surplus" if inputs.get(name, 0) < 0 else ""
-        if top == "product" and not fluid:  # the outlets at the top use it, a belt's share each
-            count = max(1, math.ceil(rate / (fill * cap) - 1e-9))
-            units = [(Port("outlet", 0, 0, name=name), (), rate / count) for _ in range(count)]
+        if top and not fluid:  # the outlets at the top use it (a left-over item too), a belt's share each
+            out = rate if top == "product" else -inputs[name]
+            count = max(1, math.ceil(out / (fill * cap) - 1e-9))
+            units = [(Port("outlet", 0, 0, name=name), (), out / count) for _ in range(count)]
         total = sum(d for _, _, d in units)
         if fluid:  # one pipe carries any amount here
             groups = [(units, [p for _, p in makers.get(name, [])])]
@@ -483,7 +485,7 @@ class Canvas:
 
 def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", belt="transport-belt", smelt=0,
           furnace="steel-furnace", raw="", oil=0, fill=MADE_FILL, layout="compact", budget=None, cells=1,
-          research="", effort=1, modules="", beacons="") -> Blueprint:
+          research="", effort=1, modules="", beacons="", casting="") -> Blueprint:
     """fill: the share of a belt a line made here may carry before it's split.
     layout: "compact" (rows on shelves with their products handed over directly,
     tools/compact.py), or "bus" (every row on one bus); compact falls back to the bus,
@@ -498,12 +500,14 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     them. research: inserter research ("inserter-capacity-bonus=7") the rows are sized
     for; the build moves its rate only with that researched. Compact also tries the rows
     sized without it, and keeps them if smaller. modules: a module in every
-    machine; beacons: a module in beacons around assembly and fluid rows' machines and electric furnaces (production.solve)."""
+    machine; beacons: a module in beacons around assembly and fluid rows' machines and electric furnaces;
+    casting: "ore" or "lava", molten metal's source for what foundries cast (production.solve)."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill, **({"research": research} if research else {}),
-                  **({"modules": modules} if modules else {}), **({"beacons": beacons} if beacons else {}))
+                  **({"modules": modules} if modules else {}), **({"beacons": beacons} if beacons else {}),
+                  **({"casting": casting} if casting else {}))
     if line := production.oil_line(item, rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace,
-                                   raw=raw, oil=oil, research=research, modules=modules):
+                                   raw=raw, oil=oil, research=research, modules=modules, casting=casting):
         print(line, file=sys.stderr)
     compact = _compact(layout, params, budget, say=True, cells=cells, effort=effort)
     p = compact[0] if compact else plan(**params)
@@ -1004,8 +1008,8 @@ def _description(p) -> str:
     lines = [ln for named in p["lines"].values() for ln in named]
     west = sorted(lines, key=lambda ln: ln.column)
     supplied = [f"{ln.name} {ln.demand:.3g}/s" for ln in west if ln.supplied]
-    out = [f"{ln.name} ({'product' if ln.top == 'product' else 'left over: use or store it, or refining stops'})"
-           for ln in west if ln.top]
+    left = {True: "left over: use or store it, or refining stops", False: "left over: take it away, or its makers stop"}
+    out = [f"{ln.name} ({'product' if ln.top == 'product' else left[ln.fluid]})" for ln in west if ln.top]
     gates = " Cracking takes oil only while the tank by its pump holds over %d." % GATE_LEVEL \
         if any(j.kind == "gate" for j in p["jobs"]) else ""
     text = (f"{len(p['rows'])} rows on a bus. Inputs enter at the bottom of the bus, west to east: "
@@ -1042,7 +1046,7 @@ def flow_tests(layout="compact", budget=None, cells=1, effort=1, **params):
             if line.fluid:
                 fluids.append(FluidFeed(ident, line.name, side="north", sink=True,
                                         level=SURPLUS_LEVEL if line.top == "surplus" else 0))
-            elif line.top == "product":
+            else:  # the product, or a left-over item taken away
                 drains.append(ident)
     # Time for every row to fill, one after another, and for items to ride the bus.
     warmup = sum(max(r.flow.warmup for r in p["rows"] if r.step is s) for s in p["steps"])
