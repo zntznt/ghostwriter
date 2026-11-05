@@ -144,7 +144,7 @@ def rows_and_lines(item="electronic-circuit", rate=5, machine="assembling-machin
     cells: 1 fuses each producer only one row uses into a cell with it, 2 also each
     shared producer into every row that takes a cell (production.fuse). research: the
     inserter research rows are sized for, modules: the module in every machine, and
-    beacons: the module in beacons around assembly and fluid rows' machines (production.solve)."""
+    beacons: the module in beacons around assembly and fluid rows' machines and electric furnaces (production.solve)."""
     if belt not in KITS:
         raise ValueError(f"belt is one of {list(KITS)}")
     steps, inputs = production.solve(item, rate, machine, belt, smelt, furnace, raw, oil, research, modules,
@@ -498,7 +498,7 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
     them. research: inserter research ("inserter-capacity-bonus=7") the rows are sized
     for; the build moves its rate only with that researched. Compact also tries the rows
     sized without it, and keeps them if smaller. modules: a module in every
-    machine; beacons: a module in beacons around assembly and fluid rows' machines (production.solve)."""
+    machine; beacons: a module in beacons around assembly and fluid rows' machines and electric furnaces (production.solve)."""
     params = dict(item=item, rate=rate, machine=machine, belt=belt, smelt=smelt, furnace=furnace, raw=raw, oil=oil,
                   fill=fill, **({"research": research} if research else {}),
                   **({"modules": modules} if modules else {}), **({"beacons": beacons} if beacons else {}))

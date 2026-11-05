@@ -14,6 +14,11 @@ ore belt (electric). Poles stand in the inserter columns' free tiles: the
 fewest columns, and the fewest rows, that power every inserter (and electric
 furnace) within wire reach. Hook the column up by feeding the ore belts from
 the bottom, taking plates off the top, and connecting any pole to your grid.
+
+With beacons (electric furnaces only: burner furnaces take no beacon effects),
+each furnace column runs beacon, furnace, beacon, ... beacon. The columns are
+too far apart for a beacon to reach across, so each furnace takes the two
+beside it; inserters and the belt limit follow the beaconed speed.
 """
 
 import math
@@ -21,10 +26,13 @@ from dataclasses import dataclass
 
 from draftsman.blueprintable import Blueprint
 from draftsman.constants import Direction
+from draftsman.data import entities
 
+from generators.fluid_row import _reaching, _spots
 from tools import layout, rates
 
 LANES = ("left", "right")
+BEACON = "beacon"
 INSERTERS = ("inserter", "fast-inserter")
 MARGIN = 0.85  # use at most this share of an inserter's measured rate
 
@@ -46,6 +54,8 @@ class Plan:
     furnace: str = "stone-furnace"
     recipe: str = "iron-plate"
     modules: str = ""
+    beacons: str = ""  # in every beacon's slots; no beacons without
+    beacons_per_furnace: int = 0
 
     @property
     def per_side(self) -> float:
@@ -57,20 +67,24 @@ class Plan:
     def watts(self, share: float = 1) -> float:
         """Average electric W making `share` of the rated output: electric furnaces and inserters."""
         n, made = self.furnaces * self.sides, share * self.sides * self.per_side
-        w = n * rates.machine_watts(self.furnace, rates.recipe(self.recipe), self.modules,
-                                    utilisation=made / (n * self.product_rate))
+        w = n * rates.machine_watts(self.furnace, rates.recipe(self.recipe), self.modules, self.beacons,
+                                    self.beacons_per_furnace, made / (n * self.product_rate))
+        w += self.sides * (self.furnaces + 1) * rates.beacon_watts() if self.beacons else 0
         return w + rates.inserter_watts(self.inserters[0], n, made * self.ore_rate / self.product_rate) \
             + rates.inserter_watts(self.inserters[1], n, made)
 
 
 def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, modules="",
-         inserter="", **_) -> Plan:
+         inserter="", beacons="", **_) -> Plan:
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
+    if beacons and not rates.takes_beacons(furnace):
+        raise ValueError(f"{furnace} takes no beacon effects: beacons need an electric furnace")
     r = rates.recipe(recipe)
     if len(r.ingredients) != 1 or len(r.results) != 1:
         raise ValueError(f"{recipe}: a column belt carries one ore and one product")
-    crafts = rates.crafts_per_second(furnace, r, modules)
+    per = beacons_per_furnace(furnace, sides) if beacons else 0
+    crafts = rates.crafts_per_second(furnace, r, modules, beacons, per)
     r = rates.made(furnace, r, modules)
     ((ore, ore_amount),), ((product, product_amount),) = r.ingredients.items(), r.results.items()
     burner = not rates.electric(furnace)
@@ -88,15 +102,27 @@ def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", si
             raise ValueError(f"one {furnace} moves {demand:g}/s, more than one {picked} does on {belt}")
         inserters.append(picked)
     return Plan(furnaces or limit, sides, rates.size(furnace), burner, ore, product,
-                ore_rate, product_rate, lane, limit, 1 / crafts, tuple(inserters), furnace, recipe, modules)
+                ore_rate, product_rate, lane, limit, 1 / crafts, tuple(inserters), furnace, recipe, modules,
+                beacons, per)
+
+
+def beacons_per_furnace(furnace: str, sides: int) -> int:
+    """Beacons reaching each furnace of a beaconed column: the fewest any furnace gets (all
+    do alike)."""
+    s, bs = rates.size(furnace), rates.size(BEACON)
+    furnaces, beacons = _spots(s, bs, 0, 3, [2, s + 5][:sides])
+    return min(_reaching(furnace, f, beacons) for f in furnaces)
 
 
 def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", inserter="",
-          pole="medium-electric-pole", sides=2, furnaces=0, modules="") -> Blueprint:
-    """inserter: both inserters of every furnace; by default the slowest that keeps up."""
-    p = plan(furnace, recipe, belt, sides, furnaces, modules, inserter)
+          pole="medium-electric-pole", sides=2, furnaces=0, modules="", beacons="") -> Blueprint:
+    """inserter: both inserters of every furnace; by default the slowest that keeps up.
+    beacons: a module in every slot of beacons between the furnaces, the column sized for
+    their speed."""
+    p = plan(furnace, recipe, belt, sides, furnaces, modules, inserter, beacons)
     s, n = p.size, p.furnaces
-    length = n * s
+    bs = rates.size(BEACON) if beacons else 0  # beacon rows before each furnace and after the last
+    length = n * (s + bs) + bs
     ins_offset = (s - 1) // 2  # inserter row within each furnace's span; the rest is free for poles
 
     # Columns from the west: ore, in, furnace, out, plates (then mirrored).
@@ -113,7 +139,9 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
         f"{n} {furnace} per side x{sides}: {sides * p.per_side:g} {p.product}/s "
         f"from {sides * p.per_side * p.ore_rate / p.product_rate:g} {p.ore}/s. {belt} carries {p.lane:g}/s per lane "
         f"(belt-limited at {p.limit} per side). Ore enters at the bottom on {ore_lane}; "
-        f"{p.product} leaves at the top. Draws about {rates.megawatts(p.watts())}. Connect any pole to your grid."
+        f"{p.product} leaves at the top. "
+        + (f"{p.beacons_per_furnace} beacons of {beacons} reach each furnace. " if beacons else "")
+        + f"Draws about {rates.megawatts(p.watts())}. Connect any pole to your grid."
     )
     bp.icons = [furnace, p.product]
 
@@ -128,8 +156,12 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
     powered = []  # (centre x, centre y, half width) of everything that needs power
     for side, (ore_x, in_x, furnace_x, out_x) in columns.items():
         west = side == "left"
-        for k in range(n):
-            y = k * s
+        spots, beacons_at = _spots(s, bs, 0, n, [furnace_x])
+        for x, y in beacons_at:
+            bp.entities.append(BEACON, tile_position=(x, y))
+            bp.entities[-1].request_modules(beacons, range(entities.raw[BEACON]["module_slots"]))
+            powered.append((x + bs / 2, y + bs / 2, rates.half_width(BEACON)))
+        for _, y in spots:
             bp.entities.append(furnace, tile_position=(furnace_x, y))
             rates.request_modules(bp.entities[-1], furnace, rates.recipe(recipe), modules)
             if not p.burner:
@@ -140,7 +172,8 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
                 powered.append((x + 0.5, y + ins_offset + 0.5, rates.half_width(ins)))
 
     inserter_columns = sorted(c for cols in columns.values() for c in (cols[1], cols[3]))
-    free_rows = [k * s + o for k in range(n) for o in range(s) if o != ins_offset]
+    taken = {y + ins_offset for _, y in _spots(s, bs, 0, n, [0])[0]}
+    free_rows = [y for y in range(length) if y not in taken]
     for x, y in layout.poles(pole, powered, {c: free_rows for c in inserter_columns}):
         bp.entities.append(pole, tile_position=(x, y))
     bp.generate_power_connections()
@@ -148,10 +181,10 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
 
 
 def flow_tests(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, modules="",
-               **_):
+               beacons="", **_):
     from validator.flow import Feed, Flow
 
-    p = plan(furnace, recipe, belt, sides, furnaces, modules)
+    p = plan(furnace, recipe, belt, sides, furnaces, modules, beacons=beacons)
     feeds = []
     for side in LANES[:sides]:
         fuel = "coal" if p.burner else p.ore

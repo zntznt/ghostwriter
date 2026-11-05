@@ -70,7 +70,8 @@ def solve(item: str, rate: float, machine="assembling-machine-2", belt="transpor
     the params of every row whose inserters it sizes, and isn't there without it. modules: a
     module in every machine's slots (productivity: ingredients sized for what each
     machine makes); it rides in every row's params the same way. beacons: a module in
-    beacons between an assembly or fluid row's machines (only there), where they make it no bigger."""
+    beacons between an assembly or fluid row's machines or an electric furnace column's furnaces
+    (only there), where they make it no bigger."""
     if machine not in MACHINES:
         raise ValueError(f"machine is one of {MACHINES}")
     rates.check_modules(modules)
@@ -272,9 +273,12 @@ def _how(item, tiers, smelt, furnace, forced_raw, oil=0):
 def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     """Rows for one item, in the fastest tier whose row can be fed: the fewest
     full-size rows, then just enough machines in each. extra: params every row but
-    a smelting column takes (research; it takes modules); beacons only assembly and fluid rows take."""
+    a smelting column takes (research; it takes modules and beacons); beacons only assembly and
+    fluid rows and electric furnaces' columns take."""
     kind, r = how
     extra = extra or {}
+    if kind == "smelting_column":
+        extra = {k: v for k, v in extra.items() if k != "research" and (k != "beacons" or rates.takes_beacons(furnace))}
     beaconed, extra = extra, {k: v for k, v in extra.items() if k != "beacons"}
     need = demand * SLACK
     if kind == "fluid_block":  # one block, as many machines as the demand needs
@@ -288,11 +292,10 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     # Modules and beacons speed a machine past what its inserters feed: then the tier runs
     # without beacons, then without modules either.
     plain = {k: v for k, v in extra.items() if k != "modules"}
-    tries = [beaconed] * (kind in ("assembly_row", "fluid_row")) + [extra, plain]
-    options = ([{"recipe": r.name, "machine": m, "belt": belt, **e} for m in machines if _crafts(m, r)
-                for e in [e for k, e in enumerate(tries) if e not in tries[:k]]]
-               if kind != "smelting_column" else [{"recipe": r.name, "furnace": furnace, "belt": belt,
-                                                   **{k: v for k, v in extra.items() if k == "modules"}}])
+    tries = [e for k, e in enumerate([beaconed, extra, plain]) if e not in [beaconed, extra, plain][:k]]
+    options = ([{"recipe": r.name, "machine": m, "belt": belt, **e} for m in machines if _crafts(m, r) for e in tries]
+               if kind != "smelting_column" else [{"recipe": r.name, "furnace": furnace, "belt": belt, **e}
+                                                  for e in tries])
     count_key = "furnaces" if kind == "smelting_column" else "machines"
     beaconed_step = None
     for base in options:
@@ -314,11 +317,12 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
         except ValueError as e:
             errors.append(str(e))
             continue
-        if beaconed_step and beaconed_step.params["machine"] == machine:
-            # A beaconed row spaces its machines out: kept only where it saves tiles.
-            tiles = _row_area(beaconed_step) - _row_area(step)
-            kept = beaconed_step if tiles <= 0 else step
-            kept.tradeoff = (tiles, watts(beaconed_step) - watts(step))
+        if beaconed_step and beaconed_step.params.get("machine") == base.get("machine"):
+            # A beaconed row spaces its machines out: kept only where it saves tiles, or
+            # saves power on as many.
+            tiles, w = _row_area(beaconed_step) - _row_area(step), watts(beaconed_step) - watts(step)
+            kept = beaconed_step if (tiles, w) < (0, 0) else step
+            kept.tradeoff = (tiles, w)
             return kept
         if beaconed_step:
             return beaconed_step
@@ -352,6 +356,8 @@ def power_lines(steps: list[Step]) -> list[str]:
 def _beacons_per_machine(kind, machine, sides) -> int:
     if kind == "fluid_row":
         return fluid_row.beacons_per_machine(machine, sides)
+    if kind == "smelting_column":
+        return smelting_column.beacons_per_furnace(machine, sides)
     return assembly_row.BEACONS_PER_MACHINE
 
 
