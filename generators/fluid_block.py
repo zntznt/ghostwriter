@@ -1,7 +1,8 @@
 """Fluid block: a row of chemical plants or refineries with a pipe line per fluid.
 
 For recipes with several fluids: oil processing, cracking, lubricant, sulfur,
-sulfuric acid.
+sulfuric acid; and in foundries (5x5, inputs south, outputs north), molten
+metal from ore or lava.
 
     north lines     ═══ fluid 2 ═══          (main lines, further out per fluid)
                     ═══ fluid 1 ═══
@@ -20,7 +21,9 @@ input boxes in recipe order, and the same for outputs (NOTES.md).
 Items (sulfur and iron for acid, sulfur out of a sulfur plant) ride belts
 running north through a gap after every second machine: inserters on each
 side of the belt serve the machine beside them, and the fluid lines cross
-under the belt. A belt carries ingredients or the product, not both.
+under the belt. A belt carries ingredients or the product; or one of each
+(lava's calcite in, its stone out), serving one machine: the ingredient on the
+lane by its inserters, the product dropped on the far one.
 
 Feed each fluid at the west end of its line (the description names them);
 outputs leave there too. Items enter belts at the bottom and leave at the top.
@@ -37,7 +40,7 @@ from tools import layout, rates
 
 MARGIN = 0.85
 REGULAR = ("inserter", "fast-inserter")
-MACHINES = ("chemical-plant", "oil-refinery")
+MACHINES = ("chemical-plant", "oil-refinery", "foundry")
 FACING = {"north": Direction.NORTH, "south": Direction.SOUTH}
 
 
@@ -93,7 +96,7 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
     categories = r.get("categories", rates.DEFAULT_CATEGORIES)
     machine = machine or next((m for m in MACHINES if set(categories) & set(entities.raw[m]["crafting_categories"])), "")
     if not machine:
-        raise ValueError(f"{recipe}: no chemical plant or refinery crafts it")
+        raise ValueError(f"{recipe}: no chemical plant, refinery or foundry crafts it")
     crafts = rates.crafts_per_second(machine, rates.recipe_any(recipe), modules)
     out = rates.made(machine, rates.recipe_any(recipe), modules).results  # per craft, with productivity
     fluids_out, items_out = [(f, out[f]) for f, _ in fluids_out], [(i, out[i]) for i, _ in items_out]
@@ -120,9 +123,10 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
     p = Plan(recipe, machine, machines, belt, s, crafts, dict(fluids_in + items_in), dict(fluids_out + items_out),
              sides, [i for i, _ in items_in], outlets=frozenset(outlets), modules=modules)
     if items_out:
-        if len(items_out) > 1 or items_in:
-            raise ValueError(f"{recipe}: a block's belts carry ingredients or one product, not both")
+        if len(items_out) > 1 or len(items_in) > 1:
+            raise ValueError(f"{recipe}: a block's belts carry ingredients, one product, or one of each")
         p.item_out = items_out[0][0]
+    mixed = bool(items_in and items_out)  # one belt each machine: the ingredient's lane, the product's
     if len(items_in) > 2:
         raise ValueError(f"{recipe}: a belt carries at most two ingredients")
     tiers = (inserter,) if inserter else REGULAR
@@ -139,10 +143,10 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
     lane = rates.lane_rate(belt)
 
     def fits(machines_per_belt):
-        lanes = 2 if len(items_in) == 1 else 1
+        lanes = 2 if len(items_in) == 1 and not mixed else 1
         return all(machines_per_belt * a * crafts <= lanes * lane for _, a in items_in)
 
-    p.per_belt = 2 if fits(2) else 1
+    p.per_belt = 2 if fits(2) and not mixed else 1
     if not fits(1):
         raise ValueError(f"{recipe}: one machine needs more than a {belt} carries; try a faster belt")
     if p.item_out and dict(items_out)[p.item_out] * crafts > lane:
@@ -222,9 +226,12 @@ def build(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-b
         powered.append((x0 + s / 2, s / 2, rates.half_width(p.machine)))
 
     top, bottom = -rows["north"], s - 1 + rows["south"]
+    # A belt that brings an ingredient and takes the product runs one tile past the lines: its product
+    # leaves through a filter splitter (factory), whose other half needs the tile east of it clear.
+    past = int(bool(p.items_in and p.item_out))
     for g, gap in enumerate(gaps):
-        for row in range(top, bottom + 1):
-            ref = {"id": f"belt{g}_in"} if row == bottom else {"id": f"belt{g}_out"} if row == top else {}
+        for row in range(top - past, bottom + 1):
+            ref = {"id": f"belt{g}_in"} if row == bottom else {"id": f"belt{g}_out"} if row == top - past else {}
             put(p.belt, (gap["belt"], row), direction=Direction.NORTH, **ref)
         for m in gap["machines"]:
             col = gap["left"] if x0s[m] < gap["belt"] else gap["right"]
@@ -238,6 +245,7 @@ def build(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-b
                     row += 1
 
     free = {(cx, cy) for cx in range(0, width) for cy in range(top - 1, bottom + 2)} - taken - belt_x_tiles(belt_x, top, bottom)
+    free -= {(g["right"], top - 1) for g in gaps} if past else set()
     for tile in layout.poles_anywhere(pole, powered, free):
         put(pole, tile)
     bp.generate_power_connections()
@@ -249,7 +257,10 @@ def build(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-b
     if gaps:
         belts = (f" {len(gaps)} belt(s) between machine pairs carry " +
                  (" and ".join(p.items_in) + " (enter at the bottom)" if p.items_in else f"{p.item_out} (leaves at the top)") + ".")
-        if p.items_in:
+        if p.items_in and p.item_out:
+            belts = (f" A belt after each machine carries {p.items_in[0]} in on its west lane (enter at the bottom) "
+                     f"and {p.item_out} out on the east (leaves at the top).")
+        elif p.items_in:
             belts = belts.replace("carry ", "carry " + ("both lanes of " if len(p.items_in) == 1 else ""))
     bp.description = (f"{n} {p.machine}: {made} from {used}. Lines, nearest first, fed or emptied at their west "
                       f"end: {lines}.{belts} Draws about {rates.megawatts(p.watts())}. Connect any pole to your grid.")
@@ -271,7 +282,9 @@ def flow_tests(**params):
         for fluid in p.fluids(side):
             fluids.append(FluidFeed(f"{side}_{fluid}", fluid, side="west", sink=(side, fluid) in p.outlets))
     for g in range(n_gaps):
-        for lane, item in zip(("left", "right"), p.items_in * 2 if len(p.items_in) == 1 else p.items_in):
+        # With a product too, the ingredient rides the west lane: the inserters west of the belt drop east.
+        both = p.items_in * 2 if len(p.items_in) == 1 and not p.item_out else p.items_in
+        for lane, item in zip(("left", "right"), both):
             feeds.append(Feed(f"belt{g}_in", lane, item))
         if p.item_out:
             drains.append(f"belt{g}_out")

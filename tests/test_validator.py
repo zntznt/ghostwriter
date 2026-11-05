@@ -447,6 +447,21 @@ class Validator(unittest.TestCase):
             report = self.run_flow(data, factory.flow_tests(**params, layout="compact"), ids)
             self.assertTrue(report.ok, (params, report.lines()))
 
+    def test_casting_factories_reach_their_rates(self):
+        # Foundries: red science's gears and copper plates cast from molten metal melted from ore
+        # and calcite; plates from lava, the stone it leaves taken away at the top at its rate.
+        for params in ({"item": "automation-science-pack", "rate": 1, "casting": "ore"},
+                       {"item": "iron-plate", "rate": 3, "casting": "lava"}):
+            bp = factory.build(**params)
+            data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+            self.assertPasses(data)
+            flows = factory.flow_tests(**params)
+            stone = -production.solve(**params)[1].get("stone", 0)
+            if stone:
+                flows = [dataclasses.replace(f, expect={**f.expect, "stone": stone}) for f in flows]
+            report = self.run_flow(data, flows, ids)
+            self.assertTrue(report.ok, (params, report.lines()))
+
     def test_factory_with_a_cut_line_fails(self):
         # Without the first splitter on the copper line, nothing north of it gets copper.
         bp = factory.build(item="electronic-circuit", rate=5, layout="bus")

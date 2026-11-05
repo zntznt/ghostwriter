@@ -905,6 +905,85 @@ class SpaceAgeMachines(unittest.TestCase):
         self.assertIn("belt=fast-transport-belt", cable.note)
 
 
+class Casting(unittest.TestCase):
+    def test_no_casting_changes_nothing(self):
+        for item, rate in (("automation-science-pack", 1), ("electronic-circuit", 5), ("steel-plate", 1)):
+            kw = {"smelt": 1} if item == "steel-plate" else {}
+            self.assertEqual(production.solve(item, rate, casting="", **kw), production.solve(item, rate, **kw))
+
+    def test_gears_are_cast_from_molten_iron_melted_from_ore(self):
+        steps, inputs = production.solve("iron-gear-wheel", 6, casting="ore")
+        by = {s.item: s for s in steps}
+        self.assertEqual(list(by), ["molten-iron", "iron-gear-wheel"])
+        gear = by["iron-gear-wheel"]
+        self.assertEqual((gear.generator, gear.params["recipe"], gear.params["machine"]),
+                         ("fluid_row", "casting-iron-gear-wheel", "foundry"))
+        self.assertEqual((by["molten-iron"].generator, by["molten-iron"].params["recipe"]),
+                         ("fluid_block", "iron-ore-melting"))
+        self.assertEqual(set(inputs), {"iron-ore", "calcite"})  # no plates
+        for s in steps:
+            self.assertGreaterEqual(s.rows * s.rate, s.demand, s)
+
+    def test_demand_takes_the_foundrys_productivity(self):
+        # +50% a craft: 6 gears/s are 4 crafts of 10 molten iron, which is 40 / 750 melts a second.
+        steps, inputs = production.solve("iron-gear-wheel", 6, casting="ore")
+        self.assertAlmostEqual({s.item: s.demand for s in steps}["molten-iron"], 40)
+        self.assertAlmostEqual(inputs["iron-ore"], 40 / 750 * 50)
+        self.assertAlmostEqual(inputs["calcite"], 40 / 750)
+
+    def test_plates_cast_where_an_assembler_takes_them(self):
+        # Red science: copper plates cast for the assembler, gears cast straight from molten iron.
+        steps, inputs = production.solve("automation-science-pack", 1, casting="ore")
+        recipes_ = {s.item: s.params["recipe"] for s in steps}
+        self.assertEqual(recipes_["copper-plate"], "casting-copper")
+        self.assertEqual(recipes_["iron-gear-wheel"], "casting-iron-gear-wheel")
+        self.assertNotIn("iron-plate", recipes_)
+        self.assertEqual(set(inputs), {"iron-ore", "copper-ore", "calcite"})
+
+    def test_lava_leaves_stone_to_take_away(self):
+        # 3 plates/s: one cast a second of 20 molten iron; a lava melt makes 375 of it and 15 stone.
+        steps, inputs = production.solve("iron-plate", 3, casting="lava")
+        melt = {s.item: s for s in steps}["molten-iron"]
+        self.assertEqual(melt.params["recipe"], "molten-iron-from-lava")
+        self.assertAlmostEqual(inputs["lava"], 20 / 375 * 500)
+        self.assertAlmostEqual(inputs["stone"], -20 / 375 * 15)  # a surplus: negative
+        self.assertIn("stone/s", production.build(item="iron-plate", rate=3, casting="lava").description)
+        p = factory.rows_and_lines(item="iron-plate", rate=3, casting="lava")
+        (stone,) = p["lines"]["stone"]
+        self.assertEqual(stone.top, "surplus")
+        # The melt's belt brings calcite on one lane and takes stone away on the other.
+        (flow,) = fluid_block.flow_tests(**melt.params)
+        self.assertEqual([(f.lane, f.item) for f in flow.feed], [("left", "calcite")] * melt.params["machines"])
+        self.assertGreater(flow.expect["stone"], 0)
+
+    def test_an_item_without_a_casting_recipe_is_unaffected(self):
+        self.assertEqual(production.solve("plastic-bar", 5, casting="ore"), production.solve("plastic-bar", 5))
+        steps, _ = production.solve("electronic-circuit", 5, casting="ore")
+        self.assertEqual({s.item: s.params["recipe"] for s in steps}["electronic-circuit"], "electronic-circuit")
+
+    def test_what_no_foundry_row_fits_is_made_the_usual_way(self):
+        # Cast cable comes 18/s a foundry, past a yellow lane: assembled from cast copper plates.
+        steps, _ = production.solve("copper-cable", 5, casting="ore")
+        recipes_ = {s.item: s.params["recipe"] for s in steps}
+        self.assertEqual((recipes_["copper-cable"], recipes_["copper-plate"]), ("copper-cable", "casting-copper"))
+        # On turbo belts, with full bulk hands (six inserters a foundry without).
+        steps, _ = production.solve("copper-cable", 5, casting="ore", belt="turbo-transport-belt", research=RESEARCH)
+        self.assertEqual({s.item: s.params["recipe"] for s in steps}["copper-cable"], "casting-copper-cable")
+
+    def test_foundries_take_modules_and_research(self):
+        # Speed modules: one melt takes 7.5 ore/s, a whole yellow lane; the error says what to pass.
+        with self.assertRaisesRegex(ValueError, "iron-ore-melting.*faster belt"):
+            production.solve("iron-gear-wheel", 6, casting="ore", modules="speed-module")
+        steps, _ = production.solve("iron-gear-wheel", 6, casting="ore", modules="speed-module", research=RESEARCH,
+                                    belt="fast-transport-belt")
+        for s in steps:
+            self.assertEqual((s.params.get("modules"), s.params.get("research")), ("speed-module", RESEARCH), s)
+
+    def test_unknown_casting_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "casting is one of"):
+            production.solve("iron-plate", 1, casting="ice")
+
+
 FACTORIES = [
     {"item": "electronic-circuit", "rate": 5},
     {"item": "advanced-circuit", "rate": 1, "oil": "advanced"},  # refinery, cracking, a fluid row
