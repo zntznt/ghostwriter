@@ -21,19 +21,35 @@ capped together at the recipe's maximum_productivity. An unpowered beacon passes
 on nothing. A full output is mostly a base asking for no more: it is reported as
 demand-limited, not a problem; so is a recycler waiting for space in its result
 slots, its status for the same.
+
+--suggest N says, for each of the top N problems a layout can fix (an ingredient
+shortage, or below rated with no stall seen; not power, fuel, a recipe or a circuit)
+that makes something, what ghostwriter would build to make what the group makes now
+(--target rated: what it's rated for, so a group making nothing too): the generator for
+its machine (assembly_row; fluid_row, else fluid_block, with a fluid; smelting_column
+for a furnace), in the same machine, with its modules and beacons where every
+machine holds one normal module filling its slots alike, on --belt, inserters sized
+for --research (none: the rates any game gets). One row, or a production book when
+a row can't carry it; else the generators' reason none fits. Normal-quality machines
+and no research productivity: a group of better ones gets more machines than it
+needs, never fewer.
 """
 
 import argparse
+import functools
 import json
 import math
 import os
 import sys
 import time
+import warnings
 from collections import Counter
 
 from draftsman.data import entities, items
 
+from generators import production
 from tools import rates
+from tools.density import density
 from validator.rcon import Rcon
 
 SNAPSHOT = r"""/sc local out = {tick = game.tick, machines = {}}
@@ -76,6 +92,7 @@ WORKING = {"working", "normal"}
 DEMAND_LIMITED = "demand-limited (output full)"
 FLUID_PER_BARREL = 50
 AT_RATE = 0.9  # a share at least this is "at rate"
+LAYOUT = ("ingredient shortage", "below rated")  # the diagnoses a layout can fix
 DIAGNOSES = {
     "item_ingredient_shortage": "starved", "fluid_ingredient_shortage": "starved", "no_ingredients": "starved",
     "full_output": DEMAND_LIMITED, "waiting_for_space_in_destination": DEMAND_LIMITED,
@@ -171,7 +188,9 @@ def _group(key, ms: list[dict], before: dict, seconds: float, samples: list[dict
          "count": len(ms), "crafts_per_second": crafts, "rated_crafts_per_second": rated, "share": crafts / rated if rated else None,
          "statuses": {s: n / total for s, n in seen.most_common()}, "products": {},
          "crafting_speed": sum(m["speed"] for m in ms) / len(ms), "model_crafting_speed": None,
-         "mismatch": [], "unmodelled": None}
+         "mismatch": [], "unmodelled": None,
+         "uniform_modules": _filled([m["modules"] for m in ms], entities.raw.get(machine, {}).get("module_slots", 0)),
+         "uniform_beacons": _beaconed(ms)}
     try:
         r = rates.recipe_any(recipe, means=True) if recipe else None
         if r and machine not in entities.raw:
@@ -186,6 +205,23 @@ def _group(key, ms: list[dict], before: dict, seconds: float, samples: list[dict
     g["lost"] = sum((v["rated"] - v["actual"]) / (1 if p in items.raw else FLUID_PER_BARREL)
                     for p, v in g["products"].items()) if g["products"] else g["rated_crafts_per_second"] - crafts
     return g
+
+
+def _filled(holders: list, slots: int) -> str:
+    """The module filling all `slots` slots of every holder alike, normal quality; "" if none does."""
+    kinds = {tuple(sorted((x["name"], x.get("quality", "normal"), x["count"]) for x in _list(h))) for h in holders}
+    if len(kinds) != 1:
+        return ""
+    (k,) = kinds
+    return k[0][0] if len(k) == 1 and k[0][1:] == ("normal", slots) else ""
+
+
+def _beaconed(ms: list[dict]) -> str:
+    """The module every powered beacon of every machine holds alike (_filled); "" if any has none."""
+    beacons = [_list(m["beacons"]) for m in ms]
+    if not all(beacons) or any(b["name"] != "beacon" or b.get("status") == "no_power" for bs in beacons for b in bs):
+        return ""
+    return _filled([b["modules"] for bs in beacons for b in bs], entities.raw["beacon"]["module_slots"])
 
 
 def _statuses(sample: dict) -> dict:
@@ -237,6 +273,140 @@ def problem(g: dict) -> bool:
     return bool(g["mismatch"]) or (g["diagnosis"] not in ("at rate", DEMAND_LIMITED) and g["lost"] > 1e-9)
 
 
+def suggest(groups: list[dict], target: str = "actual", belt: str = "turbo-transport-belt", research: str = "",
+            top: int = 10) -> list[dict]:
+    """The groups, each of the `top` problems a layout can fix that make something to aim for
+    (most output lost first) with a "suggestion": what ghostwriter would build to make the
+    group's `target` output ("actual" or "rated"), or why no generator fits. A recipe with
+    variable results (recycling, crushing) gets why, past the `top` too: no generator
+    takes one, so there's nothing to build."""
+    ranked = sorted((g for g in groups if fixable(g) and (not g["products"] or any(
+        v[target] > 1e-9 for v in g["products"].values()))), key=lambda g: -g["lost"])
+    made, tried = {}, 0
+    for g in ranked:
+        try:
+            rates.recipe_any(g["recipe"])
+        except ValueError as e:
+            made[id(g)] = {"kind": "no generator fits", "reason": str(e)}
+            continue
+        if tried < top:
+            made[id(g)], tried = _suggestion(g, target, belt, research), tried + 1
+    return [{**g, "suggestion": made[id(g)]} if id(g) in made else g for g in groups]
+
+
+def fixable(g: dict) -> bool:
+    """A problem a layout can fix: not power, fuel, a recipe or a circuit."""
+    return problem(g) and g["diagnosis"].startswith(LAYOUT)
+
+
+def _suggestion(g: dict, target: str, belt: str, research: str) -> dict:
+    if g["unmodelled"] or not g["products"]:
+        return {"kind": "no generator fits", "reason": g["unmodelled"] or "it makes nothing the model knows"}
+    item, v = max(g["products"].items(), key=lambda kv: kv[1][target])
+    rate = v[target]
+    machine, r = g["machine"], rates.recipe_any(g["recipe"], means=True)
+    furnace = entities.raw[machine]["type"] == "furnace"
+    if not furnace and not rates.electric(machine):
+        return {"kind": "no generator fits", "reason": f"{machine} burns fuel, and ghostwriter's rows feed it none"}
+    base = {"recipe": g["recipe"], "furnace" if furnace else "machine": machine, "belt": belt}
+    base |= {k: g[f"uniform_{k}"] for k in ("modules", "beacons") if g[f"uniform_{k}"]}
+    if research and not furnace:  # a furnace's one inserter each way needs none
+        base["research"] = research
+    if furnace:
+        kinds = ("smelting_column",)
+    elif r.fluids or set(r.results) - set(items.raw):
+        kinds = ("fluid_row", "fluid_block")
+    else:
+        kinds = ("assembly_row",)
+    errors = []
+    for kind in kinds:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return _sized(kind, base, item, rate, r)
+        except ValueError as e:
+            errors.append(f"{kind}: {e}")
+    return {"kind": "no generator fits", "reason": "; ".join(errors)}
+
+
+def _sized(kind: str, base: dict, item: str, rate: float, r: rates.Recipe) -> dict:
+    """The fewest full rows of `kind` making `rate` of `item`, then just enough machines in each,
+    with production's slack, as production sizes a step."""
+    need = rate * production.SLACK
+    if kind == "fluid_block":  # one block, as many machines as it takes; it takes no beacons
+        base = {k: v for k, v in base.items() if k != "beacons"}
+        params = {**base, "machines": math.ceil(need / _plan(kind, _key({**base, "machines": 1})).rate(item) - 1e-9)}
+        rows, made, machines = 1, _plan(kind, _key(params)).rate(item), params["machines"]
+    else:
+        count = "furnaces" if kind == "smelting_column" else "machines"
+        for sides in (2, 1):  # a machine too wide to power two sides of still powers one
+            try:
+                full = _rated(kind, {**base, "sides": sides})
+                break
+            except ValueError:
+                if sides == 1:
+                    raise
+        rows = math.ceil(need / full - 1e-9)
+        share = need / rows
+        if share <= _rated(kind, {**base, "sides": 1, count: 1}) + 1e-9:
+            sides, n = 1, 1
+        else:
+            n = math.ceil(share / _rated(kind, {**base, "sides": sides, count: 1}) - 1e-9)
+        params = {**base, "sides": sides, count: n}
+        made, machines = _rated(kind, params), rows * sides * n
+    command = f"python -m tools.bp gen {kind} " + " ".join(f"{k}={v}" for k, v in params.items())
+    if rows > 1:
+        command = _book(kind, base, item, rate, r) or f"{rows} rows of: {command}"
+    return {"kind": "build", "generator": kind, "params": params, "rows": rows, "machines": machines,
+            "item": item, "target": rate, "rate": rows * made, "tiles": rows * _area(kind, _key(params)),
+            "watts": rows * _plan(kind, _key(params)).watts(min(1.0, rate / (rows * made))), "command": command}
+
+
+def _book(kind: str, base: dict, item: str, rate: float, r: rates.Recipe) -> str:
+    """The production book making `rate` of `item` from its ingredients, as `kind` rows of the
+    base's machine; "" where production can't pick that machine."""
+    machine = base.get("machine")
+    if kind == "smelting_column":
+        how = {"smelt": 1, "furnace": base["furnace"]}
+    elif machine in production.MACHINES:
+        how = {"machine": machine}
+    elif kind == "fluid_row" and machine == "chemical-plant":  # production tries it first for a fluid row
+        how = {}
+    else:
+        return ""
+    params = {"item": item, "rate": f"{rate:.4g}", **how, "belt": base["belt"], "raw": ",".join([*r.ingredients, *r.fluids]),
+              **{k: base[k] for k in ("modules", "beacons", "research") if k in base}}
+    return "python -m tools.bp gen production " + " ".join(f"{k}={v}" for k, v in params.items())
+
+
+def _key(params: dict) -> tuple:
+    return tuple(sorted(params.items()))
+
+
+@functools.cache
+def _plan(kind: str, params: tuple):
+    return production.GENERATORS[kind].plan(**dict(params))
+
+
+def _rated(kind: str, params: dict) -> float:
+    p = _plan(kind, _key(params))
+    return p.sides * p.per_side
+
+
+@functools.cache
+def _area(kind: str, params: tuple) -> int:
+    """Bounding-box tiles of one row."""
+    return density(production.GENERATORS[kind].build(**dict(params)).to_dict())[0]["area"]
+
+
+def _suggestion_text(g: dict) -> str:
+    s = g["suggestion"]
+    if s["kind"] != "build":
+        return f"{s['kind']}: {s['reason']}"
+    return (f"{s['machines']} machine{'s' if s['machines'] != 1 else ''} (now {g['count']}), {s['tiles']} tiles, about {rates.megawatts(s['watts'])} "
+            f"for {s['target']:.3g} {s['item']}/s: {s['command']}")
+
+
 def lines(groups: list[dict], every: bool = False) -> list[str]:
     """The plain report: the problems, most output lost first (or `every` group, in order), a
     line each with its diagnosis and any model mismatch; then a summary."""
@@ -255,6 +425,8 @@ def lines(groups: list[dict], every: bool = False) -> list[str]:
         out += [f"     model mismatch: {m}" for m in g["mismatch"]]
         if g["unmodelled"]:
             out.append(f"     unmodelled: {g['unmodelled']}")
+        if "suggestion" in g:
+            out.append(f"     suggest: {_suggestion_text(g)}")
     surfaces = Counter(g["surface"] for g in groups)
     diagnoses = Counter(g["diagnosis"].split(":")[0] for g in groups)
     out.append(f"summary: {len(groups)} groups ({', '.join(f'{s} {n}' for s, n in surfaces.most_common())})")
@@ -262,6 +434,13 @@ def lines(groups: list[dict], every: bool = False) -> list[str]:
     out.append(f"  {sum(bool(g['mismatch']) for g in groups)} with a model mismatch, "
                f"{sum(bool(g['unmodelled']) for g in groups)} unmodelled; "
                + ("every group listed" if every else f"{len(shown)} problems listed (--all lists every group)"))
+    kinds = Counter(g["suggestion"]["kind"] for g in groups if "suggestion" in g)
+    if kinds:
+        problems = list(filter(problem, groups))
+        cant = sum(not fixable(g) for g in problems)
+        out.append(f"  suggestions: {kinds['build']} to build, {kinds['no generator fits']} with no generator fitting; "
+                   f"{cant} problems a layout can't fix, {len(problems) - cant - kinds.total()} more not tried "
+                   "(--suggest N tries N)")
     return out
 
 
@@ -275,9 +454,22 @@ def main(argv=None) -> int:
     ap.add_argument("--area", help="x1,y1,x2,y2: only machines in it")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--all", action="store_true", help="list every group, not only the problems")
+    ap.add_argument("--suggest", type=int, nargs="?", const=10, default=0, metavar="N",
+                    help="what ghostwriter would build instead, for the top N problems (default 10)")
+    ap.add_argument("--target", choices=("actual", "rated"), default="actual",
+                    help="what a suggestion makes: the group's actual output (default), or its rated output")
+    ap.add_argument("--belt", default="turbo-transport-belt", help="the belt suggestions use")
+    ap.add_argument("--research", default="", help="inserter research suggestions are sized for, e.g. "
+                                                    "inserter-capacity-bonus=7 (default none)")
     args = ap.parse_args(argv)
     if not args.password:
         ap.error("set GHOSTWRITER_RCON_PASSWORD (or --password)")
+    if entities.raw.get(args.belt, {}).get("type") != "transport-belt":
+        ap.error(f"--belt: {args.belt} isn't a belt")
+    try:
+        rates.research_levels(args.research)
+    except ValueError:
+        ap.error("--research takes name=level,...")
     area = None
     if args.area:
         try:
@@ -291,6 +483,8 @@ def main(argv=None) -> int:
         groups = observe(rcon, args.seconds, area)
     finally:
         rcon.close()
+    if args.suggest:
+        groups = suggest(groups, args.target, args.belt, args.research, args.suggest)
     print(json.dumps(groups, indent=1) if args.json else "\n".join(lines(groups, args.all)))
     return 0
 

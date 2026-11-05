@@ -71,7 +71,8 @@ def recipe(name: str, fluids: bool = False) -> Recipe:
                 continue
             if p.get("type", "item") != "item":
                 raise ValueError(f"{name}: {p['name']} is a {p['type']}; only item recipes are supported")
-            if "amount" not in p or {"probability", "shared_probability", "independent_probability"} & set(p):
+            if "amount" not in p or {"probability", "shared_probability", "independent_probability",
+                                     "extra_count_fraction"} & set(p):
                 raise ValueError(f"{name}: {p['name']} has a variable amount")
             parts[key][p["name"]] = parts[key].get(p["name"], 0) + p["amount"]
     return Recipe(name, r.get("energy_required", DEFAULT_CRAFT_TIME), parts["ingredients"], parts["results"],

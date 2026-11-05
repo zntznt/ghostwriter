@@ -3524,5 +3524,114 @@ class Observe(unittest.TestCase):
             self.assertAlmostEqual(g["crafts_per_second"], g["count"] * (3 if g["count"] == 2 else 6) / 60)
 
 
+class Suggest(unittest.TestCase):
+    """What the observer would build instead of a problem group, over hand-made snapshots."""
+
+    @staticmethod
+    def suggested(rows, status="item_ingredient_shortage", **kw):
+        from tools import observe
+
+        [g] = observe.suggest(Observe.report([rows], lambda m, t: "working" if t < 3 else status), **kw)
+        return g
+
+    @staticmethod
+    def made(command: str) -> float:
+        """What the command line's rows rate at, from the generator's plan (and the row builds)."""
+        from generators import production
+        from tools.bp import _param
+
+        name, *params = command.split(" gen ", 1)[1].split()
+        params = dict(map(_param, params))
+        if name == "production":
+            steps, _ = production.solve(**params)
+            return steps[-1].rows * steps[-1].rate
+        production.GENERATORS[name].build(**params)
+        p = production.GENERATORS[name].plan(**params)
+        return p.sides * p.per_side
+
+    def test_a_starved_cable_group_gets_a_row_making_what_it_makes(self):
+        # 8 assembling machine 3s rated 5 cables/s each make 12/s between them.
+        g = self.suggested(Observe.machines(1, "copper-cable", 8, 1.25, 45, machine="assembling-machine-3"))
+        s = g["suggestion"]
+        self.assertEqual((s["kind"], s["generator"]), ("build", "assembly_row"), s)
+        self.assertAlmostEqual(s["target"], 12)
+        self.assertEqual(s["params"]["machine"], "assembling-machine-3")
+        self.assertEqual(s["params"]["belt"], "turbo-transport-belt")
+        self.assertLess(s["machines"], 8)
+        self.assertGreater(s["tiles"], 0)
+        self.assertGreater(s["watts"], 0)
+        self.assertIn("python -m tools.bp gen assembly_row recipe=copper-cable machine=assembling-machine-3",
+                      s["command"])
+        self.assertGreaterEqual(self.made(s["command"]), 12)
+        # Aiming for the rated output instead: 40/s.
+        rated = self.suggested(Observe.machines(1, "copper-cable", 8, 1.25, 45, machine="assembling-machine-3"),
+                               target="rated")["suggestion"]
+        self.assertAlmostEqual(rated["target"], 40)
+        self.assertGreaterEqual(self.made(rated["command"]), 40)
+
+    def test_a_furnace_group_gets_a_smelting_column(self):
+        # 10 electric furnaces rated 0.625 plates/s each make 3/s.
+        g = self.suggested(Observe.machines(1, "iron-plate", 10, 2, 18, machine="electric-furnace", energy=3.2),
+                           status="no_ingredients")
+        s = g["suggestion"]
+        self.assertEqual((s["kind"], s["generator"]), ("build", "smelting_column"), s)
+        self.assertEqual(s["params"]["furnace"], "electric-furnace")
+        self.assertGreaterEqual(self.made(s["command"]), 3)
+
+    def test_more_than_a_row_carries_is_a_production_book(self):
+        # 200 electric furnaces making 100 plates/s: more than one turbo column carries.
+        g = self.suggested(Observe.machines(1, "iron-plate", 200, 2, 30, machine="electric-furnace", energy=3.2))
+        s = g["suggestion"]
+        self.assertEqual(s["kind"], "build", s)
+        self.assertGreater(s["rows"], 1)
+        self.assertIn("gen production item=iron-plate rate=100", s["command"])
+        self.assertGreaterEqual(self.made(s["command"]), 100)
+
+    def test_modules_and_beacons_carry_over_only_when_uniform(self):
+        beacon = Observe.beacon()
+        full = self.suggested(Observe.machines(1, "automation-science-pack", 4, 1.25 * 3.5, 15, energy=5,
+                                               machine="assembling-machine-3", modules=[("speed-module-3", 4)],
+                                               beacons=[beacon, beacon]))
+        self.assertEqual(full["suggestion"]["params"].get("modules"), "speed-module-3", full["suggestion"])
+        self.assertEqual(full["suggestion"]["params"].get("beacons"), "speed-module-3")
+        mixed = self.suggested(Observe.machines(1, "copper-cable", 4, 1.25, 60, machine="assembling-machine-3",
+                                                modules=[("speed-module-3", 2), ("efficiency-module", 2)]))
+        self.assertNotIn("modules", mixed["suggestion"]["params"])
+        self.assertNotIn("beacons", mixed["suggestion"]["params"])
+
+    def test_a_recycler_has_no_generator(self):
+        g = self.suggested(Observe.machines(1, "iron-gear-wheel-recycling", 4, 0.5, 30, machine="recycler",
+                                            energy=0.03125))
+        self.assertEqual(g["suggestion"]["kind"], "no generator fits", g["suggestion"])
+        self.assertIn("variable amount", g["suggestion"]["reason"])
+
+    def test_problems_a_layout_cant_fix_get_no_build(self):
+        from tools import observe
+
+        full = Observe.machines(1, "iron-gear-wheel", 2, 0.75, 20)
+        dark = Observe.machines(10, "copper-cable", 4, 0.75, 30)
+        groups = observe.suggest(Observe.report([full, dark], lambda m, t: {1: "full_output", 10: "no_power"}[
+            m["unit"] // 10 * 10 or 1] if t > 2 else "working"))
+        by = {g["recipe"]: g for g in groups}
+        self.assertNotIn("suggestion", by["iron-gear-wheel"])  # demand-limited: not a problem
+        self.assertNotIn("suggestion", by["copper-cable"])  # no power: not a layout's
+        self.assertNotIn("suggest:", "\n".join(observe.lines(groups)))
+        # Nor does a group that makes nothing, unless aiming for its rated output.
+        none = Observe.machines(1, "copper-cable", 4, 0.75, 0)
+        [g] = observe.suggest(Observe.report([none], lambda m, t: "no_ingredients"))
+        self.assertNotIn("suggestion", g)
+        [g] = observe.suggest(Observe.report([none], lambda m, t: "no_ingredients"), target="rated")
+        self.assertEqual(g["suggestion"]["kind"], "build")
+
+    def test_only_the_top_problems_are_suggested(self):
+        from tools import observe
+
+        rows = [Observe.machines(10 * k + 1, "copper-cable", 4, 0.75, 30 + k, surface=f"s{k}") for k in range(3)]
+        groups = observe.suggest(Observe.report(rows, lambda m, t: "working" if t < 3 else "no_ingredients"), top=1)
+        self.assertEqual(sum("suggestion" in g for g in groups), 1)
+        self.assertIn("suggestions: 1 to build, 0 with no generator fitting; 0 problems a layout can't fix, 2 more "
+                      "not tried", "\n".join(observe.lines(groups)))
+
+
 if __name__ == "__main__":
     unittest.main()
