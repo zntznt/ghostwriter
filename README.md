@@ -50,7 +50,7 @@ ghostwriter's model.
 ```
 GHOSTWRITER_RCON_PASSWORD=secret .venv/bin/python -m tools.observe --port 27015 --seconds 30
 .venv/bin/python -m tools.observe --port 27015 --area -50,-50,50,50 --json   # one area, for a script or an AI
-.venv/bin/python -m tools.observe --port 27015 --suggest --research inserter-capacity-bonus=7   # what to build instead
+.venv/bin/python -m tools.observe --port 27015 --suggest   # what to build instead, at the game's inserter research
 ```
 
 `--suggest N` (default 10) adds, for the top N problems a layout can fix (an
@@ -59,7 +59,7 @@ command line ghostwriter would build to make what the group makes now (`--target
 rated`: its rated output), in the same machine with its modules and beacons
 where they're uniform, with the machines, tiles and MW it takes; or the
 generators' reason none fits. `--belt` (default turbo-transport-belt) and
-`--research` (default none, the inserter rates any game gets) set what it builds with.
+`--research` (default: the most inserter research measured that the game has; `none` for none) set what it builds with.
 
 - RCON needs a game started with `--rcon-port N --rcon-password P` (the
   [command line parameters](https://wiki.factorio.com/Command_line_parameters)),

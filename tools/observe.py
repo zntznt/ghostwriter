@@ -52,6 +52,23 @@ from tools import rates
 from tools.density import density
 from validator.rcon import Rcon
 
+RESEARCH = r"""/sc local n = 0
+for i = 1, 99 do
+  local t = game.forces.player.technologies["inserter-capacity-bonus-" .. i]
+  if not t then break end
+  if t.researched then n = i end
+end
+rcon.print(n)"""
+
+
+def measured_research(level: int) -> str:
+    """The most inserter-capacity research with measured rates at or below `level`, "" for none."""
+    fits = [k for k in rates._inserter_file().get("researched", {})
+            if set(rates.research_levels(k)) == {"inserter-capacity-bonus"}
+            and rates.research_levels(k)["inserter-capacity-bonus"] <= level]
+    return max(fits, key=lambda k: rates.research_levels(k)["inserter-capacity-bonus"], default="")
+
+
 SNAPSHOT = r"""/sc local out = {tick = game.tick, machines = {}}
 local names = {}
 for k, v in pairs(defines.entity_status) do names[v] = k end
@@ -459,15 +476,18 @@ def main(argv=None) -> int:
     ap.add_argument("--target", choices=("actual", "rated"), default="actual",
                     help="what a suggestion makes: the group's actual output (default), or its rated output")
     ap.add_argument("--belt", default="turbo-transport-belt", help="the belt suggestions use")
-    ap.add_argument("--research", default="", help="inserter research suggestions are sized for, e.g. "
-                                                    "inserter-capacity-bonus=7 (default none)")
+    ap.add_argument("--research", default="auto", help="inserter research suggestions are sized for, e.g. "
+                                                        "inserter-capacity-bonus=7, or none (default: the game's)")
     args = ap.parse_args(argv)
     if not args.password:
         ap.error("set GHOSTWRITER_RCON_PASSWORD (or --password)")
     if entities.raw.get(args.belt, {}).get("type") != "transport-belt":
         ap.error(f"--belt: {args.belt} isn't a belt")
+    if args.research == "none":
+        args.research = ""
     try:
-        rates.research_levels(args.research)
+        if args.research != "auto":
+            rates.research_levels(args.research)
     except ValueError:
         ap.error("--research takes name=level,...")
     area = None
@@ -481,6 +501,8 @@ def main(argv=None) -> int:
     rcon = Rcon(args.host, args.port, args.password)
     try:
         groups = observe(rcon, args.seconds, area)
+        if args.research == "auto":
+            args.research = measured_research(_query(rcon, RESEARCH))
     finally:
         rcon.close()
     if args.suggest:
