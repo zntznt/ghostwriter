@@ -1060,6 +1060,97 @@ class Modules(unittest.TestCase):
             self.assertLess(prod[plate], plain[plate])
 
 
+class Effects(unittest.TestCase):
+    """What a machine really holds and receives; the numbers were read off machines in a real game (2.1)."""
+    GEAR = rates.recipe("iron-gear-wheel")
+
+    @staticmethod
+    def held(*modules):
+        """[(module, quality)] per module held, from (module, count, quality)."""
+        return [(m, q) for m, n, q in modules for _ in range(n)]
+
+    def test_machines_with_a_base_effect_make_more_everywhere(self):
+        iron, acc = rates.recipe_any("casting-iron"), rates.recipe("accumulator")
+        self.assertEqual(rates.productivity("foundry", iron), 0.5)
+        self.assertEqual(rates.made("foundry", iron).results, {"iron-plate": 3})
+        self.assertEqual(rates.productivity("biochamber", rates.recipe_any("rocket-fuel-from-jelly")), 0.5)
+        self.assertEqual(rates.productivity("assembling-machine-3", self.GEAR), 0)
+        # Even where the recipe allows no productivity: an EM plant finished 9 accumulators where it crafted 6.
+        self.assertEqual(rates.made("electromagnetic-plant", acc).results, {"accumulator": 1.5})
+        self.assertAlmostEqual(rates.productivity("electromagnetic-plant", rates.recipe("advanced-circuit"),
+                                                  "productivity-module-3"), 1.0)
+        self.assertAlmostEqual(rates.crafts_per_second("foundry", iron), 4 / 3.2)
+        from unittest import mock
+
+        from draftsman.data import entities as protos
+        with mock.patch.dict(protos.raw["foundry"], {"effect_receiver": {"base_effect": {"consumption": -0.5}}}):
+            self.assertAlmostEqual(rates.machine_watts("foundry", iron),
+                                   rates.watts(protos.raw["foundry"]["energy_usage"]) * (0.5 + 1 / 30))
+
+    def test_mixed_and_partly_filled_slots(self):
+        jelly = rates.recipe_any("rocket-fuel-from-jelly")
+        mixed = self.held(("efficiency-module-2", 2, "normal"), ("productivity-module-2", 2, "normal"))
+        self.assertAlmostEqual(rates.crafts_per_second("biochamber", jelly, mixed) * jelly.time, 1.6)
+        self.assertAlmostEqual(rates.productivity("biochamber", jelly, mixed), 0.62)
+        three = self.held(("speed-module-3", 2, "normal"), ("productivity-module-3", 1, "normal"))
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", self.GEAR, three), 1.25 * 1.85 / 0.5)
+        self.assertAlmostEqual(rates.productivity("assembling-machine-3", self.GEAR, three), 0.1)
+        self.assertAlmostEqual(rates.made("assembling-machine-3", self.GEAR, three).results["iron-gear-wheel"], 1.1)
+        with self.assertRaisesRegex(ValueError, "slots"):
+            rates.crafts_per_second("assembling-machine-2", self.GEAR, three)
+
+    def test_quality_modules_grow_their_good_effects(self):
+        iron, plastic = rates.recipe_any("casting-iron"), rates.recipe_any("plastic-bar")
+        rare = self.held(("speed-module-2", 4, "rare"))
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", self.GEAR, rare) * 0.5, 3.65)
+        mixed = self.held(("speed-module-2", 2, "rare"), ("productivity-module-2", 1, "rare"),
+                          ("productivity-module-2", 1, "epic"))
+        self.assertAlmostEqual(rates.crafts_per_second("foundry", iron, mixed) * iron.time, 7.04)
+        self.assertAlmostEqual(rates.productivity("foundry", iron, mixed), 0.71)
+        # A legendary productivity 3 slows by its 15%, unscaled, and adds 25%.
+        legendary = self.held(("productivity-module-3", 4, "legendary"))
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", self.GEAR, legendary) * 0.5, 0.5)
+        self.assertAlmostEqual(rates.productivity("assembling-machine-3", self.GEAR, legendary), 1.0)
+        # An uncommon efficiency 2 saves 52%: two speed 1s (+100%) and it draw +48%.
+        saver = self.held(("speed-module", 2, "normal"), ("efficiency-module-2", 1, "uncommon"))
+        self.assertAlmostEqual(rates.machine_watts("chemical-plant", plastic, saver), 210e3 * 1.48 + 7e3)
+        self.assertAlmostEqual(rates.crafts_per_second("chemical-plant", plastic, saver), 1.4)
+
+    def test_a_quality_machine_crafts_faster(self):
+        plastic = rates.recipe_any("plastic-bar")
+        held = self.held(("productivity-module-2", 3, "rare"))
+        self.assertAlmostEqual(rates.crafts_per_second("chemical-plant", plastic, held, quality="legendary"), 1.75)
+        self.assertAlmostEqual(rates.productivity("chemical-plant", plastic, held), 0.288)
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", self.GEAR, quality="uncommon"),
+                               1.25 * 1.3 / 0.5)
+
+    def test_beacons_each_with_their_own_quality_and_modules(self):
+        uncommon = ("uncommon", self.held(("speed-module-2", 2, "uncommon")))
+        # Three uncommon beacons of uncommon speed 2s: 3 x 0.78 x (1.5 + 0.2) x 0.5773.
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", self.GEAR, "", [uncommon] * 3) * 0.5,
+                               1.25 * (1 + 2.2966), places=3)
+        # An empty or unpowered beacon still counts in the profile: 1.0 x 1.5 x 0.7071.
+        full, empty = ("normal", self.held(("speed-module-3", 2, "normal"))), ("normal", [])
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", self.GEAR, "", [full, empty]) * 0.5,
+                               2.5759, places=3)
+        self.assertAlmostEqual(rates.crafts_per_second("assembling-machine-3", self.GEAR, "", [full, full]),
+                               rates.crafts_per_second("assembling-machine-3", self.GEAR, "", "speed-module-3", 2))
+        for bad in ([("normal", self.held(("productivity-module-3", 1, "normal")))],
+                    [("normal", self.held(("speed-module-3", 3, "normal")))]):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                rates.crafts_per_second("assembling-machine-3", self.GEAR, "", bad)
+
+    def test_research_adds_productivity_up_to_the_cap(self):
+        self.assertEqual(rates.productivity("assembling-machine-3", self.GEAR, research=0.5), 0.5)
+        self.assertEqual(rates.made("assembling-machine-3", self.GEAR, research=0.5).results, {"iron-gear-wheel": 1.5})
+        # 1.75 from the plant and its legendary modules plus 2.5 research made 4 per craft in game: capped at +300%.
+        legendary = self.held(("productivity-module-3", 5, "legendary"))
+        circuit = rates.recipe("electronic-circuit")
+        self.assertAlmostEqual(rates.productivity("electromagnetic-plant", circuit, legendary), 1.75)
+        self.assertEqual(rates.productivity("electromagnetic-plant", circuit, legendary, research=2.5), 3)
+        self.assertAlmostEqual(rates.crafts_per_second("electromagnetic-plant", circuit, legendary) * 0.5, 0.5)
+
+
 class Beacons(unittest.TestCase):
     PACK = {"recipe": "automation-science-pack", "machine": "assembling-machine-3"}
 
@@ -3176,13 +3267,19 @@ class Observe(unittest.TestCase):
 
     @staticmethod
     def machines(first, recipe, n, speed, crafts, machine="assembling-machine-2", energy=0.5, modules=(),
-                 beacons=(), productivity=0, surface="nauvis"):
-        """n machines from unit `first`, each finishing `crafts` crafts in the minute."""
-        mods = [{"name": m, "quality": "normal", "count": c} for m, c in modules]
-        return [({"unit": u, "surface": surface, "name": machine, "recipe": recipe, "energy": energy, "x": u, "y": 0,
-                  "speed": speed, "productivity": productivity, "finished": 0, "modules": mods,
-                  "beacons": list(beacons)},
+                 beacons=(), productivity=0, surface="nauvis", quality="normal", research=0):
+        """n machines from unit `first`, each finishing `crafts` crafts in the minute; modules are
+        (name, count) or (name, count, quality)."""
+        mods = [{"name": m[0], "quality": m[2] if len(m) > 2 else "normal", "count": m[1]} for m in modules]
+        return [({"unit": u, "surface": surface, "name": machine, "quality": quality, "recipe": recipe,
+                  "energy": energy, "x": u, "y": 0, "speed": speed, "productivity": productivity,
+                  "research": research, "finished": 0, "modules": mods, "beacons": list(beacons)},
                  crafts) for u in range(first, first + n)]
+
+    @staticmethod
+    def beacon(module="speed-module-3", count=2, quality="normal", module_quality="normal", status="working"):
+        return {"name": "beacon", "quality": quality, "status": status,
+                "modules": [{"name": module, "quality": module_quality, "count": count}] if count else {}}
 
     @staticmethod
     def report(groups, statuses, area=None):
@@ -3243,8 +3340,91 @@ class Observe(unittest.TestCase):
         self.assertEqual(g["mismatch"], [])
         self.assertAlmostEqual(g["model_crafting_speed"], speed, places=4)  # the profile is 0.7071
 
+    def test_base_effects_are_modelled(self):
+        rows = self.machines(1, "casting-iron", 2, 4, 30, machine="foundry", energy=3.2, productivity=0.5)
+        [g] = self.report([rows], lambda m, t: "working")
+        self.assertEqual((g["mismatch"], g["unmodelled"]), ([], None))
+
+    def test_mixed_partial_and_quality_modules_are_modelled(self):
+        # Read off machines in a real game: their crafting_speed and productivity_bonus.
+        cases = [
+            self.machines(1, "rocket-fuel-from-jelly", 1, 1.6, 5, machine="biochamber", energy=10, productivity=0.62,
+                          modules=[("efficiency-module-2", 2), ("productivity-module-2", 2)]),
+            self.machines(2, "iron-gear-wheel", 1, 3.65, 5, machine="assembling-machine-3",
+                          modules=[("speed-module-2", 4, "rare")]),
+            self.machines(3, "iron-gear-wheel", 1, 1.25 * 1.85, 5, machine="assembling-machine-3", productivity=0.1,
+                          modules=[("speed-module-3", 2), ("productivity-module-3", 1)]),
+            self.machines(4, "plastic-bar", 1, 1.75, 5, machine="chemical-plant", energy=1, productivity=0.288,
+                          quality="legendary", modules=[("productivity-module-2", 3, "rare")]),
+            self.machines(5, "iron-gear-wheel", 1, 1.25 * 3.2966, 5, machine="assembling-machine-3",
+                          beacons=[self.beacon("speed-module-2", 2, "uncommon", "uncommon")] * 3),
+            # An unpowered beacon passes on nothing but still counts.
+            self.machines(6, "copper-cable", 1, 2.5759, 5, machine="assembling-machine-3",
+                          beacons=[self.beacon(), self.beacon(status="no_power")]),
+        ]
+        groups = self.report(cases, lambda m, t: "working")
+        self.assertEqual(len(groups), 6)
+        for g in groups:
+            self.assertEqual((g["mismatch"], g["unmodelled"]), ([], None), g)
+        self.assertEqual({g["quality"] for g in groups}, {"normal", "legendary"})
+
+    def test_research_productivity_counts_in_the_rate_up_to_the_cap(self):
+        # The force's recipe bonus isn't in a machine's productivity_bonus but does make bonus crafts.
+        gears = self.machines(1, "iron-gear-wheel", 1, 1.25, 225, machine="assembling-machine-3", research=0.5)
+        capped = self.machines(5, "electronic-circuit", 1, 0.5, 240, machine="electromagnetic-plant",
+                               productivity=1.75, research=2.5, modules=[("productivity-module-3", 5, "legendary")])
+        a, b = self.report([gears, capped], lambda m, t: "working")
+        self.assertAlmostEqual(a["rated_crafts_per_second"], 1.25 * 1.5 / 0.5)
+        self.assertAlmostEqual(b["rated_crafts_per_second"], 0.5 * 4 / 0.5)
+        self.assertEqual((a["mismatch"], b["mismatch"]), ([], []))
+        self.assertEqual((a["diagnosis"], b["diagnosis"]), ("at rate", "at rate"))
+
+    def test_a_full_output_is_demand_limited_and_only_problems_are_listed(self):
+        from tools import observe
+
+        full = self.machines(1, "iron-gear-wheel", 2, 0.75, 20)  # rated 1.5 crafts/s each
+        starved = self.machines(10, "copper-cable", 4, 0.75, 30)  # 2 cables a craft: 12/s rated, 4/s made
+        short = self.machines(20, "electronic-circuit", 2, 0.75, 60)  # 3/s rated, 2/s made
+        fine = self.machines(30, "iron-chest", 1, 0.75, 90)
+        groups = self.report([full, starved, short, fine], lambda m, t: {
+            1: "full_output", 10: "item_ingredient_shortage", 20: "no_power"}.get(m["unit"] // 10 * 10 or 1, "working")
+            if t > 2 else "working")
+        by = {g["recipe"]: g for g in groups}
+        self.assertEqual(by["iron-gear-wheel"]["diagnosis"], "demand-limited (output full)")
+        self.assertAlmostEqual(by["copper-cable"]["lost"], 8)
+        self.assertAlmostEqual(by["electronic-circuit"]["lost"], 1)
+        # A fluid counts by the barrel: 50 units an item. One plant melts 1 ice into 20 water a second.
+        [melt] = self.report([self.machines(40, "ice-melting", 1, 1, 0, machine="chemical-plant", energy=1)],
+                             lambda m, t: "item_ingredient_shortage")
+        self.assertAlmostEqual(melt["lost"], 20 / 50)
+        out = observe.lines(groups)
+        listed = [line for line in out if not line.startswith("     ") and " on " in line]
+        self.assertEqual([line.split()[2] for line in listed[:2]], ["copper-cable", "electronic-circuit"])
+        self.assertFalse(any("iron-gear-wheel" in line or "iron-chest" in line for line in listed))
+        self.assertTrue(any(line.startswith("summary:") for line in out), out)
+        text = "\n".join(out)
+        self.assertIn("4 groups", text)
+        self.assertIn("demand-limited (output full) 1", text)
+        self.assertIn("0 with a model mismatch", text)
+        every = observe.lines(groups, every=True)
+        self.assertTrue(any("iron-gear-wheel" in line for line in every))
+        self.assertTrue(any("iron-chest" in line for line in every))
+
+    def test_variable_amounts_count_at_their_mean(self):
+        scrap = rates.recipe_any("scrap-recycling", means=True)
+        self.assertAlmostEqual(scrap.results["iron-gear-wheel"], 0.2)
+        self.assertAlmostEqual(scrap.results["holmium-ore"], 0.01)
+        self.assertEqual(rates.recipe_any("iron-gear-wheel-recycling", means=True).results, {"iron-plate": 0.5})
+        self.assertEqual(rates.recipe_any("iron-plate-recycling", means=True).results, {"iron-plate": 0.25})
+        with self.assertRaisesRegex(ValueError, "variable amount"):
+            rates.recipe_any("scrap-recycling")
+        rows = self.machines(1, "advanced-carbonic-asteroid-crushing", 2, 1, 6, machine="crusher", energy=5)
+        [g] = self.report([rows], lambda m, t: "working")
+        self.assertEqual((g["mismatch"], g["unmodelled"]), ([], None))
+        self.assertAlmostEqual(g["products"]["carbonic-asteroid-chunk"]["actual"], 0.2 * 0.1)
+
     def test_a_recipe_the_model_cant_parse_is_reported_unmodelled(self):
-        odd = self.machines(1, "uranium-processing", 2, 0.75, 3, machine="centrifuge", energy=12)
+        odd = self.machines(1, "uranium-processing", 2, 0.75, 3, machine="modded-centrifuge", energy=12)
         modded = self.machines(5, "modded-widget", 1, 1, 6, machine="modded-assembler", energy=1)
         groups = self.report([odd, modded], lambda m, t: "working")
         self.assertEqual(len(groups), 2)
