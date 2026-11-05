@@ -13,12 +13,14 @@ def facing(pick_from_west: bool) -> Direction:
     return Direction.WEST if pick_from_west else Direction.EAST
 
 
-def beacons_reaching(centre: tuple[float, float], half: float, beacons: list[tuple[float, float]]) -> int:
-    """Beacons (by centre) whose supply area overlaps the collision box (half width `half`)
-    of an entity at `centre`; a beacon's supply area reaches from its tile edge."""
+def beacons_reaching(centre: tuple[float, float], half, beacons: list[tuple[float, float]]) -> int:
+    """Beacons (by centre) whose supply area overlaps the collision box (half width `half`, or
+    (x, y) halves for a long entity) of an entity at `centre`; a beacon's supply area reaches
+    from its tile edge."""
     b = entities.raw["beacon"]
-    reach = b["supply_area_distance"] + math.ceil(2 * b["collision_box"][1][0]) / 2 + half
-    return sum(all(abs(c - bc) < reach for c, bc in zip(centre, at)) for at in beacons)
+    reach = b["supply_area_distance"] + math.ceil(2 * b["collision_box"][1][0]) / 2
+    halves = half if isinstance(half, tuple) else (half, half)
+    return sum(all(abs(c - bc) < reach + h for c, bc, h in zip(centre, at, halves)) for at in beacons)
 
 
 def poles(pole: str, powered: list[tuple[float, float, float]], free: dict[int, list[int]]) -> list[tuple[int, int]]:

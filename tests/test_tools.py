@@ -14,7 +14,8 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
-from generators import assembly_row, cell, factory, fluid_block, fluid_row, platform, production, smelting_column
+from generators import (assembly_row, cell, factory, fluid_block, fluid_row, platform, production, recycler_row,
+                        smelting_column)
 from generators.gated_requester import build
 from tools import pipes, rates
 from tools.check import check
@@ -256,6 +257,60 @@ class AssemblyRow(unittest.TestCase):
             assembly_row.build(recipe="electronic-circuit", machine="assembling-machine-3")
         with self.assertRaisesRegex(ValueError, "fluid"):
             assembly_row.build(recipe="processing-unit")
+
+
+class RecyclerRow(unittest.TestCase):
+    def test_variants_check_clean_and_are_powered(self):
+        for params in ({}, {"sides": 1}, {"recipe": "iron-gear-wheel-recycling"},
+                       {"beacons": "speed-module-3", "modules": "quality-module-3"},
+                       {"belt": "turbo-transport-belt", "research": "inserter-capacity-bonus=7"},
+                       {"pole": "small-electric-pole"}):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                bp = recycler_row.build(**params).to_dict()["blueprint"]
+            self.assertEqual(check({"blueprint": bp}), [], params)
+            assert_powered(self, bp, params)
+
+    def test_a_scrap_row_sizes_to_its_results_lane(self):
+        # 2.5 crafts/s a recycler, 0.6 results a craft at the mean: a yellow lane takes 5 a side.
+        p = recycler_row.plan()
+        self.assertEqual(p.feeder, ("fast-inserter", 2))
+        self.assertAlmostEqual(p.crafts, 2.5)
+        self.assertEqual((p.limit, p.machines), (5, 5))
+        self.assertAlmostEqual(sum(p.rates().values()), 15)
+        self.assertAlmostEqual(p.rates()["iron-gear-wheel"], 5)
+        self.assertEqual(p.product, "iron-gear-wheel")
+        self.assertIn("iron-gear-wheel 5/s", recycler_row.build().description)
+
+    def test_gear_recycling_gives_back_the_mean_plates_its_inserters_feed(self):
+        # 16 crafts/s rated: two fast inserters feed what they can, half a plate a gear back.
+        p = recycler_row.plan(recipe="iron-gear-wheel-recycling")
+        fed = 2 * rates.recycler_feed_rate("fast-inserter", "transport-belt")
+        self.assertAlmostEqual(p.crafts, fed)
+        self.assertEqual(p.limit, 2)  # 2 x 2.8 plates/s in a 7.5/s lane
+        self.assertEqual(list(p.rates()), ["iron-plate"])
+        self.assertAlmostEqual(p.rates()["iron-plate"], 2 * 2 * fed * 0.5)
+
+    def test_the_results_lane_binds_past_its_limit(self):
+        p = recycler_row.plan(machines=8)
+        self.assertAlmostEqual(sum(p.rates().values()), 2 * rates.lane_rate("transport-belt"))
+        with self.assertRaisesRegex(ValueError, "lane"):  # 2 plates a chest, 5.6 chests/s: past a yellow lane
+            recycler_row.plan(recipe="iron-chest-recycling")
+
+    def test_flow_tests_expect_every_result_within_its_spread(self):
+        bp = recycler_row.build()
+        [flow] = recycler_row.flow_tests()
+        self.assertLessEqual({f.entity for f in flow.feed} | set(flow.drain), {e.id for e in bp.entities if e.id})
+        self.assertEqual(set(flow.expect) | {"holmium-ore"}, set(rates.recipe_any("scrap-recycling", True).results))
+        # The commonest result is held closest; rarer ones get a wider band, never under 3%.
+        tol = flow.tolerances
+        self.assertLess(tol["iron-gear-wheel"], tol["steel-plate"])
+        self.assertGreaterEqual(min(tol.values()), 0.03)
+        self.assertLessEqual(max(tol.values()), 0.5)
+
+    def test_refuses_what_a_recycler_cant_do(self):
+        with self.assertRaisesRegex(ValueError, "recycler can't craft"):
+            recycler_row.plan(recipe="iron-gear-wheel")
 
 
 
@@ -3686,11 +3741,28 @@ class Suggest(unittest.TestCase):
         self.assertNotIn("modules", mixed["suggestion"]["params"])
         self.assertNotIn("beacons", mixed["suggestion"]["params"])
 
-    def test_a_recycler_has_no_generator(self):
-        g = self.suggested(Observe.machines(1, "iron-gear-wheel-recycling", 4, 0.5, 30, machine="recycler",
-                                            energy=0.03125))
+    def test_a_starved_recycler_group_gets_a_recycler_row(self):
+        # 4 recyclers making 1 plate/s between them (2 gears/s in), with quality modules.
+        g = self.suggested(Observe.machines(1, "iron-gear-wheel-recycling", 4, 0.5 * 0.9, 30, machine="recycler",
+                                            energy=0.03125, modules=[("quality-module", 4)]))
+        s = g["suggestion"]
+        self.assertEqual((s["kind"], s["generator"]), ("build", "recycler_row"), s)
+        self.assertAlmostEqual(s["target"], 1)
+        self.assertEqual(s["params"].get("modules"), "quality-module")
+        self.assertNotIn("machine", s["params"])
+        self.assertIn("python -m tools.bp gen recycler_row recipe=iron-gear-wheel-recycling", s["command"])
+        self.assertGreaterEqual(self.made(s["command"]), 1)
+
+    def test_a_recycler_no_row_can_carry_says_why(self):
+        # An iron chest gives back 2 plates: what one recycler's inserters feed is more than a yellow lane.
+        g = self.suggested(Observe.machines(1, "iron-chest-recycling", 4, 0.5, 30, machine="recycler",
+                                            energy=0.03125), belt="transport-belt")
         self.assertEqual(g["suggestion"]["kind"], "no generator fits", g["suggestion"])
-        self.assertIn("variable amount", g["suggestion"]["reason"])
+        self.assertIn("recycler_row: ", g["suggestion"]["reason"])
+        self.assertIn("lane", g["suggestion"]["reason"])
+        # Crushing still has no generator: only recyclers' variable results have a row.
+        rows = Observe.machines(1, "metallic-asteroid-crushing", 2, 1, 6, machine="crusher", energy=2)
+        self.assertEqual(self.suggested(rows)["suggestion"]["kind"], "no generator fits")
 
     def test_problems_a_layout_cant_fix_get_no_build(self):
         from tools import observe

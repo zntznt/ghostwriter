@@ -86,6 +86,7 @@ class Flow:
     # Windows to measure in all, stopping at the first that passes: a big factory
     # fills its belts slowly, with only its rows' slack to spare.
     settle: int = 1
+    tolerances: dict[str, float] = field(default_factory=dict)  # per item, in place of tolerance (random results)
 
 
 @dataclass
@@ -179,8 +180,9 @@ def _shortfalls(flow: Flow, got: dict) -> list[str]:
     errors = []
     for item, rate in flow.expect.items():
         measured = rates.get(item, 0.0)
-        short = measured < (1 - flow.tolerance) * rate
-        if short or (not flow.at_least and measured > (1 + flow.tolerance) * rate):
+        tolerance = flow.tolerances.get(item, flow.tolerance)
+        short = measured < (1 - tolerance) * rate
+        if short or (not flow.at_least and measured > (1 + tolerance) * rate):
             stalled = got.get("stalled") if isinstance(got.get("stalled"), dict) else {}
             pool = got.get("pool") if isinstance(got.get("pool"), dict) else {}
             pool = {k: round(v) for k, v in pool.items() if v}

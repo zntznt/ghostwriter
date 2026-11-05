@@ -135,6 +135,12 @@ tier handing copper cable from one assembling machine 3 straight into a circuit
 machine, circuits counted. `gen cell` sizes its handovers from these. It leaves the
 belt rates as they are, so rows and filed blueprints keep their inserter counts.
 
+`python -m validator.measure --recycler` measures only `into_recycler`, with no
+research and at each research already measured: two inserters of each regular
+tier feeding gears into a recycler (16 crafts/s) off a standing full belt, its
+crafts counted. `gen recycler_row` sizes a recycler its inserters can't keep up
+with (item recycling) from these.
+
 ## Tests for library blueprints
 
 A filed blueprint keeps its tests in a file next to it, since imported ones
