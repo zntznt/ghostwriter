@@ -162,6 +162,12 @@
         "fast-inserter": 5.029,
         "long-handed-inserter": 2.505,
         "bulk-inserter": 5.019
+      },
+      "energy_per_item": {
+        "inserter": 4507,
+        "fast-inserter": 6130,
+        "long-handed-inserter": 4420,
+        "bulk-inserter": 11309
       }
     },
     "inserter-capacity-bonus=7": {
@@ -244,6 +250,12 @@
         "fast-inserter": 4.972,
         "long-handed-inserter": 3.741,
         "bulk-inserter": 4.992
+      },
+      "energy_per_item": {
+        "inserter": 3479,
+        "fast-inserter": 3960,
+        "long-handed-inserter": 3242,
+        "bulk-inserter": 11530
       }
     }
   },

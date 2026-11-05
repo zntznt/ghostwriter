@@ -10,12 +10,17 @@ near lane carries at most one ingredient. All belts run north: ingredients
 enter at the bottom, the product leaves at the top of each side's in1.
 
 Chemical plants (plastic, batteries, explosives, solid fuel) and assembling
-machines 2 and 3 (processing units, electric engines, rocket fuel) both fit.
-Recipes with two fluids, or a fluid product, are refused.
+machines 2 and 3 (processing units, electric engines, rocket fuel) both fit,
+and so do electromagnetic plants (4x4; processing units, superconductors) and
+foundries (5x5), turned so their first fluid input, the one a one-fluid recipe
+fills, faces the pipe. With two sides their inserter columns are 2 x size + 2
+tiles apart, past a medium pole's wire reach: they take sides=1. Recipes with
+two fluids, or a fluid product, are refused.
 
 Inserters per machine follow the measured rates (tools/inserter_rates.json)
 with a 15% margin, and poles take the inserter-column tiles left over, or a
-one-row gap after each machine when there are none. `machines` (per side)
+one-row gap after each machine when there are none (and one before the
+first, for a 4-row machine's top inserter). `machines` (per side)
 defaults to the most the belts carry; the description names each lane's item
 and the fluid flow the pipe must supply.
 
@@ -36,7 +41,7 @@ from draftsman.data import entities
 from tools import layout, rates
 
 MARGIN = 0.85
-REGULAR = ("inserter", "fast-inserter")
+REGULAR = ("inserter", "fast-inserter", "bulk-inserter")
 LONG = "long-handed-inserter"
 MACHINES = ("chemical-plant", "assembling-machine-2", "assembling-machine-3")
 # Basic inserters can't fill a product lane to the top: explosives (2 per craft,
@@ -64,9 +69,11 @@ class Plan:
     output: tuple[str, int]
     size: int
     gap: int = 0
+    lead: int = 0  # empty rows before the first machine, when its top inserter is out of a pole's reach
     modules: str = ""
     beacons: str = ""  # in every beacon's slots; no beacons without
     beacons_per_machine: int = 0
+    research: str = ""  # the inserter research the row is sized for
 
     @property
     def per_side(self) -> float:
@@ -95,8 +102,9 @@ class Plan:
         w += self.sides * (self.machines + 1) * rates.beacon_watts() if self.beacons else 0
         moved = [r.ingredients[self.near] if self.near else 0, sum(r.ingredients[i] for i in self.far)]
         for (inserter, k), per_craft in zip(self.feeders, moved):
-            w += rates.inserter_watts(inserter, m * k, crafts * per_craft)
-        return w + rates.inserter_watts(self.output[0], m * self.output[1], crafts * r.results[self.product])
+            w += rates.inserter_watts(inserter, m * k, crafts * per_craft, self.research)
+        return w + rates.inserter_watts(self.output[0], m * self.output[1], crafts * r.results[self.product],
+                                        self.research)
 
 
 def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
@@ -113,7 +121,6 @@ def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, mach
     per = beacons_per_machine(machine, sides) if beacons else 0
     crafts = rates.crafts_per_second(machine, r, modules, beacons, per)
     r = rates.made(machine, r, modules)
-    _input_face(machine)  # refuses machines whose fluid inputs aren't on one face
     (product, out), = r.results.items()
     (fluid,) = r.fluids
     lane = rates.lane_rate(belt)
@@ -146,11 +153,15 @@ def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, mach
             fewest = used if fewest is None else min(fewest, used)
             continue
         candidates.append(Plan(r, machine, belt, sides, 0, limit, crafts, product, fluid, near, sorted(rest),
-                               feeders, output, s, modules=modules, beacons=beacons, beacons_per_machine=per))
+                               feeders, output, s, modules=modules, beacons=beacons, beacons_per_machine=per,
+                               research=rates.research_key(research)))
     if fewest is not None:
         why.add(f"one machine needs at least {fewest} inserters on a side where {s} fit")
     if not candidates:
         hints = (["a slower machine"] if why else []) + (["a faster belt"] if any("lane" in w for w in why) else [])
+        if fewest is not None and not research and not inserter:
+            hints += [f"research={k}" for k in [rates.least_research(
+                lambda k: plans(recipe, machine, belt, sides, machines, inserter, k, modules, beacons))] if k]
         raise ValueError(f"{recipe} in {machine} on {belt}: no layout fits ({'; '.join(sorted(why))})"
                          + (f"; try {' or '.join(hints)}" if hints else ""))
     # Most machines first; then a product belt that carries nothing else, so no
@@ -170,15 +181,22 @@ def plans(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, mach
 def plan(pole="medium-electric-pole", **params) -> Plan:
     """The best of plans() that also leaves room for poles."""
     errors = []
-    for gap in (0, 1):
+    for gap, lead in ((0, 0), (1, 0), (1, 1)):
         for p in plans(**params):
-            p.gap = gap
+            p.gap, p.lead = gap, lead
             try:
                 _build(p, pole)
                 return p
             except ValueError as e:
                 errors.append(str(e))
-    raise ValueError(f"{p.recipe.name}: no layout leaves room to power it ({'; '.join(errors)})")
+    hint = ""
+    if params.get("sides", 2) == 2:
+        try:
+            plan(pole, **{**params, "sides": 1})
+            hint = "; try sides=1"
+        except ValueError:
+            pass
+    raise ValueError(f"{p.recipe.name}: no layout leaves room to power it ({'; '.join(dict.fromkeys(errors))}){hint}")
 
 
 def build(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
@@ -196,11 +214,11 @@ def beacons_per_machine(machine: str, sides: int) -> int:
     return min(_reaching(machine, m, beacons) for m in machines)
 
 
-def _spots(s, bs, gap, n, xs):
+def _spots(s, bs, gap, n, xs, lead=0):
     """Top-left tiles of the machines and beacons (none if bs is 0) in machine columns at xs."""
     pitch = s + gap + bs
-    return ([(x, m * pitch + bs) for x in xs for m in range(n)],
-            [(x, b * pitch) for x in xs for b in range(n + 1 if bs else 0)])
+    return ([(x, lead + m * pitch + bs) for x in xs for m in range(n)],
+            [(x, lead + b * pitch) for x in xs for b in range(n + 1 if bs else 0)])
 
 
 def _reaching(machine, at, beacons) -> int:
@@ -219,19 +237,17 @@ def _crafts(machine, r) -> bool:
 
 
 def _input_face(machine) -> int:
-    """The direction (0, 4, 8, 12) every fluid input of the unrotated machine faces."""
-    faces = {c.get("direction", 0) for fb in entities.raw[machine].get("fluid_boxes", [])
-             if fb.get("production_type") == "input" for c in fb.get("pipe_connections", [])}
-    if len(faces) != 1:
-        raise ValueError(f"{machine}: fluid inputs aren't all on one face")
-    return faces.pop()
+    """The direction (0, 4, 8, 12) the unrotated machine's first fluid input faces: the game fills
+    input boxes in recipe order, so a one-fluid recipe fills that one."""
+    first = next(fb for fb in entities.raw[machine]["fluid_boxes"] if fb.get("production_type") == "input")
+    return first["pipe_connections"][0].get("direction", 0)
 
 
 def _build(p: Plan, pole: str) -> Blueprint:
     s, n = p.size, p.machines
     bs = rates.size(BEACON) if p.beacons else 0  # beacon rows before each machine and after the last
     pitch = s + p.gap + bs
-    length = n * pitch + bs
+    length = p.lead + n * pitch + bs
     belts = 2 if p.far else 1
     o = belts - 1
     pipe_x = o + 2 + s
@@ -277,7 +293,7 @@ def _build(p: Plan, pole: str) -> Blueprint:
     used = sum(k for _, k in p.feeders) + p.output[1]
     for side, c in columns.items():
         west = c["west"]
-        spots, beacons = _spots(s, bs, p.gap, n, [c["machine"]])
+        spots, beacons = _spots(s, bs, p.gap, n, [c["machine"]], p.lead)
         for x, y in beacons:
             bp.entities.append(BEACON, tile_position=(x, y))
             bp.entities[-1].request_modules(p.beacons, range(entities.raw[BEACON]["module_slots"]))
@@ -297,10 +313,10 @@ def _build(p: Plan, pole: str) -> Blueprint:
                     row += 1
 
     if bs:
-        machines, beacons = _spots(s, bs, p.gap, n, [c["machine"] for c in columns.values()])
+        machines, beacons = _spots(s, bs, p.gap, n, [c["machine"] for c in columns.values()], p.lead)
         if any(_reaching(p.machine, m, beacons) != p.beacons_per_machine for m in machines):
             raise ValueError(f"not every machine takes {p.beacons_per_machine} beacons")
-    taken = {m * pitch + bs + r for m in range(n) for r in range(used)}
+    taken = {p.lead + m * pitch + bs + r for m in range(n) for r in range(used)}
     free = {c["ins"]: [y for y in range(length) if y not in taken] for c in columns.values()}
     for x, y in layout.poles(pole, powered, free):
         bp.entities.append(pole, tile_position=(x, y))
@@ -322,7 +338,7 @@ def flow_tests(**params):
             feeds.append(Feed(f"in2_{side}", lane, item))
     total = p.sides * p.per_side
     bs = rates.size(BEACON) if p.beacons else 0
-    length = p.machines * (p.size + p.gap + bs) + bs
+    length = p.lead + p.machines * (p.size + p.gap + bs) + bs
     return [Flow(f"{p.machines * p.sides} machines: {total:g} {p.product}/s", feeds,
                  [f"out_{side}" for side in SIDES[:p.sides]], {p.product: total},
                  warmup=rates.warmup_seconds(p.belt, length, 1 / p.crafts),

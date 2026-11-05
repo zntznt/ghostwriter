@@ -4,7 +4,12 @@
 
 Walks the recipe tree from the target. Each item an assembler makes from
 items gets as many assembly rows (generators/assembly_row.py) as its demand
-needs, in the fastest allowed machine whose row can be fed. Items made with
+needs, in the fastest allowed machine whose row can be fed. machine= caps the
+tiers: electromagnetic-plant adds it before assembling-machine-3, for the
+recipes it crafts (circuits, cable, accumulators...); a step it can't feed or
+craft falls back to an assembler, and says why on stderr (often a faster belt,
+or research=, would let the plant). Its +50% productivity shrinks what the
+ingredients' rows make. Items made with
 one fluid (plastic, batteries, processing units) get fluid rows
 (generators/fluid_row.py). With smelt=1, items a furnace makes from one ore
 get smelting columns. Everything else is an input to supply: plates by
@@ -29,7 +34,7 @@ from generators import assembly_row, cell, fluid_block, fluid_row, smelting_colu
 from tools import rates
 from tools.check import TEXT_LIMITS
 
-MACHINES = ("assembling-machine-3", "assembling-machine-2", "assembling-machine-1")
+MACHINES = ("electromagnetic-plant", "assembling-machine-3", "assembling-machine-2", "assembling-machine-1")
 GENERATORS = {"assembly_row": assembly_row, "fluid_row": fluid_row, "smelting_column": smelting_column,
               "fluid_block": fluid_block, "cell": cell}
 OIL = ("heavy-oil", "light-oil", "petroleum-gas")
@@ -59,6 +64,7 @@ class Step:
     rows: int
     rate: float  # rated per row
     tradeoff: tuple[int, float] | None = None  # where beacons were weighed: the tiles and W they add
+    note: str = ""  # why a faster machine that crafts the item wasn't used
 
 
 def solve(item: str, rate: float, machine="assembling-machine-2", belt="transport-belt", smelt=0,
@@ -300,7 +306,13 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     beaconed_step = None
     for base in options:
         try:
-            full = _rated(kind, {**base, "sides": 2})
+            for sides in (2, 1):  # a machine too wide to power two sides of still powers one
+                try:
+                    full = _rated(kind, {**base, "sides": sides})
+                    break
+                except ValueError:
+                    if sides == 1:
+                        raise
             rows = math.ceil(need / full - 1e-9)
             share = need / rows
             machine = base.get("machine") or base["furnace"]
@@ -311,12 +323,16 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
                            for sides in (1, 2)}
             if share <= per_machine[1] + 1e-9:
                 params = {**base, "sides": 1, count_key: 1}
+            elif sides == 1:
+                params = {**base, "sides": 1, count_key: math.ceil(share / per_machine[1] - 1e-9)}
             else:
                 params = {**base, "sides": 2, count_key: math.ceil(share / 2 / per_machine[2] - 1e-9)}
             step = Step(item, demand, kind, params, rows, _rated(kind, params))
         except ValueError as e:
             errors.append(str(e))
             continue
+        if errors and base.get("machine") != options[0].get("machine"):
+            step.note = f"{options[0]['machine']} not used: {errors[0]}"
         if beaconed_step and beaconed_step.params.get("machine") == base.get("machine"):
             # A beaconed row spaces its machines out: kept only where it saves tiles, or
             # saves power on as many.
@@ -358,7 +374,7 @@ def _beacons_per_machine(kind, machine, sides) -> int:
         return fluid_row.beacons_per_machine(machine, sides)
     if kind == "smelting_column":
         return smelting_column.beacons_per_furnace(machine, sides)
-    return assembly_row.BEACONS_PER_MACHINE
+    return assembly_row.beacons_per_machine(machine, sides)
 
 
 def _row_area(s: Step) -> int:
@@ -459,12 +475,12 @@ def _fuse_shared(steps: list[Step], item: str, belt: str, users: dict) -> list[S
 
 
 def _made(s: Step, r: rates.Recipe) -> rates.Recipe:
-    """`r` as the step's rows make it: with their machines' productivity."""
+    """`r` as the step's rows make it: with their machines' productivity, modules' and their own."""
     modules = s.params.get("modules", "")
-    if not modules:
+    machine = s.params.get("machine") or s.params.get("furnace")
+    if not machine and not modules:  # a fluid block: no machine of its own gives productivity
         return r
-    machine = s.params.get("machine") or s.params.get("furnace") or fluid_block.plan(recipe=r.name).machine
-    return rates.made(machine, r, modules)
+    return rates.made(machine or fluid_block.plan(recipe=r.name).machine, r, modules)
 
 
 def _extra(s: Step) -> dict:
@@ -519,6 +535,9 @@ def build(item="electronic-circuit", rate=5, machine="assembling-machine-2", bel
         description = f"Supply {supply}. Each row's description gives its share.{power} {tail}"
     book.description = description
     book.icons = [item]
+    for s in steps:
+        if s.note:
+            print(f"production: {s.item} in {s.params['machine']}; {s.note}", file=sys.stderr)
     for line in power_lines(steps):
         print(f"production power: {line}", file=sys.stderr)
     for s in steps:

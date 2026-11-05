@@ -281,6 +281,28 @@ class Validator(unittest.TestCase):
     def test_a_fluid_row_with_modules_draws_its_estimate(self):
         self.assertDraws(fluid_row, recipe="plastic-bar", modules="productivity-module-3")
 
+    def test_an_electromagnetic_plant_row_reaches_its_rate_and_draws_its_estimate(self):
+        # Circuits at the plant's own +50% productivity, its bulk inserters at full hands (research).
+        self.assertDraws(assembly_row, recipe="electronic-circuit", machine="electromagnetic-plant",
+                         belt="turbo-transport-belt", research="inserter-capacity-bonus=7")
+
+    def test_an_electromagnetic_fluid_row_reaches_its_rate(self):
+        # Processing units: the acid fills the plant's first fluid input, the one facing the pipe.
+        params = {"recipe": "processing-unit", "machine": "electromagnetic-plant", "sides": 1}
+        bp = fluid_row.build(**params)
+        data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+        self.assertPasses(data)
+        report = self.run_flow(data, fluid_row.flow_tests(**params), ids)
+        self.assertTrue(report.ok, report.lines())
+
+    def test_an_electromagnetic_plant_production_chain_reaches_its_rate(self):
+        # Processing units and advanced circuits in plants, each making 50% more than the rows
+        # feeding it are sized for; circuits and cable in assemblers, which feed no plant here.
+        data, flows = production.chain_tests(item="processing-unit", rate=1, machine="electromagnetic-plant")
+        self.assertPasses(data)
+        report = self.run_flow(data, flows, {})
+        self.assertTrue(report.ok, report.lines())
+
     def test_an_electric_smelting_column_draws_its_estimate(self):
         self.assertDraws(smelting_column, furnace="electric-furnace")
 

@@ -24,7 +24,8 @@ Power, as measured in game (2.1.23): a crafting machine draws its energy_usage
 times 1 + its modules' and beacons' consumption bonus (floored at -80%) while
 crafting, plus a drain of energy_usage / 30 always; burner machines none. A
 beacon draws 480 kW whatever it holds. An inserter draws its drain plus the
-energy it was measured to take per item moved (energy_per_item, no research).
+energy it was measured to take per item moved (energy_per_item, with no research or at the
+research a row is sized for).
 """
 
 import json
@@ -272,15 +273,19 @@ def beacon_watts() -> float:
     return watts(entities.raw["beacon"]["energy_usage"])
 
 
-def inserter_watts(inserter: str, n: int, items_per_second: float) -> float:
-    """Average electric W of `n` inserters moving `items_per_second` between them."""
-    # ponytail: energy per item is measured with no research; researched hands move more a
-    # swing, so this overestimates them (measure it per research, as rates are, if that matters).
+def inserter_watts(inserter: str, n: int, items_per_second: float, research: str | dict = "") -> float:
+    """Average electric W of `n` inserters moving `items_per_second` between them, at the energy
+    per item measured with no research or at `research`."""
+    # ponytail: energy per item is measured off a yellow belt; a faster belt fills a researched
+    # hand fuller a swing, so this overestimates it there (measure it per belt if that matters).
     if not n:
         return 0
-    per_item = _inserter_file().get("energy_per_item", {})
+    per_item = _measured(research).get("energy_per_item", {})
     if inserter not in per_item:
-        raise ValueError(f"no measured energy per item for {inserter} (python -m validator.measure --energy)")
+        key = research_key(research)
+        raise ValueError(f"no measured energy per item for {inserter}"
+                         f"{f' at {key}' if key else ''} (python -m validator.measure --energy"
+                         f"{f' --research {key}' if key else ''})")
     return n * watts(entities.raw[inserter]["energy_source"]["drain"]) + per_item[inserter] * items_per_second
 
 
@@ -351,6 +356,24 @@ def _measured(research) -> dict:
     if got is None:
         raise ValueError(f"no inserter rates measured at {key} (python -m validator.measure --research {key})")
     return got
+
+
+def least_research(fits) -> str:
+    """The least research measured (by levels in all) under which `fits(research)` raises no
+    ValueError, or "" if none does."""
+    for key in sorted(_inserter_file().get("researched", {}), key=lambda k: sum(research_levels(k).values())):
+        try:
+            fits(key)
+            return key
+        except ValueError:
+            pass
+    return ""
+
+
+def slowest_belt(lane: float) -> str:
+    """The slowest belt measured whose lane carries `lane` items/s, or ""."""
+    belts = sorted(_inserter_file()["rates"]["inserter"], key=lane_rate)
+    return next((b for b in belts if lane_rate(b) >= lane - 1e-9), "")
 
 
 def handover_rate(inserter: str, research: str | dict = "") -> float:
