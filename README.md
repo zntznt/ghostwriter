@@ -29,7 +29,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | Path | |
 |---|---|
 | `.claude/skills/blueprint/` | Claude Code skill: how to generate, check, file |
-| `tools/` | codec, checks, library/book builder, CLI (`python -m tools.bp`), data dump; `rates.py` (recipes, machines, belts, measured inserters) and `layout.py` (inserter facing, pole placement) for generators; `compact.py` (the compact factory layout) with `shelves.py`, `belts.py` and `route.py` (a grid belt router) |
+| `tools/` | codec, checks, library/book builder, CLI (`python -m tools.bp`), data dump; `rates.py` (recipes, machines, belts, measured inserters) and `layout.py` (inserter facing, pole placement) for generators; `compact.py` (the compact factory layout) with `shelves.py`, `belts.py` and `route.py` (a grid belt router); `observe.py` (watch your own game over RCON) |
 | `generators/` | parametric designs, `build(**params)`: `factory` (ITEM at RATE/s, every row connected: packed on shelves, or `layout=bus` on a main bus; with each producer only one row uses, then each shared one, tried as cells with the rows that take them, `cells=0` to skip), `production` (the same rows as a book), `assembly_row` (item recipes in assemblers), `cell` (producers handing their product straight to consumers by inserter), `fluid_row` (recipes with one fluid: chemical plants, fluid assemblers), `fluid_block` (several fluids: oil processing, cracking, sulfur, acid, lubricant), `smelting_column`, `gated_requester`. Those that size inserters (`factory`, `production`, `assembly_row`, `cell`, `fluid_row`, `fluid_block`) take `research=inserter-capacity-bonus=N`, measured at 2 and 7 |
 | `library/` | decoded JSON, one file per blueprint; folders are books; a platform's `NAME.plan.json` is its trip plan |
 | `validator/` | in-game validation: headless server, RCON, Lua harness, diff (`bp validate`) |
@@ -37,6 +37,28 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | `data/` | `data-raw-dump.json` from `python -m tools.dump_data` (gitignored) |
 | `NOTES.md` | format facts and how each was verified |
 | `docs/` | design notes: `layout-optimizer.md` (where the generators spend their tiles, and how to optimise it) |
+
+## Watching your own game
+
+`tools.observe` connects to a running game over RCON and reports, per group of
+crafting machines (surface, machine, recipe, modules), what they really make
+against their rated output, their status mix over the window, a one-line
+diagnosis, and anywhere the game's crafting speed or productivity differs from
+ghostwriter's model.
+
+```
+GHOSTWRITER_RCON_PASSWORD=secret .venv/bin/python -m tools.observe --port 27015 --seconds 30
+.venv/bin/python -m tools.observe --port 27015 --area -50,-50,50,50 --json   # one area, for a script or an AI
+```
+
+- RCON needs a game started with `--rcon-port N --rcon-password P` (the
+  [command line parameters](https://wiki.factorio.com/Command_line_parameters)),
+  as a headless/dedicated server is. Those docs don't say whether a game hosted
+  from the GUI (Multiplayer → Host) honours them; that's untested here.
+- It runs `/sc` Lua, and the [wiki](https://wiki.factorio.com/Console) says
+  any script command permanently disables achievements for that save. Use it on
+  a save whose achievements you don't care about.
+- It only reads: fixed Lua queries, no game speed change, nothing built or set.
 
 ## Library site (GitHub Pages)
 
