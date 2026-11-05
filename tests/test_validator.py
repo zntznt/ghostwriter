@@ -1396,6 +1396,18 @@ class Validator(unittest.TestCase):
         self.assertAlmostEqual(g["products"]["electronic-circuit"]["rated"], 18)
         self.assertIn("ingredient shortage: the inputs feed about", g["diagnosis"])
         self.assertEqual((g["mismatch"], g["unmodelled"]), ([], None))
+        # What it would build instead: a row making what it makes in about four machines, which does.
+        [g] = observe.suggest([g])
+        s = g["suggestion"]
+        print(observe._suggestion_text(g))
+        self.assertEqual((s["kind"], s["generator"], s["rows"]), ("build", "assembly_row", 1), s)
+        self.assertAlmostEqual(s["target"], 5, delta=0.5)
+        self.assertLessEqual(s["machines"], 4)
+        bp = assembly_row.build(**s["params"])
+        [flow] = assembly_row.flow_tests(**s["params"])
+        report = self.run_flow(bp.to_dict(), [dataclasses.replace(flow, expect={s["item"]: s["target"]}, at_least=True)],
+                               {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id})
+        self.assertTrue(report.ok, report.lines())
 
     def test_the_observer_models_modules_and_beacons(self):
         [g] = self.observe_row(recipe="automation-science-pack", modules="speed-module-3", beacons="speed-module-3",
