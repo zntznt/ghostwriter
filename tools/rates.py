@@ -24,8 +24,8 @@ Power, as measured in game (2.1.23): a crafting machine draws its energy_usage
 times 1 + its modules' and beacons' consumption bonus (floored at -80%) while
 crafting, plus a drain of energy_usage / 30 always; burner machines none. A
 beacon draws 480 kW whatever it holds. An inserter draws its drain plus the
-energy it was measured to take per item moved (energy_per_item, with no research or at the
-research a row is sized for).
+energy it was measured to take per item moved off its belt (energy_per_item, with no research
+or at the research a row is sized for: a faster belt fills a researched hand fuller a swing).
 """
 
 import json
@@ -274,20 +274,18 @@ def beacon_watts() -> float:
     return watts(entities.raw["beacon"]["energy_usage"])
 
 
-def inserter_watts(inserter: str, n: int, items_per_second: float, research: str | dict = "") -> float:
-    """Average electric W of `n` inserters moving `items_per_second` between them, at the energy
-    per item measured with no research or at `research`."""
-    # ponytail: energy per item is measured off a yellow belt; a faster belt fills a researched
-    # hand fuller a swing, so this overestimates it there (measure it per belt if that matters).
+def inserter_watts(inserter: str, belt: str, n: int, items_per_second: float, research: str | dict = "") -> float:
+    """Average electric W of `n` inserters moving `items_per_second` between them on or off `belt`,
+    at the energy per item measured off it with no research or at `research`."""
     if not n:
         return 0
     per_item = _measured(research).get("energy_per_item", {})
-    if inserter not in per_item:
+    if belt not in per_item.get(inserter, {}):
         key = research_key(research)
-        raise ValueError(f"no measured energy per item for {inserter}"
+        raise ValueError(f"no measured energy per item for {inserter} on {belt}"
                          f"{f' at {key}' if key else ''} (python -m validator.measure --energy"
                          f"{f' --research {key}' if key else ''})")
-    return n * watts(entities.raw[inserter]["energy_source"]["drain"]) + per_item[inserter] * items_per_second
+    return n * watts(entities.raw[inserter]["energy_source"]["drain"]) + per_item[inserter][belt] * items_per_second
 
 
 def megawatts(w: float) -> str:

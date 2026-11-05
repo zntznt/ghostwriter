@@ -909,8 +909,13 @@ class SpaceAgeMachines(unittest.TestCase):
 
     def test_researched_bulk_inserters_draw_their_measured_energy(self):
         # More items a swing: under half the energy an item it takes with none (measured off a yellow belt).
-        self.assertLess(rates.inserter_watts("bulk-inserter", 1, 1, RESEARCH),
-                        rates.inserter_watts("bulk-inserter", 1, 1) / 2)
+        self.assertLess(rates.inserter_watts("bulk-inserter", "transport-belt", 1, 1, RESEARCH),
+                        rates.inserter_watts("bulk-inserter", "transport-belt", 1, 1) / 2)
+
+    def test_a_faster_belt_fills_a_researched_hand_fuller(self):
+        # Off a turbo belt a bulk hand fills a swing where a yellow one leaves it part empty.
+        turbo = rates.inserter_watts("bulk-inserter", "turbo-transport-belt", 1, 1, RESEARCH)
+        self.assertLess(turbo, 0.9 * rates.inserter_watts("bulk-inserter", "transport-belt", 1, 1, RESEARCH))
 
     def test_an_electromagnetic_fluid_row_powers_one_side(self):
         # Processing units: its first fluid input faces the pipe; two sides put the inserter
@@ -1650,10 +1655,21 @@ class Power(unittest.TestCase):
         self.assertEqual(rates.beacon_watts(), 480e3)
 
     def test_inserters_draw_their_drain_and_measured_energy_per_item(self):
-        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", 2, 0), 1e3)
-        per_item = rates.inserter_watts("fast-inserter", 1, 1) - 500
+        yellow = "transport-belt"
+        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", yellow, 2, 0), 1e3)
+        per_item = rates.inserter_watts("fast-inserter", yellow, 1, 1) - 500
         self.assertGreater(per_item, 5e3)  # several kJ an item: a quarter of a gear row's draw
-        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", 3, 2), 1500 + 2 * per_item)
+        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", yellow, 3, 2), 1500 + 2 * per_item)
+        with self.assertRaisesRegex(ValueError, "no measured energy per item for fast-inserter on stone"):
+            rates.inserter_watts("fast-inserter", "stone", 1, 1)
+
+    def test_energy_per_item_is_measured_per_belt(self):
+        # Every inserter and belt validator.measure measures, with no research and at each research.
+        from validator.measure import BELTS, INSERTERS
+        data = json.loads(rates.INSERTER_RATES.read_text())
+        for table in [data, *data["researched"].values()]:
+            self.assertEqual({i: set(b) for i, b in table["energy_per_item"].items()},
+                             {i: set(BELTS) for i in INSERTERS})
 
     def test_power_reads_in_megawatts(self):
         self.assertEqual(rates.megawatts(2.43e6), "2.4 MW")
