@@ -33,7 +33,7 @@ from tools import layout, rates
 
 LANES = ("left", "right")
 BEACON = "beacon"
-INSERTERS = ("inserter", "fast-inserter")
+INSERTERS = ("inserter", "fast-inserter", "bulk-inserter")
 MARGIN = 0.85  # use at most this share of an inserter's measured rate
 
 

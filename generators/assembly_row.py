@@ -11,13 +11,20 @@ over the first.
 
 Inserters per machine follow from the rates measured in game
 (tools/inserter_rates.json, no research): for each job, the tier that needs
-the fewest inserters, then the cheapest, keeping a 15% margin. They sit in
+the fewest inserters, then the cheapest, keeping a 15% margin. Bulk inserters
+hold one item a swing without research, so they only win with it. They sit in
 the column between belt and machine; poles take the column tiles left over,
-or a one-row gap after each machine when there are none.
+or a one-row gap after each machine when there are none (and one before the
+first, for a 4-row machine's top inserter).
+
+Any machine size fits: assemblers (3x3) and electromagnetic plants (4x4,
+speed 2, +50% productivity of their own), whose four-tile columns take four
+inserters a side.
 
 With beacons, each machine column runs beacon, machine, beacon, ... beacon:
-every machine between two beacons, which don't reach across the product belt;
-the inserter-column tiles beside the beacons are free for poles.
+every machine between two beacons, which don't reach across the product belt
+(beacons_per_machine counts them from their spots); the inserter-column tiles
+beside the beacons are free for poles.
 
 `machines` (per side) defaults to the most the belts carry. The description
 names each belt lane's item. Recipes with fluids are refused.
@@ -31,14 +38,14 @@ from draftsman.blueprintable import Blueprint
 from draftsman.constants import Direction
 from draftsman.data import entities
 
+from generators.fluid_row import _reaching, _spots
 from tools import layout, rates
 
 MARGIN = 0.85  # use at most this share of an inserter's measured rate
-REGULAR = ("inserter", "fast-inserter")
+REGULAR = ("inserter", "fast-inserter", "bulk-inserter")
 LONG = "long-handed-inserter"
 LANES = ("left", "right")
 BEACON = "beacon"
-BEACONS_PER_MACHINE = 2  # one before and one after it in its column
 
 
 @dataclass
@@ -56,8 +63,11 @@ class Plan:
     output: tuple[str, int]  # inserter, count per machine
     size: int  # machine footprint
     gap: int = 0  # empty rows after each machine, for poles when the columns are full
+    lead: int = 0  # empty rows before the first machine, when its top inserter is out of a pole's reach
     modules: str = ""  # in every machine's slots
     beacons: str = ""  # in every beacon's slots; no beacons without
+    beacons_per_machine: int = 0
+    research: str = ""  # the inserter research the row is sized for
 
     @property
     def per_side(self) -> float:
@@ -75,13 +85,14 @@ class Plan:
         """Average electric W making `share` of the rated output."""
         m = self.machines * self.sides
         crafts = share * self.sides * self.per_side / self.recipe.results[self.product]  # all machines, per second
-        w = m * rates.machine_watts(self.machine, self.recipe, self.modules, self.beacons, BEACONS_PER_MACHINE,
+        w = m * rates.machine_watts(self.machine, self.recipe, self.modules, self.beacons, self.beacons_per_machine,
                                     crafts / (m * self.crafts))
         w += self.sides * (self.machines + 1) * rates.beacon_watts() if self.beacons else 0
         for (inserter, k), lanes in zip(self.feeders, self.lanes):
             moved = crafts * sum(self.recipe.ingredients[i] for i in set(lanes.values()))
-            w += rates.inserter_watts(inserter, m * k, moved)
-        return w + rates.inserter_watts(self.output[0], m * self.output[1], crafts * self.recipe.results[self.product])
+            w += rates.inserter_watts(inserter, m * k, moved, self.research)
+        return w + rates.inserter_watts(self.output[0], m * self.output[1], crafts * self.recipe.results[self.product],
+                                        self.research)
 
 
 def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,
@@ -92,7 +103,8 @@ def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transp
     r = rates.recipe(recipe)
     if len(r.results) != 1:
         raise ValueError(f"{recipe}: a row carries one product")
-    crafts = rates.crafts_per_second(machine, r, modules, beacons, BEACONS_PER_MACHINE)
+    per = beacons_per_machine(machine, sides) if beacons else 0
+    crafts = rates.crafts_per_second(machine, r, modules, beacons, per)
     r = rates.made(machine, r, modules)
     (product, out_amount), = r.results.items()
     lane = rates.lane_rate(belt)
@@ -102,7 +114,7 @@ def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transp
     def pick(demand, from_belt, options):
         return rates.fewest_inserters(demand, belt, from_belt, options, MARGIN, research)
 
-    candidates, why, fewest = [], set(), None
+    candidates, why, fewest, lane_need = [], set(), None, math.inf
     groupings = _groupings(list(r.ingredients), input_belts)
     if not groupings:
         why.add(f"{len(r.ingredients)} ingredients don't fit {input_belts or 'one or two'} input belts "
@@ -122,18 +134,25 @@ def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transp
         output = pick(out_amount * crafts, False, tiers)
         if limit < 1:
             why.add(f"one machine needs more than a {belt} lane carries")
+            lane_need = min(lane_need, max([out_amount * crafts] + [r.ingredients[i] * crafts / n
+                                                                    for i, n in per_lane.items()]))
             continue
         if sum(k for _, k in feeders) > s or output[1] > s:
             need = max(sum(k for _, k in feeders), output[1])
             fewest = need if fewest is None else min(fewest, need)
             continue
         candidates.append(Plan(r, machine, belt, sides, 0, limit, crafts, product, lanes, feeders, output, s,
-                               modules=modules, beacons=beacons))
+                               modules=modules, beacons=beacons, beacons_per_machine=per,
+                               research=rates.research_key(research)))
     if fewest is not None:
         why.add(f"one machine needs at least {fewest} inserters on a side where {s} fit")
     if not candidates:
         hints = (["a slower machine"] if any("inserters" in w or "lane" in w for w in why) else []) + \
-                (["a faster belt"] if any("lane" in w for w in why) else [])
+                ([f"belt={b}" for b in [rates.slowest_belt(lane_need)] if b] if any("lane" in w for w in why) else [])
+        if fewest is not None and not research and not inserter:
+            hints += [f"research={k}" for k in [rates.least_research(
+                lambda k: plans(recipe, machine, belt, sides, machines, inserter, input_belts, k, modules, beacons))]
+                      if k]
         raise ValueError(f"{recipe} in {machine} on {belt}: no input layout fits ({'; '.join(sorted(why))})"
                          + (f"; try {' or '.join(hints)}" if hints else ""))
     # Most machines first; with a fixed count, the fewest belts that carry it.
@@ -161,12 +180,19 @@ def _groupings(items, input_belts):
     return seen
 
 
+def beacons_per_machine(machine: str, sides: int) -> int:
+    """Beacons reaching each machine of a beaconed row: the fewest any machine gets."""
+    s, bs = rates.size(machine), rates.size(BEACON)
+    machines, beacons = _spots(s, bs, 0, 3, [0, s + 3][:sides])
+    return min(_reaching(machine, m, beacons) for m in machines)
+
+
 def plan(pole="medium-electric-pole", **params) -> Plan:
     """The best of plans() that also leaves room for poles."""
     errors = []
-    for gap in (0, 1):
+    for gap, lead in ((0, 0), (1, 0), (1, 1)):
         for p in plans(**params):
-            p.gap = gap
+            p.gap, p.lead = gap, lead
             try:
                 _build(p, pole)
                 return p
@@ -192,7 +218,7 @@ def _build(p: Plan, pole: str) -> Blueprint:
     s, n, nb = p.size, p.machines, len(p.lanes)
     bs = rates.size(BEACON) if p.beacons else 0  # beacon rows before each machine and after the last
     pitch = s + p.gap + bs
-    length = n * pitch + bs
+    length = p.lead + n * pitch + bs
     o = nb - 1
     # Columns from the west: [in2,] in1, inserters, machine, out, product (then mirrored).
     product_x = o + 3 + s
@@ -231,11 +257,11 @@ def _build(p: Plan, pole: str) -> Blueprint:
     for side, c in columns.items():
         west = side == "left"
         for b in range(n + 1 if bs else 0):
-            bp.entities.append(BEACON, tile_position=(c["machine"], b * pitch))
+            bp.entities.append(BEACON, tile_position=(c["machine"], p.lead + b * pitch))
             bp.entities[-1].request_modules(p.beacons, range(entities.raw[BEACON]["module_slots"]))
-            powered.append((c["machine"] + bs / 2, b * pitch + bs / 2, rates.half_width(BEACON)))
+            powered.append((c["machine"] + bs / 2, p.lead + b * pitch + bs / 2, rates.half_width(BEACON)))
         for m in range(n):
-            y0 = m * pitch + bs
+            y0 = p.lead + m * pitch + bs
             bp.entities.append(p.machine, tile_position=(c["machine"], y0), recipe=p.recipe.name)
             rates.request_modules(bp.entities[-1], p.machine, p.recipe, p.modules)
             powered.append((c["machine"] + s / 2, y0 + s / 2, rates.half_width(p.machine)))
@@ -250,10 +276,14 @@ def _build(p: Plan, pole: str) -> Blueprint:
                 bp.entities.append(inserter, tile_position=(c["out"], y0 + row), direction=layout.facing(west))
                 powered.append((c["out"] + 0.5, y0 + row + 0.5, rates.half_width(inserter)))
 
+    if bs:
+        machines, beacons = _spots(s, bs, p.gap, n, [c["machine"] for c in columns.values()], p.lead)
+        if any(_reaching(p.machine, m, beacons) != p.beacons_per_machine for m in machines):
+            raise ValueError(f"not every machine takes {p.beacons_per_machine} beacons")
     free = {}
     for c in columns.values():
         for x, used in ((c["ins"], used_in), (c["out"], used_out)):
-            taken = {m * pitch + bs + r for m in range(n) for r in range(used)}
+            taken = {p.lead + m * pitch + bs + r for m in range(n) for r in range(used)}
             free[x] = [y for y in range(length) if y not in taken]
     for x, y in layout.poles(pole, powered, free):
         bp.entities.append(pole, tile_position=(x, y))
@@ -270,5 +300,5 @@ def flow_tests(**params):
     total = p.sides * p.per_side
     # A window counts each machine's crafts to within one, so give it 50.
     return [Flow(f"{p.machines * p.sides} machines: {total:g} {p.product}/s", feeds, ["product"],
-                 {p.product: total}, warmup=rates.warmup_seconds(p.belt, p.machines * (p.size + p.gap), 1 / p.crafts),
+                 {p.product: total}, warmup=rates.warmup_seconds(p.belt, p.lead + p.machines * (p.size + p.gap), 1 / p.crafts),
                  window=max(120, 50 / p.crafts), research=rates.research_levels(params.get("research", "")))]

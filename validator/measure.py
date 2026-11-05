@@ -16,8 +16,9 @@ real row.
     python -m validator.measure --research inserter-capacity-bonus=7
 
 measures everything again with that research set through the game's own
-technologies (as flights set it), and keeps it under "researched" beside the
-rates with none, which it leaves alone.
+technologies (as flights set it), energy per item included, and keeps it under
+"researched" beside the rates with none, which it leaves alone. With --energy
+too it measures only that research's energy per item.
 
     python -m validator.measure --handover
 
@@ -171,12 +172,19 @@ def main(argv=None):
 
         key, levels = research_key(args.research), research_levels(args.research)
         data = json.loads(Path(args.out).read_text())
-        got = {"rates": {}, "machine_to_machine": {}}
+        got = data.get("researched", {}).get(key, {}) if args.energy else {"rates": {}, "machine_to_machine": {}}
+        if args.energy and not got:
+            sys.exit(f"no rates at {key} to add energy to: python -m validator.measure --research {key}")
         with Server(args.factorio) as server:
             if server.version != data["game_version"]:
                 sys.exit(f"the rates are from {data['game_version']}, the server is {server.version}: "
                          "measure everything first")
+            got["energy_per_item"] = {}
             for inserter in INSERTERS:
+                got["energy_per_item"][inserter] = round(measure(server, inserter, BELTS[0], True, levels, energy=True))
+                print(f"{key} {inserter:22s} {got['energy_per_item'][inserter]} J an item", file=sys.stderr, flush=True)
+                if args.energy:
+                    continue
                 for belt in BELTS:
                     r = {"from_belt": round(measure(server, inserter, belt, True, levels), 3),
                          "to_belt": round(measure(server, inserter, belt, False, levels), 3)}

@@ -31,6 +31,8 @@ def poles(pole: str, powered: list[tuple[float, float, float]], free: dict[int, 
     entity across, then the fewest rows (free in all those columns) that reach
     them all along, each within wire reach of the last.
     """
+    if entities.raw[pole]["collision_box"][1][0] > 0.5:
+        raise ValueError(f"{pole} is wider than the one tile a column leaves it")
     reach = entities.raw[pole]["maximum_wire_distance"]
     supply = entities.raw[pole]["supply_area_distance"]
 

@@ -35,7 +35,7 @@ from draftsman.constants import Direction
 from tools import layout, rates
 
 MARGIN = 0.85  # use at most this share of an inserter's measured rate
-REGULAR = ("inserter", "fast-inserter")
+REGULAR = ("inserter", "fast-inserter", "bulk-inserter")
 LONG = "long-handed-inserter"
 LANES = ("left", "right")
 MOST = 12  # consumers per side, at most

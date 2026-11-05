@@ -815,6 +815,96 @@ class Production(unittest.TestCase):
         self.assertTrue(cracked)
         self.assertEqual(cracked, list(range(len(pooled) - len(cracked), len(pooled))))
 
+EMP = {"machine": "electromagnetic-plant", "belt": "turbo-transport-belt"}
+RESEARCH = "inserter-capacity-bonus=7"
+
+
+class SpaceAgeMachines(unittest.TestCase):
+    def test_electromagnetic_plants_make_circuits_with_bulk_inserters(self):
+        # Speed 2: 4 circuits a second take 16 items/s, seven fast inserters where a 4x4 plant has
+        # four tiles. Full bulk hands (research) take them in two; the plant makes 50% more.
+        with self.assertRaisesRegex(ValueError, "at least 7 inserters.*research=inserter-capacity-bonus=2"):
+            assembly_row.plan(recipe="electronic-circuit", **EMP)
+        p = assembly_row.plan(recipe="electronic-circuit", research=RESEARCH, **EMP)
+        self.assertEqual((p.size, p.feeders[0][0], p.output), (4, "bulk-inserter", ("bulk-inserter", 1)))
+        self.assertAlmostEqual(p.crafts, 4)
+        self.assertAlmostEqual(p.recipe.results["electronic-circuit"], 1.5)
+        self.assertAlmostEqual(p.per_side, p.machines * 4 * 1.5)
+        bp = row(recipe="electronic-circuit", research=RESEARCH, **EMP)
+        self.assertEqual(check({"blueprint": bp}), [])
+        assert_powered(self, bp, "electromagnetic-plant")
+        tiles = [t for e in bp["entities"] for t in footprint(e)]
+        self.assertEqual(len(tiles), len(set(tiles)))
+
+    def test_beacons_around_electromagnetic_plants_are_counted_from_their_spots(self):
+        p = assembly_row.plan(recipe="advanced-circuit", beacons="speed-module", **EMP)
+        self.assertEqual(assembly_row.beacons_per_machine("electromagnetic-plant", 2), 2)
+        bp = row(recipe="advanced-circuit", beacons="speed-module", **EMP)
+        self.assertEqual(check({"blueprint": bp}), [])
+        assert_powered(self, bp, "beacons")
+        self.assertEqual(sum(e["name"] == "beacon" for e in bp["entities"]), 2 * (p.machines + 1))
+
+    def test_bulk_inserters_only_where_fewer_are_needed(self):
+        # Without research a bulk hand holds one item, no faster than a fast inserter: never picked.
+        for params in ROW_VARIANTS:
+            p = assembly_row.plan(**params)
+            self.assertNotIn("bulk-inserter", [i for i, _ in p.feeders + [p.output]], params)
+        # With research a fast inserter still feeds a gear machine 2 alone: no bulk one.
+        self.assertEqual(assembly_row.plan(research=RESEARCH).feeders, [("fast-inserter", 1)])
+
+    def test_researched_bulk_inserters_draw_their_measured_energy(self):
+        # More items a swing: under half the energy an item it takes with none (measured off a yellow belt).
+        self.assertLess(rates.inserter_watts("bulk-inserter", 1, 1, RESEARCH),
+                        rates.inserter_watts("bulk-inserter", 1, 1) / 2)
+
+    def test_an_electromagnetic_fluid_row_powers_one_side(self):
+        # Processing units: its first fluid input faces the pipe; two sides put the inserter
+        # columns ten tiles apart, past a medium pole's wire reach.
+        p = fluid_row.plan(recipe="processing-unit", sides=1, **EMP)
+        self.assertEqual(p.size, 4)
+        bp = fluid(recipe="processing-unit", sides=1, **EMP)
+        self.assertEqual(check({"blueprint": bp}), [])
+        assert_powered(self, bp, "fluid")
+        self.assertEqual({e["direction"] for e in bp["entities"] if e["name"] == "electromagnetic-plant"}, {8})
+        with self.assertRaisesRegex(ValueError, "sides=1"):
+            fluid_row.plan(recipe="processing-unit", **EMP)
+
+    def test_a_foundry_row_says_what_powers_it(self):
+        with self.assertRaisesRegex(ValueError, "sides=1"):
+            fluid_row.plan(recipe="casting-iron", machine="foundry", belt="turbo-transport-belt")
+        bp = fluid(recipe="casting-iron", machine="foundry", belt="turbo-transport-belt", sides=1)
+        assert_powered(self, bp, "foundry")
+        # A substation is two tiles wide: it doesn't fit the one-tile inserter column.
+        with self.assertRaisesRegex(ValueError, "one tile"):
+            fluid_row.plan(recipe="casting-iron", machine="foundry", belt="turbo-transport-belt", pole="substation")
+
+    def test_the_planner_builds_circuits_in_electromagnetic_plants(self):
+        steps, inputs = production.solve("electronic-circuit", 5, research=RESEARCH, **EMP)
+        machines = {s.item: s.params["machine"] for s in steps}
+        self.assertEqual(machines["electronic-circuit"], "electromagnetic-plant")
+        # 50% more a craft: 5 circuits/s take 10 cable/s, not 15, and cable in a plant too.
+        self.assertAlmostEqual({s.item: s.demand for s in steps}["copper-cable"], 10)
+        self.assertEqual(machines["copper-cable"], "electromagnetic-plant")
+        self.assertAlmostEqual(inputs["iron-plate"], 5 / 1.5)
+        for s in steps:
+            self.assertGreaterEqual(s.rows * s.rate, s.demand, s)
+
+    def test_what_an_electromagnetic_plant_cant_craft_falls_back_to_an_assembler(self):
+        steps, _ = production.solve("inserter", 1, **EMP)
+        machines = {s.item: s.params["machine"] for s in steps}
+        self.assertEqual(machines["iron-gear-wheel"], "assembling-machine-3")
+        steps, _ = production.solve("advanced-circuit", 1, **EMP)
+        self.assertEqual({s.item: s.params["machine"] for s in steps}["advanced-circuit"], "electromagnetic-plant")
+
+    def test_the_planner_says_which_belt_feeds_an_electromagnetic_plant(self):
+        # Cable at 12/s a plant fills more than a yellow lane: assembling machines make it, and the
+        # step says what belt would let the plant.
+        steps, _ = production.solve("copper-cable", 5, machine="electromagnetic-plant", research=RESEARCH)
+        (cable,) = steps
+        self.assertEqual(cable.params["machine"], "assembling-machine-3")
+        self.assertIn("belt=fast-transport-belt", cable.note)
+
+
 FACTORIES = [
     {"item": "electronic-circuit", "rate": 5},
     {"item": "advanced-circuit", "rate": 1, "oil": "advanced"},  # refinery, cracking, a fluid row
