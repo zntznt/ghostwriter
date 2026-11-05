@@ -9,7 +9,14 @@ A machine crafts at its crafting_speed and its modules' speed effect (as bp
 takes them, "modules=speed-module-3"), plus that of the beacons around it
 ("beacons=speed-module-3", each beacon's two slots filled). Productivity modules
 also make more per craft (made()), only in machines and recipes that allow
-productivity; elsewhere they aren't placed. An inserter moves what the
+productivity; elsewhere they aren't placed. A foundry, electromagnetic plant and
+biochamber make 50% more whatever they hold (their base_effect). For a real
+machine (tools.observe) the model also takes what it holds: mixed modules, some
+slots empty, qualities, each beacon's quality and modules, the machine's quality
+and the force's research productivity for the recipe; generators build with
+none of those. Measured in a real game (2.1.24): a quality level makes a machine
+craft 30% faster and a module's good effects 30% stronger; productivity, research
+included, is capped at the recipe's maximum_productivity (+300%). An inserter moves what the
 measurement saw. Inserter rates take research (as bp takes it,
 "inserter-capacity-bonus=7"): none unless given, else the rates measured at it.
 
@@ -22,6 +29,7 @@ energy it was measured to take per item moved (energy_per_item, no research).
 
 import json
 import math
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
@@ -31,6 +39,10 @@ from draftsman.data import entities, items, recipes
 INSERTER_RATES = Path(__file__).resolve().parent / "inserter_rates.json"
 DEFAULT_CRAFT_TIME = 0.5  # a recipe without energy_required
 DEFAULT_CATEGORIES = ("crafting",)  # a recipe without categories
+MAX_PRODUCTIVITY = 3  # a recipe without maximum_productivity
+QUALITY = {"normal": 0, "uncommon": 1, "rare": 2, "epic": 3, "legendary": 5}  # levels, as prototypes.quality has them
+QUALITY_STEP = 0.3  # a quality level adds this share to a machine's crafting speed and a module's good effects
+LOWER_IS_BETTER = {"consumption", "pollution"}
 
 
 @dataclass(frozen=True)
@@ -65,9 +77,10 @@ def recipe(name: str, fluids: bool = False) -> Recipe:
                   tuple(r.get("categories", DEFAULT_CATEGORIES)), fluid_parts)
 
 
-def recipe_any(name: str) -> Recipe:
-    """Any recipe with fixed amounts: item ingredients in `ingredients`, fluid ones in
-    `fluids`, and item and fluid products together in `results`."""
+def recipe_any(name: str, means: bool = False) -> Recipe:
+    """Any recipe with fixed amounts (with `means`, any: a variable one counts at its mean):
+    item ingredients in `ingredients`, fluid ones in `fluids`, and item and fluid products
+    together in `results`."""
     if name not in recipes.raw:
         raise ValueError(f"unknown recipe {name!r}")
     r = recipes.raw[name]
@@ -75,11 +88,21 @@ def recipe_any(name: str) -> Recipe:
     for p in r.get("ingredients", []):
         (fluids if p.get("type") == "fluid" else items)[p["name"]] = p["amount"]
     for p in r.get("results", []):
-        if "amount" not in p or {"probability", "shared_probability", "independent_probability"} & set(p):
-            raise ValueError(f"{name}: {p['name']} has a variable amount")
-        results[p["name"]] = results.get(p["name"], 0) + p["amount"]
+        if "amount" not in p or {"probability", "shared_probability", "independent_probability",
+                                 "extra_count_fraction"} & set(p):
+            if not means:
+                raise ValueError(f"{name}: {p['name']} has a variable amount")
+        results[p["name"]] = results.get(p["name"], 0) + _mean(p)
     return Recipe(name, r.get("energy_required", DEFAULT_CRAFT_TIME), items, results,
                   tuple(r.get("categories", DEFAULT_CATEGORIES)), fluids)
+
+
+def _mean(p: dict) -> float:
+    """A result's mean amount a craft."""
+    shared = p.get("shared_probability", {})
+    chance = p.get("independent_probability", p.get("probability", shared.get("max", 1) - shared.get("min", 0)))
+    amount = p["amount"] if "amount" in p else (p["amount_min"] + p["amount_max"]) / 2
+    return amount * chance + p.get("extra_count_fraction", 0)
 
 
 def check_modules(modules: str = "") -> None:
@@ -93,20 +116,24 @@ def check_modules(modules: str = "") -> None:
 
 
 def check_beacon_modules(beacons: str = "") -> None:
-    """Refuses what a beacon won't take: only speed and efficiency modules; "" is none."""
+    """Refuses what a beacon won't take: a module with a good effect the beacon doesn't
+    allow (only speed and efficiency modules); "" is none."""
     check_modules(beacons)
-    if beacons and {"productivity", "quality"} & {k for k, v in items.raw[beacons]["effect"].items() if v > 0}:
+    allowed = set(entities.raw["beacon"]["allowed_effects"])
+    if beacons and {k for k, v in items.raw[beacons]["effect"].items() if _good(k, v)} - allowed:
         raise ValueError(f"a beacon doesn't take {beacons}")
 
 
-def beacon_effect(machine: str, beacons: str = "", n: int = 0, effect: str = "speed") -> float:
-    """The bonus to `effect` that `n` beacons with `beacons` in their slots give a machine."""
-    check_beacon_modules(beacons)
-    if not beacons or not n or not takes_beacons(machine):
-        return 0
-    b = entities.raw["beacon"]
-    return n * b["module_slots"] * items.raw[beacons]["effect"].get(effect, 0) * b["distribution_effectivity"] \
-        * b["profile"][n - 1]
+def _module_effect(module: str, quality: str = "normal") -> dict[str, float]:
+    """A module's effects at `quality`: the good ones (more speed, productivity and quality,
+    less consumption and pollution) grow 30% a quality level, the bad ones don't."""
+    check_modules(module)
+    up = 1 + QUALITY_STEP * QUALITY[quality]
+    return {k: v * up if _good(k, v) else v for k, v in items.raw[module]["effect"].items()}
+
+
+def _good(effect: str, v: float) -> bool:
+    return (v < 0) == (effect in LOWER_IS_BETTER)
 
 
 def takes_beacons(machine: str) -> bool:
@@ -127,16 +154,82 @@ def module_slots(machine: str, modules: str = "", r: Recipe | None = None) -> in
     return entities.raw[machine].get("module_slots") or 0
 
 
-def productivity(machine: str, r: Recipe, modules: str = "") -> float:
-    """The extra share of results a machine's modules make per craft of `r`."""
-    slots = module_slots(machine, modules, r)
-    return slots * items.raw[modules]["effect"].get("productivity", 0) if slots else 0
+def _held(machine: str, r: Recipe, modules) -> list[tuple[str, str]]:
+    """(module, quality) per module in the machine's slots: `modules` in every slot it fills, or
+    a list of what it really holds."""
+    if isinstance(modules, str):
+        return [(modules, "normal")] * module_slots(machine, modules, r)
+    held = list(modules)
+    if len(held) > (entities.raw[machine].get("module_slots") or 0):
+        raise ValueError(f"{machine} has fewer slots than {len(held)} modules")
+    return held
 
 
-def made(machine: str, r: Recipe, modules: str = "") -> Recipe:
+def _beacons(beacons, n: int) -> list[tuple[str, list[tuple[str, str]]]]:
+    """(quality, [(module, quality)]) per beacon: `n` with `beacons` in both slots, or a list of
+    what each really holds (an unpowered beacon holds nothing)."""
+    slots = entities.raw["beacon"]["module_slots"]
+    if isinstance(beacons, str):
+        check_beacon_modules(beacons)
+        return [("normal", [(beacons, "normal")] * slots)] * n if beacons else []
+    out = [(q, list(held)) for q, held in beacons]
+    for _, held in out:
+        if len(held) > slots:
+            raise ValueError(f"a beacon has {slots} slots, not {len(held)}")
+        for m, _ in held:
+            check_beacon_modules(m)
+    return out
+
+
+def effects(machine: str, r: Recipe, modules="", beacons="", n: int = 0) -> Counter:
+    """The machine's bonuses crafting `r`, before the game's limits: its base effect plus what its
+    modules and beacons give, as far as the machine and recipe allow them.
+
+    `modules` is one module in every slot it fills, or a list of (module, quality) per module held.
+    `beacons` is one module in both slots of each of `n` beacons, or a list of (quality, [(module,
+    quality)]) per beacon (n is then ignored). Measured in game: each beacon passes on its modules'
+    effects times its distribution_effectivity (+0.2 a quality level) and the profile for how many
+    beacons reach the machine, empty and unpowered ones included."""
+    proto, rec = entities.raw[machine], recipes.raw.get(r.name, {})
+    receiver = proto.get("effect_receiver", {})
+    allowed = set(proto.get("allowed_effects", ()))
+    if not rec.get("allow_speed", True):
+        allowed.discard("speed")
+    if not rec.get("allow_productivity"):
+        allowed.discard("productivity")
+    total = Counter()
+    if receiver.get("uses_module_effects", True):
+        for m, q in _held(machine, r, modules):
+            total.update(_module_effect(m, q))
+    bs = _beacons(beacons, n)
+    if bs and receiver.get("uses_beacon_effects", True):
+        b = entities.raw["beacon"]
+        share = b["profile"][min(len(bs), len(b["profile"])) - 1]
+        for q, held in bs:
+            reach = (b["distribution_effectivity"] + b["distribution_effectivity_bonus_per_quality_level"]
+                     * QUALITY[q]) * share
+            for m, mq in held:
+                total.update({k: v * reach for k, v in _module_effect(m, mq).items()})
+    out = Counter({k: v for k, v in total.items() if k in allowed})
+    out.update(receiver.get("base_effect", {}))  # even where the recipe allows no productivity, as measured
+    return out
+
+
+def max_productivity(recipe: str) -> float:
+    return recipes.raw.get(recipe, {}).get("maximum_productivity", MAX_PRODUCTIVITY)
+
+
+def productivity(machine: str, r: Recipe, modules="", research: float = 0) -> float:
+    """The extra share of results a machine makes per craft of `r`: its base effect and modules'
+    (as effects() takes them) plus the force's `research` bonus for `r`, capped together at the
+    recipe's maximum (+300%, measured)."""
+    return min(max(0, effects(machine, r, modules)["productivity"]) + research, max_productivity(r.name))
+
+
+def made(machine: str, r: Recipe, modules="", research: float = 0) -> Recipe:
     """`r` as the machine makes it: results with the productivity bonus, which skips a
     result's ignored_by_productivity part; `r` itself without one."""
-    bonus = productivity(machine, r, modules)
+    bonus = productivity(machine, r, modules, research)
     if not bonus:
         return r
     ignored = {}
@@ -145,16 +238,15 @@ def made(machine: str, r: Recipe, modules: str = "") -> Recipe:
     return replace(r, results={k: v + bonus * (v - ignored.get(k, 0)) for k, v in r.results.items()})
 
 
-def crafts_per_second(machine: str, r: Recipe, modules: str = "", beacons: str = "", n: int = 0) -> float:
-    """Crafts/s of one machine, with `modules` in its slots and `n` beacons of `beacons` around it."""
+def crafts_per_second(machine: str, r: Recipe, modules="", beacons="", n: int = 0, quality: str = "normal") -> float:
+    """Crafts/s of one `quality` machine (30% faster a quality level), with `modules` and `beacons`
+    as effects() takes them."""
     proto = entities.raw[machine]
     if not set(r.categories) & set(proto.get("crafting_categories", [])):
         raise ValueError(f"{machine} can't craft {r.name} (categories {list(r.categories)})")
-    slots = module_slots(machine, modules, r)
-    speed = slots * items.raw[modules]["effect"].get("speed", 0) if slots else 0
-    if recipes.raw.get(r.name, {}).get("allow_speed", True):
-        speed += beacon_effect(machine, beacons, n)
-    return proto["crafting_speed"] * max(0.2, 1 + speed) / r.time  # the game keeps 20% speed at least
+    speed = effects(machine, r, modules, beacons, n)["speed"]
+    # the game keeps 20% speed at least
+    return proto["crafting_speed"] * (1 + QUALITY_STEP * QUALITY[quality]) * max(0.2, 1 + speed) / r.time
 
 
 def watts(text: str) -> float:
@@ -164,18 +256,15 @@ def watts(text: str) -> float:
     return float(number.rstrip("kMG")) * scale
 
 
-def machine_watts(machine: str, r: Recipe, modules: str = "", beacons: str = "", n: int = 0,
-                  utilisation: float = 1) -> float:
+def machine_watts(machine: str, r: Recipe, modules="", beacons="", n: int = 0, utilisation: float = 1) -> float:
     """Average electric W of one machine crafting `r` for `utilisation` of the time, with
-    `modules` in its slots and `n` beacons of `beacons` around it."""
+    `modules` and `beacons` as effects() takes them."""
     proto = entities.raw[machine]
     if not electric(machine):
         return 0
     usage = watts(proto["energy_usage"])
     drain = watts(proto["energy_source"]["drain"]) if "drain" in proto["energy_source"] else usage / 30
-    slots = module_slots(machine, modules, r)
-    bonus = slots * items.raw[modules]["effect"].get("consumption", 0) if slots else 0
-    bonus += beacon_effect(machine, beacons, n, "consumption")
+    bonus = effects(machine, r, modules, beacons, n)["consumption"]
     return drain + utilisation * usage * max(0.2, 1 + bonus)  # the game keeps 20% consumption at least
 
 

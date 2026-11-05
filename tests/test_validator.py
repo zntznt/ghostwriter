@@ -1330,9 +1330,13 @@ class Validator(unittest.TestCase):
         self.assertTrue(any("built 0 of 2" in w for w in report.warnings), report.lines())
         self.assertEqual(flown.km, 0)
 
-    def observe_row(self, seconds=120, **params):
-        """The observer's groups for an assembly row run as its flow test, past its warmup."""
+    def observe_row(self, seconds=120, tweak=None, **params):
+        """The observer's groups for an assembly row run as its flow test, past its warmup;
+        `tweak` changes the blueprint's entities first."""
         bp = assembly_row.build(**params)
+        if tweak:
+            for e in bp.entities:
+                tweak(e)
         ids = {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
         [flow] = assembly_row.flow_tests(**params)
         _ok(self.server.call("flow_setup", json.dumps({"blueprint": encode(bp.to_dict()), "speed": FLOW_SPEED})))
@@ -1342,7 +1346,7 @@ class Validator(unittest.TestCase):
                 "drains": [ids[d] for d in flow.drain], "fluids": []})))
             _wait_ticks(self.server, int(flow.warmup * 60), timeout=60)
             groups = observe.observe(self.server.rcon, seconds)
-            print("\n".join(observe.lines(groups)))
+            print("\n".join(observe.lines(groups, every=True)))
             return [g for g in groups if g["recipe"] == params["recipe"]]
         finally:
             self.server.call("flow_teardown")
@@ -1363,6 +1367,42 @@ class Validator(unittest.TestCase):
         self.assertGreater(g["crafting_speed"], 0.75 * 2)  # the beacons count
         self.assertAlmostEqual(g["crafting_speed"], g["model_crafting_speed"], places=4)
         self.assertEqual(g["diagnosis"], "at rate")
+
+    def test_the_observer_models_base_effects(self):
+        # An EM plant makes 50% more, even of accumulators, whose recipe takes no productivity modules.
+        [g] = self.observe_row(recipe="accumulator", machine="electromagnetic-plant", sides=1, machines=2)
+        self.assertEqual((g["mismatch"], g["unmodelled"]), ([], None))
+        self.assertAlmostEqual(g["products"]["accumulator"]["rated"], 2 * 0.2 * 1.5)
+        self.assertEqual(g["diagnosis"], "at rate")
+
+    def test_the_observer_models_mixed_and_partly_filled_slots(self):
+        def mixed(e):
+            if e.name == "assembling-machine-3":
+                e.item_requests = []
+                e.request_modules("speed-module-3", range(2))
+                e.request_modules("productivity-module-3", [2])
+        [g] = self.observe_row(recipe="automation-science-pack", machine="assembling-machine-3",
+                               modules="speed-module-3", sides=1, machines=2, tweak=mixed)
+        self.assertEqual(g["modules"], "1 productivity-module-3, 2 speed-module-3")
+        self.assertEqual((g["mismatch"], g["unmodelled"]), ([], None))
+        self.assertAlmostEqual(g["crafting_speed"], 1.25 * (1 + 1 - 0.15), places=4)
+
+    def test_the_observer_models_quality(self):
+        def quality(e):
+            if e.name == "assembling-machine-3":
+                e.quality = "legendary"
+                e.item_requests = []
+                e.request_modules("speed-module-3", range(4), "epic")
+            elif e.name == "beacon":
+                e.quality = "rare"
+                e.item_requests = []
+                e.request_modules("speed-module-2", range(2), "uncommon")
+        [g] = self.observe_row(recipe="automation-science-pack", machine="assembling-machine-3",
+                               modules="speed-module-3", beacons="speed-module-3", sides=1, machines=2, tweak=quality)
+        self.assertEqual((g["quality"], g["modules"]), ("legendary", "4 speed-module-3 (epic)"))
+        self.assertEqual((g["mismatch"], g["unmodelled"]), ([], None))
+        self.assertAlmostEqual(g["crafting_speed"], g["model_crafting_speed"], places=3)  # the game rounds
+        self.assertGreater(g["crafting_speed"], 1.25 * 2.5 * (1 + 4 * 0.5 * 1.9))  # the beacons count too
 
     def test_flow_expectation_is_a_rate(self):
         data, ids = self.column(furnaces=2)
