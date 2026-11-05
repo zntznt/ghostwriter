@@ -93,7 +93,7 @@ class Plan:
                                     crafts / (m * self.rated))
         w += self.sides * (self.machines + 1) * rates.beacon_watts() if self.beacons else 0
         inserter, k = self.feeder
-        return w + rates.inserter_watts(inserter, m * k, crafts * self.recipe.ingredients[self.ingredient],
+        return w + rates.inserter_watts(inserter, self.belt, m * k, crafts * self.recipe.ingredients[self.ingredient],
                                         self.research)
 
 

@@ -60,6 +60,7 @@ class Plan:
     product: str
     far: dict[str, str] = field(default_factory=dict)  # a second input belt's lanes: the consumer's others
     modules: str = ""  # in every machine's slots
+    research: str = ""  # the inserter research the cell is sized for
 
     @property
     def per_side(self) -> float:
@@ -78,7 +79,10 @@ class Plan:
                 (self.output, c, c_crafts * cr.results[self.product])]
         flows = _handed(self.chain, self.p_crafts * pr.results[self.item], self.c_crafts * cr.ingredients[self.item])
         jobs += [((i, k), 1, share * f) for (i, k), f in zip(self.handover, flows)]
-        return self.sides * (w + sum(rates.inserter_watts(i, k * machines, moved) for (i, k), machines, moved in jobs))
+        # ponytail: handovers take the energy measured off the row's belt, not machine to machine; the
+        # regular inserters a cell uses take about the same an item off any belt (validator.measure --energy).
+        return self.sides * (w + sum(rates.inserter_watts(i, self.belt, k * machines, moved, self.research)
+                                     for (i, k), machines, moved in jobs))
 
 
 def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembling-machine-2",
@@ -166,7 +170,7 @@ def plan(recipe="electronic-circuit", producer="copper-cable", machine="assembli
             raise ValueError(f"{producer} into {recipe}: no chain is fed and fits its belts and inserters in {machine}")
     chain, handover = best
     return Plan(pr, cr, machine, belt, sides, chain, handover, lanes, feeders, output, p_crafts, c_crafts, s, item,
-                product, far, modules)
+                product, far, modules, rates.research_key(research))
 
 
 def _lanes(items: list[str]) -> dict[str, str]:

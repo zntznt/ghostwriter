@@ -40,8 +40,9 @@ The rig recycles gears (16 crafts/s, half a plate back) and counts its crafts.
     python -m validator.measure --energy
 
 measures only energy_per_item, keeping the rest: joules an inserter takes from
-the grid per item it moves, over its drain, on the from_belt rig (transport
-belt, no research), for power estimates.
+the grid per item it moves, over its drain, on the from_belt rig for each belt
+tier (a faster belt fills a researched hand fuller a swing), with no research,
+for power estimates.
 """
 
 import argparse
@@ -176,6 +177,16 @@ def recycler_rates(server: Server, research: dict | None = None, key: str = "") 
     return out
 
 
+def energy_rates(server: Server, research: dict | None = None, key: str = "") -> dict:
+    """Joules an item per inserter and belt, off the from_belt rig."""
+    out = {}
+    for inserter in INSERTERS:
+        for belt in BELTS:
+            out.setdefault(inserter, {})[belt] = round(measure(server, inserter, belt, True, research, energy=True))
+            print(f"{key} {inserter:22s} {belt:24s} {out[inserter][belt]} J an item", file=sys.stderr, flush=True)
+    return out
+
+
 HANDOVER_MACHINE = "assembling-machine-3"
 
 
@@ -257,12 +268,8 @@ def main(argv=None):
             if server.version != data["game_version"]:
                 sys.exit(f"the rates are from {data['game_version']}, the server is {server.version}: "
                          "measure everything first")
-            got["energy_per_item"] = {}
-            for inserter in INSERTERS:
-                got["energy_per_item"][inserter] = round(measure(server, inserter, BELTS[0], True, levels, energy=True))
-                print(f"{key} {inserter:22s} {got['energy_per_item'][inserter]} J an item", file=sys.stderr, flush=True)
-                if args.energy:
-                    continue
+            got["energy_per_item"] = energy_rates(server, levels, key)
+            for inserter in [] if args.energy else INSERTERS:
                 for belt in BELTS:
                     r = {"from_belt": round(measure(server, inserter, belt, True, levels), 3),
                          "to_belt": round(measure(server, inserter, belt, False, levels), 3)}
@@ -280,10 +287,7 @@ def main(argv=None):
     if args.energy:
         data = json.loads(Path(args.out).read_text())
         with Server(args.factorio) as server:
-            data["energy_per_item"] = {}
-            for inserter in INSERTERS:
-                data["energy_per_item"][inserter] = round(measure(server, inserter, BELTS[0], True, energy=True))
-                print(f"{inserter:22s} {data['energy_per_item'][inserter]} J an item", file=sys.stderr)
+            data["energy_per_item"] = energy_rates(server)
         Path(args.out).write_text(dump_json(data))
         print(f"-> {args.out}", file=sys.stderr)
         return
