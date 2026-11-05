@@ -14,7 +14,7 @@ from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
 from generators import (assembly_row, cell, factory, fluid_block, fluid_row, gated_requester, platform, production,
-                        smelting_column)
+                        recycler_row, smelting_column)
 from tools.codec import decode, encode
 from tools import observe, rates
 from tools.factorio import locate
@@ -325,6 +325,32 @@ class Validator(unittest.TestCase):
             self.server.call("flow_teardown")
         p = smelting_column.plan(**params)
         self.assertEqual(got, [p.beacons_per_furnace] * (p.sides * p.furnaces))
+
+    def test_recycler_rows_reach_their_mean_rates_and_draw_their_estimate(self):
+        # Scrap at its 12 results' means, each within 4 sigma of its count (flow_tests); gears
+        # recycled as fast as two fast inserters feed them, half a plate back each.
+        for params in ({}, {"recipe": "iron-gear-wheel-recycling"}):
+            with self.subTest(**params):
+                self.assertPasses(recycler_row.build(**params).to_dict())
+                self.assertDraws(recycler_row, **params)
+
+    def test_a_recycler_drops_its_results_on_the_near_lane(self):
+        # One side, facing east onto the results belt: everything on its left lane.
+        bp = recycler_row.build(sides=1, machines=2)
+        ids = {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+        self.server.call("flow_setup", json.dumps({"blueprint": encode(bp.to_dict()), "speed": FLOW_SPEED}))
+        try:
+            _ok(self.server.call("flow_start", json.dumps({
+                "feeds": [{"entity": ids["in_left"], "lane": lane, "item": "scrap"} for lane in ("left", "right")],
+                "drains": []})))
+            _wait_ticks(self.server, 60 * 60, timeout=60)
+            got = json.loads(self.server.command(
+                f'/sc local b = storage.flow.built[{ids["product"]}] rcon.print(helpers.table_to_json{{'
+                'left = b.get_transport_line(1).get_item_count(), right = b.get_transport_line(2).get_item_count()})'))
+        finally:
+            self.server.call("flow_teardown")
+        self.assertGreater(got["left"], 0, got)
+        self.assertEqual(got["right"], 0, got)
 
     def test_requested_modules_are_installed_on_build(self):
         # A built ghost leaves its modules as an item request for bots; a test has none.

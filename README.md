@@ -31,7 +31,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 |---|---|
 | `.claude/skills/blueprint/` | Claude Code skill: how to generate, check, file |
 | `tools/` | codec, checks, library/book builder, CLI (`python -m tools.bp`), data dump; `rates.py` (recipes, machines, belts, measured inserters) and `layout.py` (inserter facing, pole placement) for generators; `compact.py` (the compact factory layout) with `shelves.py`, `belts.py` and `route.py` (a grid belt router); `observe.py` (watch your own game over RCON) |
-| `generators/` | parametric designs, `build(**params)`: `factory` (ITEM at RATE/s, every row connected: packed on shelves, or `layout=bus` on a main bus; with each producer only one row uses, then each shared one, tried as cells with the rows that take them, `cells=0` to skip), `production` (the same rows as a book), `assembly_row` (item recipes in assemblers), `cell` (producers handing their product straight to consumers by inserter), `fluid_row` (recipes with one fluid: chemical plants, fluid assemblers), `fluid_block` (several fluids: oil processing, cracking, sulfur, acid, lubricant), `smelting_column`, `gated_requester`. Those that size inserters (`factory`, `production`, `assembly_row`, `cell`, `fluid_row`, `fluid_block`) take `research=inserter-capacity-bonus=N`, measured at 2 and 7 |
+| `generators/` | parametric designs, `build(**params)`: `factory` (ITEM at RATE/s, every row connected: packed on shelves, or `layout=bus` on a main bus; with each producer only one row uses, then each shared one, tried as cells with the rows that take them, `cells=0` to skip), `production` (the same rows as a book), `assembly_row` (item recipes in assemblers), `cell` (producers handing their product straight to consumers by inserter), `fluid_row` (recipes with one fluid: chemical plants, fluid assemblers), `fluid_block` (several fluids: oil processing, cracking, sulfur, acid, lubricant), `smelting_column`, `recycler_row` (recyclers dropping their results straight onto one belt, sized by the mean results: scrap, item recycling), `gated_requester`. Those that size inserters (`factory`, `production`, `assembly_row`, `cell`, `fluid_row`, `fluid_block`, `recycler_row`) take `research=inserter-capacity-bonus=N`, measured at 2 and 7 |
 | `library/` | decoded JSON, one file per blueprint; folders are books; a platform's `NAME.plan.json` is its trip plan |
 | `validator/` | in-game validation: headless server, RCON, Lua harness, diff (`bp validate`) |
 | `site/` | library browser: `template.html`, built by `python -m tools.site` into `site/dist/` (gitignored) |
@@ -50,7 +50,7 @@ ghostwriter's model.
 ```
 GHOSTWRITER_RCON_PASSWORD=secret .venv/bin/python -m tools.observe --port 27015 --seconds 30
 .venv/bin/python -m tools.observe --port 27015 --area -50,-50,50,50 --json   # one area, for a script or an AI
-.venv/bin/python -m tools.observe --port 27015 --suggest --research inserter-capacity-bonus=7   # what to build instead
+.venv/bin/python -m tools.observe --port 27015 --suggest   # what to build instead, at the game's inserter research
 ```
 
 `--suggest N` (default 10) adds, for the top N problems a layout can fix (an
@@ -59,7 +59,7 @@ command line ghostwriter would build to make what the group makes now (`--target
 rated`: its rated output), in the same machine with its modules and beacons
 where they're uniform, with the machines, tiles and MW it takes; or the
 generators' reason none fits. `--belt` (default turbo-transport-belt) and
-`--research` (default none, the inserter rates any game gets) set what it builds with.
+`--research` (default: the most inserter research measured that the game has; `none` for none) set what it builds with.
 
 - RCON needs a game started with `--rcon-port N --rcon-password P` (the
   [command line parameters](https://wiki.factorio.com/Command_line_parameters)),
