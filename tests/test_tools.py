@@ -294,8 +294,26 @@ class RecyclerRow(unittest.TestCase):
     def test_the_results_lane_binds_past_its_limit(self):
         p = recycler_row.plan(machines=8)
         self.assertAlmostEqual(sum(p.rates().values()), 2 * rates.lane_rate("transport-belt"))
-        with self.assertRaisesRegex(ValueError, "lane"):  # 2 plates a chest, 5.6 chests/s: past a yellow lane
-            recycler_row.plan(recipe="iron-chest-recycling")
+
+    def test_a_recycler_past_its_lane_crafts_at_what_the_lane_takes(self):
+        # A roboport gives back 33.75 at the mean: 4.8 crafts/s rated (speed modules), 54/s past a 30/s lane,
+        # so it crafts 30 / 33.75 a second, one recycler a side, one inserter feeding it.
+        params = {"recipe": "roboport-recycling", "belt": "turbo-transport-belt", "modules": "speed-module-3",
+                  "research": "inserter-capacity-bonus=7"}
+        p = recycler_row.plan(**params)
+        self.assertAlmostEqual(p.rated, 4.8)
+        self.assertAlmostEqual(p.crafts, 30 / 33.75)
+        self.assertEqual((p.limit, p.machines, p.feeder[1]), (1, 1, 1))
+        self.assertAlmostEqual(sum(p.rates().values()), 60)
+        self.assertIn("each recycler crafts 0.889 of its 4.8/s", recycler_row.build(**params).description)
+        # A yellow lane: 2 plates an iron chest, 3.75 chests/s.
+        self.assertAlmostEqual(recycler_row.plan(recipe="iron-chest-recycling").crafts, 3.75)
+        # Each waits holding up to a stack of each result, which the window and bands make room for:
+        # two stacks of 100 steel (the product) within 3% of 20/s take 333 s, two of 200 circuits 6% of it.
+        [flow] = recycler_row.flow_tests(**params)
+        self.assertAlmostEqual(flow.window, 2 * 100 / (0.03 * 20))
+        self.assertAlmostEqual(flow.tolerances["advanced-circuit"], 0.06, delta=0.01)  # and its spread
+        self.assertFalse(recycler_row.plan().lane_bound)
 
     def test_flow_tests_expect_every_result_within_its_spread(self):
         bp = recycler_row.build()
@@ -3769,13 +3787,15 @@ class Suggest(unittest.TestCase):
         self.assertIn("python -m tools.bp gen recycler_row recipe=iron-gear-wheel-recycling", s["command"])
         self.assertGreaterEqual(self.made(s["command"]), 1)
 
-    def test_a_recycler_no_row_can_carry_says_why(self):
-        # An iron chest gives back 2 plates: what one recycler's inserters feed is more than a yellow lane.
+    def test_a_recycler_past_its_lane_gets_rows_at_the_lane_rate(self):
+        # An iron chest gives back 2 plates: one recycler's inserters feed more than a yellow lane takes,
+        # so each crafts at the lane's 3.75 chests/s, one recycler a side.
         g = self.suggested(Observe.machines(1, "iron-chest-recycling", 4, 0.5, 30, machine="recycler",
                                             energy=0.03125), belt="transport-belt")
-        self.assertEqual(g["suggestion"]["kind"], "no generator fits", g["suggestion"])
-        self.assertIn("recycler_row: ", g["suggestion"]["reason"])
-        self.assertIn("lane", g["suggestion"]["reason"])
+        s = g["suggestion"]
+        self.assertEqual((s["kind"], s["generator"]), ("build", "recycler_row"), s)
+        self.assertEqual(s["params"]["machines"], 1)
+        self.assertGreaterEqual(s["rate"], s["target"])
         # Crushing still has no generator: only recyclers' variable results have a row.
         rows = Observe.machines(1, "metallic-asteroid-crushing", 2, 1, 6, machine="crusher", energy=2)
         self.assertEqual(self.suggested(rows)["suggestion"]["kind"], "no generator fits")

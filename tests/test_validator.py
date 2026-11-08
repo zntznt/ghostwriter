@@ -339,6 +339,16 @@ class Validator(unittest.TestCase):
                 self.assertPasses(recycler_row.build(**params).to_dict())
                 self.assertDraws(recycler_row, **params)
 
+    def test_recyclers_past_their_lane_craft_at_what_it_takes_and_draw_their_estimate(self):
+        # Roboports (33.75 back, 4.8 crafts/s with speed modules) and bulk inserters (8 back, fed past 30
+        # crafts/s): one recycler a side fills its turbo lane, crafting a fraction of its rate.
+        for params in ({"recipe": "roboport-recycling", "modules": "speed-module-3"},
+                       {"recipe": "bulk-inserter-recycling", "modules": "quality-module-3", "beacons": "speed-module-3"}):
+            with self.subTest(**params):
+                params |= {"belt": "turbo-transport-belt", "research": "inserter-capacity-bonus=7"}
+                self.assertPasses(recycler_row.build(**params).to_dict())
+                self.assertDraws(recycler_row, **params)
+
     def test_a_recycler_drops_its_results_on_the_near_lane(self):
         # One side, facing east onto the results belt: everything on its left lane.
         bp = recycler_row.build(sides=1, machines=2)
