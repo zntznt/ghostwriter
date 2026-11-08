@@ -13,8 +13,8 @@ from draftsman.constants import Direction
 from draftsman.entity import new_entity
 
 from tests.test_tools import GAME_21, HANDOFF, generated, make_book
-from generators import (assembly_row, cell, factory, fluid_block, fluid_row, gated_requester, platform, production,
-                        recycler_row, smelting_column)
+from generators import (assembly_row, cell, crusher_row, factory, fluid_block, fluid_row, gated_requester, platform,
+                        production, recycler_row, smelting_column)
 from tools.codec import decode, encode
 from tools import observe, rates
 from tools.factorio import locate
@@ -348,6 +348,20 @@ class Validator(unittest.TestCase):
                 params |= {"belt": "turbo-transport-belt", "research": "inserter-capacity-bonus=7"}
                 self.assertPasses(recycler_row.build(**params).to_dict())
                 self.assertDraws(recycler_row, **params)
+
+    def test_crusher_rows_reach_their_mean_results_and_draw_their_estimate(self):
+        # Built on a zero-gravity surface, each result within its spread (flow_tests): crushing, three fast
+        # inserters taking out all they can, its returned chunk among the results; reprocessing, three chunks
+        # off one draw; advanced crushing; crushing on turbo at inserter research 7 (a chunk still one a
+        # swing) and +30% research productivity, which makes no bonus chunks.
+        for params in ({}, {"recipe": "metallic-asteroid-reprocessing"}, {"recipe": "advanced-oxide-asteroid-crushing"},
+                       {"belt": "turbo-transport-belt", "research": "inserter-capacity-bonus=7", "productivity": 0.3}):
+            with self.subTest(**params):
+                self.assertPasses(crusher_row.build(**params).to_dict())
+                self.assertDraws(crusher_row, **params)
+        bonus = self.server.command('/sc rcon.print(game.forces.player.recipes["metallic-asteroid-crushing"]'
+                                    '.productivity_bonus)')
+        self.assertEqual(float(bonus), 0)  # the run's research productivity undone
 
     def test_a_recycler_drops_its_results_on_the_near_lane(self):
         # One side, facing east onto the results belt: everything on its left lane.

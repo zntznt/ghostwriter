@@ -25,7 +25,9 @@ times 1 + its modules' and beacons' consumption bonus (floored at -80%) while
 crafting, plus a drain of energy_usage / 30 always; burner machines none. A
 beacon draws 480 kW whatever it holds. An inserter draws its drain plus the
 energy it was measured to take per item moved off its belt (energy_per_item, with no research
-or at the research a row is sized for: a faster belt fills a researched hand fuller a swing).
+or at the research a row is sized for: a faster belt fills a researched hand fuller a swing), or
+out of a machine onto one with a full hand (energy_onto_belt; crusher_row's, the others' outputs
+still count it as off a belt).
 """
 
 import json
@@ -101,10 +103,16 @@ def recipe_any(name: str, means: bool = False) -> Recipe:
 
 def _mean(p: dict) -> float:
     """A result's mean amount a craft."""
+    return _amount(p) * _chance(p) + p.get("extra_count_fraction", 0)
+
+
+def _chance(p: dict) -> float:
     shared = p.get("shared_probability", {})
-    chance = p.get("independent_probability", p.get("probability", shared.get("max", 1) - shared.get("min", 0)))
-    amount = p["amount"] if "amount" in p else (p["amount_min"] + p["amount_max"]) / 2
-    return amount * chance + p.get("extra_count_fraction", 0)
+    return p.get("independent_probability", p.get("probability", shared.get("max", 1) - shared.get("min", 0)))
+
+
+def _amount(p: dict) -> float:
+    return p["amount"] if "amount" in p else (p["amount_min"] + p["amount_max"]) / 2
 
 
 def check_modules(modules: str = "") -> None:
@@ -230,13 +238,15 @@ def productivity(machine: str, r: Recipe, modules="", research: float = 0) -> fl
 
 def made(machine: str, r: Recipe, modules="", research: float = 0) -> Recipe:
     """`r` as the machine makes it: results with the productivity bonus, which skips a
-    result's ignored_by_productivity part; `r` itself without one."""
+    result's ignored_by_productivity part (by default its ignored_by_stats: measured, crushing's
+    returned chunk gets none), at the result's chance; `r` itself without one."""
     bonus = productivity(machine, r, modules, research)
     if not bonus:
         return r
     ignored = {}
     for p in recipes.raw[r.name].get("results", []):
-        ignored[p["name"]] = ignored.get(p["name"], 0) + p.get("ignored_by_productivity", 0)
+        skip = min(_amount(p), p.get("ignored_by_productivity", p.get("ignored_by_stats", 0)))
+        ignored[p["name"]] = ignored.get(p["name"], 0) + skip * _chance(p)
     return replace(r, results={k: v + bonus * (v - ignored.get(k, 0)) for k, v in r.results.items()})
 
 
@@ -279,13 +289,24 @@ def inserter_watts(inserter: str, belt: str, n: int, items_per_second: float, re
     at the energy per item measured off it with no research or at `research`."""
     if not n:
         return 0
-    per_item = _measured(research).get("energy_per_item", {})
+    return n * inserter_drain(inserter) + energy_per_item(inserter, belt, research) * items_per_second
+
+
+def inserter_drain(inserter: str) -> float:
+    return watts(entities.raw[inserter]["energy_source"]["drain"])
+
+
+def energy_per_item(inserter: str, belt: str, research: str | dict = "", from_belt: bool = True) -> float:
+    """J an inserter takes per item moved off `belt` (or out of a full chest or machine onto it, its hand
+    full), measured with no research or at `research`."""
+    per_item = _measured(research).get("energy_per_item" if from_belt else "energy_onto_belt", {})
     if belt not in per_item.get(inserter, {}):
         key = research_key(research)
-        raise ValueError(f"no measured energy per item for {inserter} on {belt}"
-                         f"{f' at {key}' if key else ''} (python -m validator.measure --energy"
-                         f"{f' --research {key}' if key else ''})")
-    return n * watts(entities.raw[inserter]["energy_source"]["drain"]) + per_item[inserter][belt] * items_per_second
+        flag = "--energy" if from_belt else "--onto-belt"
+        raise ValueError(f"no measured energy per item for {inserter} {'on' if from_belt else 'onto'} {belt}"
+                         f"{f' at {key}' if key else ''} (python -m validator.measure {flag}"
+                         f"{f' --research {key}' if key and from_belt else ''})")
+    return per_item[inserter][belt]
 
 
 def megawatts(w: float) -> str:

@@ -910,6 +910,7 @@ local function flow_teardown()
   local recipes = game.forces.player.recipes
   for _, name in pairs(f.locked) do recipes[name].enabled = false end
   restore_research(game.forces.player, f.research)
+  for name, bonus in pairs(f.productivity or {}) do recipes[name].productivity_bonus = bonus end
   for _, e in pairs(f.helpers) do
     if e.valid then e.destroy() end
   end
@@ -1041,6 +1042,17 @@ remote.add_interface("ghostwriter", {
       return reply{error = wrong}
     end
     f.research = research
+    -- Research productivity of a recipe, as the force's bonus (an infinite research's levels); teardown undoes it.
+    f.productivity = {}
+    for name, bonus in pairs(args.productivity or {}) do
+      local r = game.forces.player.recipes[name]
+      if not r then
+        flow_teardown()
+        return reply{error = "unknown recipe " .. name}
+      end
+      f.productivity[name] = r.productivity_bonus
+      r.productivity_bonus = bonus
+    end
     game.speed = args.speed or 1
     -- Furnaces only take what an unlocked recipe smelts (iron plates need
     -- Steel processing); flow tests measure throughput, not research.
