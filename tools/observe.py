@@ -27,7 +27,8 @@ shortage, or below rated with no stall seen; not power, fuel, a recipe or a circ
 that makes something, what ghostwriter would build to make what the group makes now
 (--target rated: what it's rated for, so a group making nothing too): the generator for
 its machine (assembly_row; fluid_row, else fluid_block, with a fluid; smelting_column
-for a furnace; recycler_row for a recycler, sized by its mean results), in the same
+for a furnace; recycler_row for a recycler and crusher_row for a crusher, sized by their
+mean results, a crusher's at its group's research productivity), in the same
 machine, with its modules and beacons where every machine holds one normal module
 filling its slots alike, on --belt, inserters sized for --research (none: the rates
 any game gets). One row, or a production book when a row can't carry it; else the
@@ -47,7 +48,7 @@ from collections import Counter
 
 from draftsman.data import entities, items
 
-from generators import production, recycler_row
+from generators import crusher_row, production, recycler_row
 from tools import rates
 from tools.density import density
 from validator.rcon import Rcon
@@ -104,6 +105,7 @@ end
 rcon.print(helpers.table_to_json(out))"""
 
 TICK = "/sc rcon.print(game.tick)"
+MEANS = {recycler_row.MACHINE: "recycler_row", crusher_row.MACHINE: "crusher_row"}  # rows sized by mean results
 
 WORKING = {"working", "normal"}
 DEMAND_LIMITED = "demand-limited (output full)"
@@ -202,7 +204,7 @@ def _group(key, ms: list[dict], before: dict, seconds: float, samples: list[dict
     seen = Counter(s for sample in samples for u, s in _statuses(sample).items() if u in units)
     total = sum(seen.values())
     g = {"surface": surface, "machine": machine, "quality": quality, "recipe": recipe, "modules": modules,
-         "count": len(ms), "crafts_per_second": crafts, "rated_crafts_per_second": rated, "share": crafts / rated if rated else None,
+         "count": len(ms), "research": max(m.get("research", 0) for m in ms), "crafts_per_second": crafts, "rated_crafts_per_second": rated, "share": crafts / rated if rated else None,
          "statuses": {s: n / total for s, n in seen.most_common()}, "products": {},
          "crafting_speed": sum(m["speed"] for m in ms) / len(ms), "model_crafting_speed": None,
          "mismatch": [], "unmodelled": None,
@@ -295,14 +297,14 @@ def suggest(groups: list[dict], target: str = "actual", belt: str = "turbo-trans
     """The groups, each of the `top` problems a layout can fix that make something to aim for
     (most output lost first) with a "suggestion": what ghostwriter would build to make the
     group's `target` output ("actual" or "rated"), or why no generator fits. A recipe with
-    variable results gets why, past the `top` too, unless a recycler makes it (recycler_row
-    sizes by the mean results): no other generator takes one, so there's nothing to build."""
+    variable results gets why, past the `top` too, unless a recycler or crusher makes it (their
+    rows size by the mean results): no other generator takes one, so there's nothing to build."""
     ranked = sorted((g for g in groups if fixable(g) and (not g["products"] or any(
         v[target] > 1e-9 for v in g["products"].values()))), key=lambda g: -g["lost"])
     made, tried = {}, 0
     for g in ranked:
         try:
-            if g["machine"] != recycler_row.MACHINE:
+            if g["machine"] not in MEANS:
                 rates.recipe_any(g["recipe"])
         except ValueError as e:
             made[id(g)] = {"kind": "no generator fits", "reason": str(e)}
@@ -323,16 +325,18 @@ def _suggestion(g: dict, target: str, belt: str, research: str) -> dict:
     item, v = max(g["products"].items(), key=lambda kv: kv[1][target])
     rate = v[target]
     machine, r = g["machine"], rates.recipe_any(g["recipe"], means=True)
-    recycler = machine == recycler_row.MACHINE  # a furnace to the game, but a row of its own
-    furnace = not recycler and entities.raw[machine]["type"] == "furnace"
+    own = MEANS.get(machine)  # a row of its own (a recycler is a furnace to the game)
+    furnace = not own and entities.raw[machine]["type"] == "furnace"
     if not furnace and not rates.electric(machine):
         return {"kind": "no generator fits", "reason": f"{machine} burns fuel, and ghostwriter's rows feed it none"}
-    base = {"recipe": g["recipe"], **({} if recycler else {"furnace" if furnace else "machine": machine}), "belt": belt}
+    base = {"recipe": g["recipe"], **({} if own else {"furnace" if furnace else "machine": machine}), "belt": belt}
     base |= {k: g[f"uniform_{k}"] for k in ("modules", "beacons") if g[f"uniform_{k}"]}
     if research and not furnace:  # a furnace's one inserter each way needs none
         base["research"] = research
-    if recycler:
-        kinds = ("recycler_row",)
+    if own == "crusher_row" and g["research"]:
+        base["productivity"] = round(g["research"], 6)
+    if own:
+        kinds = (own,)
     elif furnace:
         kinds = ("smelting_column",)
     elif r.fluids or set(r.results) - set(items.raw):

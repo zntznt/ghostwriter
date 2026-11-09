@@ -23,7 +23,11 @@ beside it, and with two sides the two across the belt too.
 
 `machines` (per side) defaults to the most whichever binds first allows: the
 input belt (both lanes), or the results lane for the sum of the mean results
-(rates.recipe_any's means). The description names each result's mean rate.
+(rates.recipe_any's means). A recycler whose results pass a lane (a roboport
+gives back 33.75) crafts at what the lane takes, one a side: its results wait in
+it and it stops till there's room, as checked in game. The row's one results belt
+is its limit whatever takes the results off, so more takes more rows. The
+description names each result's mean rate.
 Quality modules go in like any other (`modules=`); their quality outcomes
 aren't modelled.
 """
@@ -77,6 +81,11 @@ class Plan:
                    lane / sum(self.recipe.results.values()))
 
     @property
+    def lane_bound(self) -> bool:
+        """Each recycler's results fill its lane: it crafts at what the lane takes, its results waiting."""
+        return self.crafts * sum(self.recipe.results.values()) >= rates.lane_rate(self.belt) - 1e-9
+
+    @property
     def per_side(self) -> float:
         """The product's rate from one side."""
         return self.side_crafts * self.recipe.results[self.product]
@@ -93,7 +102,7 @@ class Plan:
                                     crafts / (m * self.rated))
         w += self.sides * (self.machines + 1) * rates.beacon_watts() if self.beacons else 0
         inserter, k = self.feeder
-        return w + rates.inserter_watts(inserter, m * k, crafts * self.recipe.ingredients[self.ingredient],
+        return w + rates.inserter_watts(inserter, self.belt, m * k, crafts * self.recipe.ingredients[self.ingredient],
                                         self.research)
 
 
@@ -109,19 +118,15 @@ def _plan(recipe="scrap-recycling", belt="transport-belt", sides=2, machines=0, 
     per = 2 * sides if beacons else 0  # build() checks every recycler takes them
     rated = rates.crafts_per_second(MACHINE, r, modules, beacons, per)
     (item, amount), = r.ingredients.items()
-    lane = rates.lane_rate(belt)
-    feeder = rates.fewest_inserters(rated * amount, belt, True, REGULAR, MARGIN, research)
-    crafts = rated
+    lane, out = rates.lane_rate(belt), sum(r.results.values())
+    # A recycler whose results pass a lane crafts at what the lane takes, its results waiting (checked in game).
+    crafts = min(rated, lane / out)
+    feeder = rates.fewest_inserters(crafts * amount, belt, True, REGULAR, MARGIN, research)
     if feeder[1] > ROWS:  # flat out: two of the fastest (the cheaper on a tie)
         best = max(REGULAR, key=lambda i: (rates.recycler_feed_rate(i, belt, research), -REGULAR.index(i)))
         feeder = (best, ROWS)
-        crafts = min(rated, ROWS * rates.recycler_feed_rate(best, belt, research) / amount)
-    out = sum(r.results.values())
+        crafts = min(crafts, ROWS * rates.recycler_feed_rate(best, belt, research) / amount)
     limit = math.floor(min(2 * lane / (amount * crafts), lane / (out * crafts)) + 1e-9)
-    if limit < 1:
-        faster = rates.slowest_belt(out * crafts)
-        raise ValueError(f"{recipe}: one recycler's results ({out * crafts:.4g}/s) need more than a {belt} lane "
-                         f"carries ({lane:g}/s)" + (f"; try belt={faster}" if faster else ""))
     return Plan(r, belt, sides, machines or limit, limit, crafts, rated, feeder, modules=modules, beacons=beacons,
                 beacons_per_machine=per, research=rates.research_key(research))
 
@@ -171,13 +176,16 @@ def _build(p: Plan, pole: str) -> Blueprint:
         f"{n} recyclers per side x{p.sides}, {p.sides * p.side_crafts:.3g} {p.ingredient}/s in (the belts carry "
         f"{p.limit} per side). {p.ingredient} enters at the bottom of each side's input belt, both lanes. Results "
         "leave mixed at the top, at their means: " + ", ".join(f"{k} {v:.3g}/s" for k, v in made.items())
+        + (f"; each recycler crafts {p.crafts:.3g} of its {p.rated:.3g}/s, all its results lane takes"
+           if p.lane_bound else "")
         + f". Draws about {rates.megawatts(p.watts())}. Connect any pole to your grid.")
     bp.icons = [MACHINE, p.product]
 
     taken = set()
+    # One tile past the top recycler's drop: a drained tile takes a drop every tick, past the lane's rate.
+    bp.entities.append(p.belt, tile_position=(product_x, -1), direction=Direction.NORTH, id="product")
     for y in range(length):
-        bp.entities.append(p.belt, tile_position=(product_x, y), direction=Direction.NORTH,
-                           **({"id": "product"} if y == 0 else {}))
+        bp.entities.append(p.belt, tile_position=(product_x, y), direction=Direction.NORTH)
         for side, c in columns.items():
             bp.entities.append(p.belt, tile_position=(c["belt"], y), direction=Direction.NORTH,
                                **({"id": f"in_{side}"} if y == length - 1 else {}))
@@ -232,10 +240,13 @@ def flow_tests(**params):
     spread = _spread(p.recipe.name)
     main = p.product
     need = (SIGMAS / 0.05) ** 2 * spread[main] / p.recipe.results[main] ** 2  # crafts for 5% on the commonest
-    window = min(600, max(120, 50 / p.crafts, need / crafts))
-    tolerances = {k: max(0.03, SIGMAS * math.sqrt(spread[k] / (crafts * window)) / v)
+    made = p.rates()
+    # A lane-bound recycler holds up to a stack of each result (checked in game), which the window can miss.
+    held = {k: p.machines * p.sides * items.raw[k]["stack_size"] if p.lane_bound else 0 for k in made}
+    window = min(600, max(120, 50 / p.crafts, need / crafts, held[main] / (0.03 * made[main])))
+    tolerances = {k: max(0.03, SIGMAS * math.sqrt(spread[k] / (crafts * window)) / v + held[k] / (made[k] * window))
                   for k, v in p.recipe.results.items()}
-    expect = {k: v for k, v in p.rates().items() if tolerances[k] <= 0.5}
+    expect = {k: v for k, v in made.items() if tolerances[k] <= 0.5}
     lanes = ("left", "right")
     feeds = [Feed(f"in_{side}", lane, p.ingredient) for side in lanes[:p.sides] for lane in lanes]
     return [Flow(f"{p.machines * p.sides} recyclers: {crafts:.3g} {p.ingredient}/s", feeds, ["product"], expect,

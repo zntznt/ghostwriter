@@ -62,6 +62,7 @@ class Plan:
     per_belt: int = 2  # machines a belt serves: one on each side, or one when two need too much
     outlets: frozenset = frozenset()  # (side, fluid) the block's outputs leave by: a fluid can be both
     modules: str = ""  # in every machine's slots
+    research: str = ""  # the inserter research the block is sized for
 
     def fluids(self, side: str) -> list[str]:
         """Fluids on a side, nearest line first."""
@@ -76,10 +77,10 @@ class Plan:
         """Average electric W crafting `share` of the time."""
         r, crafts = rates.recipe_any(self.recipe), share * self.machines * self.crafts
         w = self.machines * rates.machine_watts(self.machine, r, self.modules, utilisation=share)
-        w += rates.inserter_watts(self.feeders[0], self.machines * self.feeders[1],
-                                  crafts * sum(self.inputs[i] for i in self.items_in))
-        return w + rates.inserter_watts(self.output[0], self.machines * self.output[1],
-                                        crafts * self.outputs.get(self.item_out, 0))
+        w += rates.inserter_watts(self.feeders[0], self.belt, self.machines * self.feeders[1],
+                                  crafts * sum(self.inputs[i] for i in self.items_in), self.research)
+        return w + rates.inserter_watts(self.output[0], self.belt, self.machines * self.output[1],
+                                        crafts * self.outputs.get(self.item_out, 0), self.research)
 
 
 def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-belt", inserter="",
@@ -121,7 +122,8 @@ def plan(recipe="heavy-oil-cracking", machine="", machines=4, belt="transport-be
         raise ValueError(f"{recipe}: more fluids than {machine} has boxes")
 
     p = Plan(recipe, machine, machines, belt, s, crafts, dict(fluids_in + items_in), dict(fluids_out + items_out),
-             sides, [i for i, _ in items_in], outlets=frozenset(outlets), modules=modules)
+             sides, [i for i, _ in items_in], outlets=frozenset(outlets), modules=modules,
+             research=rates.research_key(research))
     if items_out:
         if len(items_out) > 1 or len(items_in) > 1:
             raise ValueError(f"{recipe}: a block's belts carry ingredients, one product, or one of each")

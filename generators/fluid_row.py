@@ -102,8 +102,8 @@ class Plan:
         w += self.sides * (self.machines + 1) * rates.beacon_watts() if self.beacons else 0
         moved = [r.ingredients[self.near] if self.near else 0, sum(r.ingredients[i] for i in self.far)]
         for (inserter, k), per_craft in zip(self.feeders, moved):
-            w += rates.inserter_watts(inserter, m * k, crafts * per_craft, self.research)
-        return w + rates.inserter_watts(self.output[0], m * self.output[1], crafts * r.results[self.product],
+            w += rates.inserter_watts(inserter, self.belt, m * k, crafts * per_craft, self.research)
+        return w + rates.inserter_watts(self.output[0], self.belt, m * self.output[1], crafts * r.results[self.product],
                                         self.research)
 
 

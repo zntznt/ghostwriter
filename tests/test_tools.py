@@ -14,8 +14,8 @@ from pathlib import Path
 
 from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlanner, UpgradePlanner
 
-from generators import (assembly_row, cell, factory, fluid_block, fluid_row, platform, production, recycler_row,
-                        smelting_column)
+from generators import (assembly_row, cell, crusher_row, factory, fluid_block, fluid_row, platform, production,
+                        recycler_row, smelting_column)
 from generators.gated_requester import build
 from tools import pipes, rates
 from tools.check import check
@@ -294,8 +294,26 @@ class RecyclerRow(unittest.TestCase):
     def test_the_results_lane_binds_past_its_limit(self):
         p = recycler_row.plan(machines=8)
         self.assertAlmostEqual(sum(p.rates().values()), 2 * rates.lane_rate("transport-belt"))
-        with self.assertRaisesRegex(ValueError, "lane"):  # 2 plates a chest, 5.6 chests/s: past a yellow lane
-            recycler_row.plan(recipe="iron-chest-recycling")
+
+    def test_a_recycler_past_its_lane_crafts_at_what_the_lane_takes(self):
+        # A roboport gives back 33.75 at the mean: 4.8 crafts/s rated (speed modules), 54/s past a 30/s lane,
+        # so it crafts 30 / 33.75 a second, one recycler a side, one inserter feeding it.
+        params = {"recipe": "roboport-recycling", "belt": "turbo-transport-belt", "modules": "speed-module-3",
+                  "research": "inserter-capacity-bonus=7"}
+        p = recycler_row.plan(**params)
+        self.assertAlmostEqual(p.rated, 4.8)
+        self.assertAlmostEqual(p.crafts, 30 / 33.75)
+        self.assertEqual((p.limit, p.machines, p.feeder[1]), (1, 1, 1))
+        self.assertAlmostEqual(sum(p.rates().values()), 60)
+        self.assertIn("each recycler crafts 0.889 of its 4.8/s", recycler_row.build(**params).description)
+        # A yellow lane: 2 plates an iron chest, 3.75 chests/s.
+        self.assertAlmostEqual(recycler_row.plan(recipe="iron-chest-recycling").crafts, 3.75)
+        # Each waits holding up to a stack of each result, which the window and bands make room for:
+        # two stacks of 100 steel (the product) within 3% of 20/s take 333 s, two of 200 circuits 6% of it.
+        [flow] = recycler_row.flow_tests(**params)
+        self.assertAlmostEqual(flow.window, 2 * 100 / (0.03 * 20))
+        self.assertAlmostEqual(flow.tolerances["advanced-circuit"], 0.06, delta=0.01)  # and its spread
+        self.assertFalse(recycler_row.plan().lane_bound)
 
     def test_flow_tests_expect_every_result_within_its_spread(self):
         bp = recycler_row.build()
@@ -311,6 +329,74 @@ class RecyclerRow(unittest.TestCase):
     def test_refuses_what_a_recycler_cant_do(self):
         with self.assertRaisesRegex(ValueError, "recycler can't craft"):
             recycler_row.plan(recipe="iron-gear-wheel")
+
+
+class CrusherRow(unittest.TestCase):
+    def test_variants_check_clean_and_are_powered(self):
+        for params in ({}, {"sides": 1}, {"recipe": "metallic-asteroid-reprocessing"},
+                       {"recipe": "advanced-metallic-asteroid-crushing", "modules": "productivity-module-3"},
+                       {"belt": "turbo-transport-belt", "research": "inserter-capacity-bonus=7", "productivity": 0.3},
+                       {"modules": "speed-module-3"}, {"pole": "small-electric-pole"}):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                bp = crusher_row.build(**params).to_dict()["blueprint"]
+            self.assertEqual(check({"blueprint": bp}), [], params)
+            assert_powered(self, bp, params)
+
+    def test_crushing_counts_its_returned_chunk_at_its_mean(self):
+        # 20 ore and 0.3 chunks a craft, 0.5 crafts/s: more than three inserters move without research,
+        # so three of the fastest take out what they can and the crusher crafts at that.
+        p = crusher_row.plan()
+        self.assertEqual(p.recipe.results, {"iron-ore": 20, "metallic-asteroid-chunk": 0.3})
+        self.assertEqual(p.feeder, ("inserter", 1))
+        self.assertEqual(p.output, ("fast-inserter", 3))  # bulk is no faster with one item a hand
+        self.assertAlmostEqual(p.crafts, 3 * rates.inserter_rate("fast-inserter", "transport-belt", False) / 20.3)
+        self.assertTrue(p.output_bound)
+        self.assertEqual(p.product, "iron-ore")
+        self.assertIn("iron-ore", crusher_row.build().description)
+
+    def test_reprocessing_shares_one_draw_between_three_chunks(self):
+        p = crusher_row.plan(recipe="metallic-asteroid-reprocessing")
+        for chunk, mean in (("metallic", 0.4), ("carbonic", 0.2), ("oxide", 0.2)):
+            self.assertAlmostEqual(p.recipe.results[f"{chunk}-asteroid-chunk"], mean)
+        self.assertAlmostEqual(p.crafts, 0.5)
+        self.assertFalse(p.output_bound)
+        self.assertEqual(p.limit, 15)  # 0.4 results/s a crusher in 85% of a 7.5/s lane
+        # One crusher whose own three inserters fill a lane still gets a row.
+        self.assertEqual(crusher_row.plan().limit, 1)
+
+    def test_research_productivity_makes_more_up_to_the_cap(self):
+        made = crusher_row.plan(recipe="advanced-metallic-asteroid-crushing", productivity=0.3).recipe.results
+        self.assertAlmostEqual(made["iron-ore"], 13)
+        # The returned chunk is ignored by stats, so by productivity too (its default): no bonus chunks.
+        self.assertAlmostEqual(made["metallic-asteroid-chunk"], 0.1)
+        capped = crusher_row.plan(recipe="advanced-metallic-asteroid-crushing", productivity=5).recipe.results
+        self.assertAlmostEqual(capped["copper-ore"], 16)  # +300% at most
+
+    def test_chunks_move_one_a_swing_whatever_the_research(self):
+        # A chunk stacks to 1, so a researched hand still holds one: chunks move at the rates without research.
+        p = crusher_row.plan(belt="turbo-transport-belt", research="inserter-capacity-bonus=7")
+        inserter, k = p.output
+        per_craft = (20 / rates.inserter_rate(inserter, p.belt, False, p.research)
+                     + 0.3 / rates.inserter_rate(inserter, p.belt, False))
+        self.assertLessEqual(p.crafts * per_craft, k * crusher_row.MARGIN + 1e-9)
+
+    def test_flow_tests_expect_every_result_within_its_spread(self):
+        bp = crusher_row.build(recipe="metallic-asteroid-reprocessing")
+        [flow] = crusher_row.flow_tests(recipe="metallic-asteroid-reprocessing")
+        self.assertLessEqual({f.entity for f in flow.feed} | set(flow.drain), {e.id for e in bp.entities if e.id})
+        self.assertEqual(set(flow.expect), {"metallic-asteroid-chunk", "carbonic-asteroid-chunk",
+                                            "oxide-asteroid-chunk"})
+        self.assertLess(flow.tolerances["metallic-asteroid-chunk"], flow.tolerances["oxide-asteroid-chunk"])
+        [flow] = crusher_row.flow_tests(productivity=0.3)
+        self.assertEqual(flow.productivity, {"metallic-asteroid-crushing": 0.3})
+        self.assertEqual(flow.tolerances["iron-ore"], 0.03)
+
+    def test_refuses_what_a_crusher_row_cant_do(self):
+        with self.assertRaisesRegex(ValueError, "crusher can't craft"):
+            crusher_row.plan(recipe="iron-gear-wheel")
+        with self.assertRaisesRegex(ValueError, "beacons"):
+            crusher_row.plan(beacons="speed-module-3")
 
 
 
@@ -909,8 +995,13 @@ class SpaceAgeMachines(unittest.TestCase):
 
     def test_researched_bulk_inserters_draw_their_measured_energy(self):
         # More items a swing: under half the energy an item it takes with none (measured off a yellow belt).
-        self.assertLess(rates.inserter_watts("bulk-inserter", 1, 1, RESEARCH),
-                        rates.inserter_watts("bulk-inserter", 1, 1) / 2)
+        self.assertLess(rates.inserter_watts("bulk-inserter", "transport-belt", 1, 1, RESEARCH),
+                        rates.inserter_watts("bulk-inserter", "transport-belt", 1, 1) / 2)
+
+    def test_a_faster_belt_fills_a_researched_hand_fuller(self):
+        # Off a turbo belt a bulk hand fills a swing where a yellow one leaves it part empty.
+        turbo = rates.inserter_watts("bulk-inserter", "turbo-transport-belt", 1, 1, RESEARCH)
+        self.assertLess(turbo, 0.9 * rates.inserter_watts("bulk-inserter", "transport-belt", 1, 1, RESEARCH))
 
     def test_an_electromagnetic_fluid_row_powers_one_side(self):
         # Processing units: its first fluid input faces the pipe; two sides put the inserter
@@ -1650,10 +1741,21 @@ class Power(unittest.TestCase):
         self.assertEqual(rates.beacon_watts(), 480e3)
 
     def test_inserters_draw_their_drain_and_measured_energy_per_item(self):
-        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", 2, 0), 1e3)
-        per_item = rates.inserter_watts("fast-inserter", 1, 1) - 500
+        yellow = "transport-belt"
+        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", yellow, 2, 0), 1e3)
+        per_item = rates.inserter_watts("fast-inserter", yellow, 1, 1) - 500
         self.assertGreater(per_item, 5e3)  # several kJ an item: a quarter of a gear row's draw
-        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", 3, 2), 1500 + 2 * per_item)
+        self.assertAlmostEqual(rates.inserter_watts("fast-inserter", yellow, 3, 2), 1500 + 2 * per_item)
+        with self.assertRaisesRegex(ValueError, "no measured energy per item for fast-inserter on stone"):
+            rates.inserter_watts("fast-inserter", "stone", 1, 1)
+
+    def test_energy_per_item_is_measured_per_belt(self):
+        # Every inserter and belt validator.measure measures, with no research and at each research.
+        from validator.measure import BELTS, INSERTERS
+        data = json.loads(rates.INSERTER_RATES.read_text())
+        for table in [data, *data["researched"].values()]:
+            self.assertEqual({i: set(b) for i, b in table["energy_per_item"].items()},
+                             {i: set(BELTS) for i in INSERTERS})
 
     def test_power_reads_in_megawatts(self):
         self.assertEqual(rates.megawatts(2.43e6), "2.4 MW")
@@ -3753,16 +3855,31 @@ class Suggest(unittest.TestCase):
         self.assertIn("python -m tools.bp gen recycler_row recipe=iron-gear-wheel-recycling", s["command"])
         self.assertGreaterEqual(self.made(s["command"]), 1)
 
-    def test_a_recycler_no_row_can_carry_says_why(self):
-        # An iron chest gives back 2 plates: what one recycler's inserters feed is more than a yellow lane.
+    def test_a_recycler_past_its_lane_gets_rows_at_the_lane_rate(self):
+        # An iron chest gives back 2 plates: one recycler's inserters feed more than a yellow lane takes,
+        # so each crafts at the lane's 3.75 chests/s, one recycler a side.
         g = self.suggested(Observe.machines(1, "iron-chest-recycling", 4, 0.5, 30, machine="recycler",
                                             energy=0.03125), belt="transport-belt")
-        self.assertEqual(g["suggestion"]["kind"], "no generator fits", g["suggestion"])
-        self.assertIn("recycler_row: ", g["suggestion"]["reason"])
-        self.assertIn("lane", g["suggestion"]["reason"])
-        # Crushing still has no generator: only recyclers' variable results have a row.
-        rows = Observe.machines(1, "metallic-asteroid-crushing", 2, 1, 6, machine="crusher", energy=2)
-        self.assertEqual(self.suggested(rows)["suggestion"]["kind"], "no generator fits")
+        s = g["suggestion"]
+        self.assertEqual((s["kind"], s["generator"]), ("build", "recycler_row"), s)
+        self.assertEqual(s["params"]["machines"], 1)
+        self.assertGreaterEqual(s["rate"], s["target"])
+
+    def test_a_starved_crusher_group_gets_a_crusher_row_with_its_research_productivity(self):
+        # 2 crushers at +30% research productivity making 6 crushes a minute between them.
+        rows = Observe.machines(1, "metallic-asteroid-crushing", 2, 1, 6, machine="crusher", energy=2, research=0.3)
+        s = self.suggested(rows)["suggestion"]
+        self.assertEqual((s["kind"], s["generator"]), ("build", "crusher_row"), s)
+        self.assertEqual(s["item"], "iron-ore")
+        self.assertEqual(s["params"]["productivity"], 0.3)
+        self.assertNotIn("machine", s["params"])
+        self.assertIn("python -m tools.bp gen crusher_row recipe=metallic-asteroid-crushing", s["command"])
+        self.assertGreaterEqual(self.made(s["command"]), s["target"])
+        # Reprocessing makes chunks only, at research's none.
+        rows = Observe.machines(1, "carbonic-asteroid-reprocessing", 2, 1, 6, machine="crusher", energy=2)
+        s = self.suggested(rows)["suggestion"]
+        self.assertEqual((s["kind"], s["generator"]), ("build", "crusher_row"), s)
+        self.assertNotIn("productivity", s["params"])
 
     def test_problems_a_layout_cant_fix_get_no_build(self):
         from tools import observe
