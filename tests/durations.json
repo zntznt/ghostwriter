@@ -69,7 +69,7 @@
  "test_validator.Validator.test_handoff_example_logic": 1.2,
  "test_validator.Validator.test_hub_repairs_with_repair_packs": 10.2,
  "test_validator.Validator.test_library_tests_pass": 104.7,
- "test_validator.Validator.test_platform_makes_its_own_fuel_in_flight": 11.2,
+ "test_validator.Validator.test_platform_makes_its_own_fuel_in_flight": 18.0,
  "test_validator.Validator.test_platform_runs_on_its_own_fusion_power": 2.9,
  "test_validator.Validator.test_production_book_rows_reach_their_rates": 7.4,
  "test_validator.Validator.test_production_chain_missing_a_row_fails": 2.7,
