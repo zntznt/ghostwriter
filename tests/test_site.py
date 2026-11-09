@@ -55,7 +55,7 @@ class Site(unittest.TestCase):
 
     def test_flow_tested_entries_list_their_flows(self):
         data = site.build(Path(__file__).parent.parent / "library")
-        leaf = next(n for n in self.nodes(data) if n["path"].startswith("smelting/"))
+        leaf = next(n for n in self.nodes(data) if n["path"] == "smelting/smelting-column-48-stone-furnace-iron-plate.json")
         self.assertEqual(leaf["flows"], ["48 furnaces: 15 iron-plate/s"])
         self.assertNotIn("tests", leaf)
 

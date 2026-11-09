@@ -1,0 +1,36 @@
+# Tests for factory-1-military-science-pack-s-compact.json, run in the game by CI before every publish.
+# Written by `bp gen factory item=military-science-pack rate=1 --validate --save science` from the generator's own tests.
+
+[ids]
+"in copper-plate 0" = 253
+"in steel-plate 0" = 254
+"in stone-brick 1" = 260
+"in iron-plate 2" = 267
+"in coal 2" = 268
+"in iron-plate 3" = 274
+"out military-science-pack 0" = 483
+
+[[flow]]
+name = "compact factory of 5 rows: 1 military-science-pack/s"
+feed = [
+  { entity = "in copper-plate 0", lane = "left", item = "copper-plate" },
+  { entity = "in copper-plate 0", lane = "right", item = "copper-plate" },
+  { entity = "in steel-plate 0", lane = "left", item = "steel-plate" },
+  { entity = "in steel-plate 0", lane = "right", item = "steel-plate" },
+  { entity = "in stone-brick 1", lane = "left", item = "stone-brick" },
+  { entity = "in stone-brick 1", lane = "right", item = "stone-brick" },
+  { entity = "in iron-plate 2", lane = "left", item = "iron-plate" },
+  { entity = "in iron-plate 2", lane = "right", item = "iron-plate" },
+  { entity = "in coal 2", lane = "left", item = "coal" },
+  { entity = "in coal 2", lane = "right", item = "coal" },
+  { entity = "in iron-plate 3", lane = "left", item = "iron-plate" },
+  { entity = "in iron-plate 3", lane = "right", item = "iron-plate" },
+]
+drain = [
+  "out military-science-pack 0",
+]
+expect = { military-science-pack = 1.0 }
+warmup = 267.2
+window = 666.6666666666667
+at_least = true
+settle = 4

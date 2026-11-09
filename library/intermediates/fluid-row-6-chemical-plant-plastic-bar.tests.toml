@@ -1,0 +1,27 @@
+# Tests for fluid-row-6-chemical-plant-plastic-bar.json, run in the game by CI before every publish.
+# Written by `bp gen fluid_row recipe=plastic-bar --validate --save intermediates` from the generator's own tests.
+
+[ids]
+fluid_in = 41
+in2_left = 43
+in2_right = 45
+out_left = 46
+out_right = 47
+
+[[flow]]
+name = "6 machines: 12 plastic-bar/s"
+feed = [
+  { entity = "in2_left", lane = "left", item = "coal" },
+  { entity = "in2_left", lane = "right", item = "coal" },
+  { entity = "in2_right", lane = "left", item = "coal" },
+  { entity = "in2_right", lane = "right", item = "coal" },
+]
+drain = [
+  "out_left",
+  "out_right",
+]
+expect = { plastic-bar = 12.0 }
+warmup = 36.8
+fluids = [
+  { entity = "fluid_in", fluid = "petroleum-gas" },
+]

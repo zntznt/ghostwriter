@@ -19,13 +19,19 @@
   drain = ["plates"]
   expect = { iron-plate = 7.5 }
   fluids = [{ entity = "pipe_end", fluid = "water" }]   # optional: unlimited sources
-  warmup = 60                 # optional, like window and tolerance
+  warmup = 60                 # optional, like window, tolerance and every other
+                              # Flow, Feed and FluidFeed field (validator/flow.py)
+
+`bp gen NAME --validate --save DIR` writes these from a generator's own
+circuit_tests() and flow_tests() (dump_tests).
 
 Loading checks every entity, connector, lane and item name, so a typo fails
 without a game.
 """
 
+import dataclasses
 import json
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -79,6 +85,14 @@ def load_tests(path: Path, data: dict | None = None) -> Tests:
             raise ValueError(f"{ctx}: unknown item {name!r}")
         return name
 
+    def fluid(name, ctx):
+        if name not in fluids.raw:
+            raise ValueError(f"{ctx}: unknown fluid {name!r}")
+        return name
+
+    def stuff(name, ctx):  # what a flow measures: items and fluids
+        return name if name in fluids.raw else item(name, ctx)
+
     tests = Tests(ids=ids)
     for i, c in enumerate(spec.get("case", [])):
         ctx = f"{where} case {i + 1} ({c.get('name', 'unnamed')})"
@@ -98,26 +112,25 @@ def load_tests(path: Path, data: dict | None = None) -> Tests:
         tests.cases.append(Case(c["name"], inject, expect, c.get("ticks", 10)))
     for i, f in enumerate(spec.get("flow", [])):
         ctx = f"{where} flow {i + 1} ({f.get('name', 'unnamed')})"
-        _keys(f, {"name", "feed", "drain", "expect", "warmup", "window", "tolerance", "fluids"}, ctx)
+        _keys(f, _fields(Flow), ctx)
         feed = []
         for x in f.get("feed", []):
-            _keys(x, {"entity", "lane", "item"}, ctx)
+            _keys(x, _fields(Feed), ctx)
             if x["lane"] not in LANES:
                 raise ValueError(f"{ctx}: lane {x['lane']!r} is not one of {sorted(LANES)}")
-            feed.append(Feed(entity(x["entity"], ctx), x["lane"], item(x["item"], ctx)))
+            feed.append(Feed(**{**x, "entity": entity(x["entity"], ctx), "item": item(x["item"], ctx)}))
         sources = []
         for x in f.get("fluids", []):
-            _keys(x, {"entity", "fluid"}, ctx)
-            if x["fluid"] not in fluids.raw:
-                raise ValueError(f"{ctx}: unknown fluid {x['fluid']!r}")
-            sources.append(FluidFeed(entity(x["entity"], ctx), x["fluid"]))
+            _keys(x, _fields(FluidFeed), ctx)
+            sources.append(FluidFeed(**{**x, "entity": entity(x["entity"], ctx), "fluid": fluid(x["fluid"], ctx)}))
         drain = [entity(d, ctx) for d in f.get("drain", [])]
-        expect = {item(k, ctx): v for k, v in f.get("expect", {}).items()}
-        if not (feed and drain and expect):
-            raise ValueError(f"{ctx}: a flow needs feed, drain and expect")
-        defaults = Flow("", [], [], {})
-        tests.flows.append(Flow(f["name"], feed, drain, expect, f.get("warmup", defaults.warmup),
-                                f.get("window", defaults.window), f.get("tolerance", defaults.tolerance), sources))
+        expect = {stuff(k, ctx): v for k, v in f.get("expect", {}).items()}
+        if not (expect and (feed or sources)):
+            raise ValueError(f"{ctx}: a flow needs expect and a feed or fluids")
+        for k in ("caps", "tolerances"):
+            for name in f.get(k, {}):
+                stuff(name, ctx)
+        tests.flows.append(Flow(**{**f, "feed": feed, "drain": drain, "expect": expect, "fluids": sources}))
     if not (tests.cases or tests.flows):
         raise ValueError(f"{where}: no [[case]] or [[flow]]")
     return tests
@@ -137,6 +150,61 @@ def library_tests(library: Path) -> list[tuple[str, dict, Tests]]:
             raise ValueError(f"{label}: tests need a blueprint, not a {next(iter(data))}")
         out.append((label, data, load_tests(path, data)))
     return out
+
+
+def dump_tests(tests: Tests, header: str = "") -> str:
+    """A tests file that load_tests reads back as tests: fields at their defaults
+    left out, [ids] cut to the names the tests use."""
+    used = {x.entity for c in tests.cases for x in (*c.inject, *c.expect)}
+    used |= {x.entity for f in tests.flows for x in (*f.feed, *f.fluids)} | {d for f in tests.flows for d in f.drain}
+    lines = [f"# {line}".rstrip() for line in header.splitlines()]
+    ids = {k: v for k, v in tests.ids.items() if k in used}
+    if ids:
+        lines += ["", "[ids]", *(f"{_key(k)} = {v}" for k, v in ids.items())]
+    for table, rows in (("case", tests.cases), ("flow", tests.flows)):
+        for row in rows:
+            lines += ["", f"[[{table}]]"]
+            for k, v in _changed(row).items():
+                if isinstance(v, list) and v:  # one entry a line
+                    lines += [f"{k} = [", *(f"  {_toml(x)}," for x in v), "]"]
+                else:
+                    lines.append(f"{k} = {_toml(v)}")
+    return "\n".join(lines).lstrip("\n") + "\n"
+
+
+def _changed(obj) -> dict:
+    """A dataclass's fields as a dict, without those at their defaults (or None)."""
+    out = {}
+    for f in dataclasses.fields(obj):
+        v = getattr(obj, f.name)
+        default = f.default_factory() if f.default_factory is not dataclasses.MISSING else f.default
+        if v is not None and (default is dataclasses.MISSING or v != default):
+            out[f.name] = _changed(v) if dataclasses.is_dataclass(v) else v
+    return out
+
+
+def _toml(v) -> str:
+    if dataclasses.is_dataclass(v):
+        v = _changed(v)
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return json.dumps(v)  # JSON's string escapes are TOML's
+    if isinstance(v, list):
+        return "[" + ", ".join(map(_toml, v)) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f"{_key(k)} = {_toml(x)}" for k, x in v.items()) + " }" if v else "{}"
+    raise TypeError(f"no TOML for {v!r}")
+
+
+def _key(k: str) -> str:
+    return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else json.dumps(k)
+
+
+def _fields(cls) -> set:
+    return {f.name for f in dataclasses.fields(cls)}
 
 
 def _keys(d: dict, allowed: set, ctx: str):

@@ -1,0 +1,20 @@
+# Tests for smelting-column-24-electric-furnace-iron-plate.json, run in the game by CI before every publish.
+# Written by `bp gen smelting_column furnace=electric-furnace recipe=iron-plate --validate --save smelting` from the generator's own tests.
+
+[ids]
+plates = 1
+ore_left = 107
+ore_right = 108
+
+[[flow]]
+name = "24 furnaces: 15 iron-plate/s"
+feed = [
+  { entity = "ore_left", lane = "left", item = "iron-ore" },
+  { entity = "ore_left", lane = "right", item = "iron-ore" },
+  { entity = "ore_right", lane = "left", item = "iron-ore" },
+  { entity = "ore_right", lane = "right", item = "iron-ore" },
+]
+drain = [
+  "plates",
+]
+expect = { iron-plate = 15.0 }

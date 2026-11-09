@@ -1,0 +1,36 @@
+# Tests for factory-1-chemical-science-pack-s-compact.json, run in the game by CI before every publish.
+# Written by `bp gen factory item=chemical-science-pack rate=1 --validate --save science` from the generator's own tests.
+
+[ids]
+"in steel-plate 0" = 841
+"in coal 1" = 851
+"in iron-plate 2" = 862
+"in copper-plate 3" = 905
+"in petroleum-gas 19" = 928
+"in water 23" = 929
+"out chemical-science-pack 0" = 1481
+
+[[flow]]
+name = "compact factory of 9 rows: 1 chemical-science-pack/s"
+feed = [
+  { entity = "in steel-plate 0", lane = "left", item = "steel-plate" },
+  { entity = "in steel-plate 0", lane = "right", item = "steel-plate" },
+  { entity = "in coal 1", lane = "left", item = "coal" },
+  { entity = "in coal 1", lane = "right", item = "coal" },
+  { entity = "in iron-plate 2", lane = "left", item = "iron-plate" },
+  { entity = "in iron-plate 2", lane = "right", item = "iron-plate" },
+  { entity = "in copper-plate 3", lane = "left", item = "copper-plate" },
+  { entity = "in copper-plate 3", lane = "right", item = "copper-plate" },
+]
+drain = [
+  "out chemical-science-pack 0",
+]
+expect = { chemical-science-pack = 1.0 }
+warmup = 506.8
+window = 1600.0
+fluids = [
+  { entity = "in petroleum-gas 19", fluid = "petroleum-gas", side = "south" },
+  { entity = "in water 23", fluid = "water", side = "south" },
+]
+at_least = true
+settle = 4

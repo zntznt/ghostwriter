@@ -1,0 +1,24 @@
+# Tests for factory-1-logistic-science-pack-s-compact.json, run in the game by CI before every publish.
+# Written by `bp gen factory item=logistic-science-pack rate=1 --validate --save science` from the generator's own tests.
+
+[ids]
+"in iron-plate 0" = 191
+"in copper-plate 1" = 205
+"out logistic-science-pack 0" = 294
+
+[[flow]]
+name = "compact factory of 4 rows: 1 logistic-science-pack/s"
+feed = [
+  { entity = "in iron-plate 0", lane = "left", item = "iron-plate" },
+  { entity = "in iron-plate 0", lane = "right", item = "iron-plate" },
+  { entity = "in copper-plate 1", lane = "left", item = "copper-plate" },
+  { entity = "in copper-plate 1", lane = "right", item = "copper-plate" },
+]
+drain = [
+  "out logistic-science-pack 0",
+]
+expect = { logistic-science-pack = 1.0 }
+warmup = 199.2
+window = 400.0
+at_least = true
+settle = 4

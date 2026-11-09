@@ -12,6 +12,8 @@
                           circuit_tests() and flow_tests(), and for a book
                           generator with parts(), each row's own tests and,
                           with chain_tests(), the whole book run as one) before printing
+      [--validate --save DIR] ...then file it in library/DIR, each tested blueprint
+                          with its tests beside it (NAME.tests.toml), for CI to re-run
   validate SRC...       import, round-trip and build in a headless server; runs
                         circuit and flow tests from a sibling NAME.tests.toml
   fly SRC [--runs N]    build a space platform blueprint around a fresh hub and fly
@@ -37,16 +39,17 @@ install paths, or .factorio-headless/ from `python -m validator.fetch`).
 
 import argparse
 import importlib
+import json
 import sys
 import warnings
 from pathlib import Path
 
 from tools.check import check
 from tools.codec import decode, dump_json, encode, read_input
-from tools.library import load_book, save
+from tools.library import is_entry, load_book, save
 from validator.circuit import run_circuit_tests
 from validator.flow import run_flow_tests
-from validator.tests_file import Tests, library_tests, load_tests, tests_path
+from validator.tests_file import Tests, dump_tests, library_tests, load_tests, tests_path
 from validator.server import Server
 from validator.validate import validate
 
@@ -76,8 +79,6 @@ def cmd_check(args):
 
 
 def cmd_density(args):
-    import json
-
     from tools.density import density, report
 
     measures = density(decode(read_input(args.src)), rate=args.rate)
@@ -113,6 +114,7 @@ def cmd_gen(args):
     if _report(check(data)):
         sys.exit(1)
     items = [("", data, *_generator_tests(module, params, blueprint, data))]
+    tested = {None: items[0][2:]}  # child index (None: the blueprint itself) -> (circuit, flow), for --save
     if hasattr(module, "parts"):
         # A book of other generators' blueprints: each child runs its own tests.
         # Identical rows are tested once; validating the book builds them all.
@@ -130,6 +132,7 @@ def cmd_gen(args):
             child = {k: v for k, v in children[i].items() if k != "index"}
             label = f"{i}: {child['blueprint'].get('label', name)}"
             items.append((label, child, *_generator_tests(part, part_params, part_bp, child)))
+            tested[i] = items[-1][2:]
     if args.validate and hasattr(module, "chain_tests"):
         # The whole book run as one: each row's products feed the rows that use them.
         with warnings.catch_warnings():
@@ -138,7 +141,32 @@ def cmd_gen(args):
         items.append(("chain", chain, None, (flows, {})))
     if args.validate and not _validate(items, args.factorio):
         sys.exit(1)
+    if args.save:
+        # ponytail: the chain test isn't filed; its blueprint (every row side by side) isn't in the book.
+        command = " ".join(["bp gen", args.name, *args.params, "--validate --save", args.save])
+        for path in file_tested(data, LIBRARY / args.save, tested, command):
+            print(f"filed {path}", file=sys.stderr)
     sys.stdout.write(dump_json(data) if args.json else encode(data) + "\n")
+
+
+def file_tested(data: dict, folder: Path, tested: dict, command: str) -> list[Path]:
+    """Save data into folder (tools.library.save) and write each tested
+    blueprint's tests beside it; tested maps a book child's index (None: data
+    itself) to its (circuit, flow) as _validate takes them. The files written."""
+    filed = save(data, folder)
+    paths = {None: filed} if "blueprint" in data else {
+        json.loads(p.read_text()).get("index"): p for p in sorted(filed.glob("*.json")) if is_entry(p)}
+    written = [filed]
+    for index, (circuit, flow) in tested.items():
+        if not (circuit or flow):
+            continue
+        tests = Tests(circuit[0] if circuit else [], flow[0] if flow else [], (circuit or flow)[1])
+        path = tests_path(paths[index])
+        header = (f"Tests for {paths[index].name}, run in the game by CI before every publish.\n"
+                  f"Written by `{command}` from the generator's own tests.")
+        path.write_text(dump_tests(tests, header))
+        written.append(path)
+    return written
 
 
 def _generator_tests(module, params, blueprint, data) -> tuple:
@@ -251,8 +279,6 @@ def cmd_fly(args):
 
 
 def cmd_plan(args):
-    import json
-
     from tools import plan as planner
 
     module = importlib.import_module(f"generators.{args.name}")
@@ -346,6 +372,7 @@ def main(argv=None):
     p.add_argument("--json", action="store_true")
     p.add_argument("--validate", action="store_true", help="validate in the game before printing")
     p.add_argument("--factorio", help="Factorio executable for --validate")
+    p.add_argument("--save", metavar="DIR", help="with --validate: file it in library/DIR with its tests")
     p.set_defaults(fn=cmd_gen)
 
     p = sub.add_parser("validate")
@@ -386,6 +413,8 @@ def main(argv=None):
     p.set_defaults(fn=cmd_plan)
 
     args = ap.parse_args(argv)
+    if getattr(args, "save", None) and args.command == "gen" and not args.validate:
+        ap.error("gen --save needs --validate: only a blueprint that passed in game is filed")
     args.fn(args)
 
 

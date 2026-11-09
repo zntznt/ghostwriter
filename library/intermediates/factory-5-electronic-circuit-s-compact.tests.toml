@@ -1,0 +1,23 @@
+# Tests for factory-5-electronic-circuit-s-compact.json, run in the game by CI before every publish.
+# Written by `bp gen factory item=electronic-circuit rate=5 --validate --save intermediates` from the generator's own tests.
+
+[ids]
+"in copper-plate 0" = 103
+"in iron-plate 0" = 104
+"out electronic-circuit 0" = 111
+
+[[flow]]
+name = "compact factory of 1 rows: 5 electronic-circuit/s"
+feed = [
+  { entity = "in copper-plate 0", lane = "left", item = "copper-plate" },
+  { entity = "in copper-plate 0", lane = "right", item = "copper-plate" },
+  { entity = "in iron-plate 0", lane = "left", item = "iron-plate" },
+  { entity = "in iron-plate 0", lane = "right", item = "iron-plate" },
+]
+drain = [
+  "out electronic-circuit 0",
+]
+expect = { electronic-circuit = 5.0 }
+warmup = 57.73333333333333
+at_least = true
+settle = 4
