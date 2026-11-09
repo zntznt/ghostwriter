@@ -90,6 +90,7 @@ Differences from circuit tests:
 
 - **Power** comes only through the blueprint's own poles. A script-wired pole joins them to an unlimited source. An inserter outside every supply area, or a pole off the network, shows up as a shortfall.
 - **Research:** the force has none, so inserters carry one item per swing. A design that keeps up here keeps up with any research.
+- **Research productivity:** `productivity={recipe: bonus}` sets the force's research bonus for a recipe for the run (as asteroid productivity's levels set it), then puts it back.
 - **Recipes:** all are unlocked for the run, then relocked. A furnace won't take iron plates until Steel processing is researched, and flow tests measure throughput, not research.
 
 A window counts each machine's crafts to within one. Give it enough crafts
@@ -140,6 +141,12 @@ research and at each research already measured: two inserters of each regular
 tier feeding gears into a recycler (16 crafts/s) off a standing full belt, its
 crafts counted. `gen recycler_row` sizes a recycler its inserters can't keep up
 with (item recycling) from these.
+
+`python -m validator.measure --onto-belt` measures only `energy_onto_belt`, with no
+research and at each research already measured: joules an item on the to_belt rig,
+out of a full chest onto a moving belt, where a hand fills to its size as it does
+taking a machine's results out. `gen crusher_row` estimates its output inserters'
+draw from these.
 
 ## Tests for library blueprints
 

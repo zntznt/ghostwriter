@@ -208,6 +208,32 @@
           "express-transport-belt": 6.669,
           "turbo-transport-belt": 6.663
         }
+      },
+      "energy_onto_belt": {
+        "inserter": {
+          "transport-belt": 3446,
+          "fast-transport-belt": 3454,
+          "express-transport-belt": 3434,
+          "turbo-transport-belt": 3438
+        },
+        "fast-inserter": {
+          "transport-belt": 4758,
+          "fast-transport-belt": 4760,
+          "express-transport-belt": 4759,
+          "turbo-transport-belt": 4760
+        },
+        "long-handed-inserter": {
+          "transport-belt": 3399,
+          "fast-transport-belt": 3400,
+          "express-transport-belt": 3395,
+          "turbo-transport-belt": 3397
+        },
+        "bulk-inserter": {
+          "transport-belt": 9062,
+          "fast-transport-belt": 9062,
+          "express-transport-belt": 9076,
+          "turbo-transport-belt": 9066
+        }
       }
     },
     "inserter-capacity-bonus=7": {
@@ -336,6 +362,32 @@
           "express-transport-belt": 8.0,
           "turbo-transport-belt": 8.002
         }
+      },
+      "energy_onto_belt": {
+        "inserter": {
+          "transport-belt": 2297,
+          "fast-transport-belt": 2306,
+          "express-transport-belt": 2300,
+          "turbo-transport-belt": 2306
+        },
+        "fast-inserter": {
+          "transport-belt": 3176,
+          "fast-transport-belt": 3172,
+          "express-transport-belt": 3175,
+          "turbo-transport-belt": 3172
+        },
+        "long-handed-inserter": {
+          "transport-belt": 2265,
+          "fast-transport-belt": 2267,
+          "express-transport-belt": 2268,
+          "turbo-transport-belt": 2263
+        },
+        "bulk-inserter": {
+          "transport-belt": 2470,
+          "fast-transport-belt": 2474,
+          "express-transport-belt": 2473,
+          "turbo-transport-belt": 2474
+        }
       }
     }
   },
@@ -383,6 +435,32 @@
       "fast-transport-belt": 2.729,
       "express-transport-belt": 2.726,
       "turbo-transport-belt": 2.723
+    }
+  },
+  "energy_onto_belt": {
+    "inserter": {
+      "transport-belt": 6898,
+      "fast-transport-belt": 6887,
+      "express-transport-belt": 6902,
+      "turbo-transport-belt": 6896
+    },
+    "fast-inserter": {
+      "transport-belt": 9520,
+      "fast-transport-belt": 9507,
+      "express-transport-belt": 9519,
+      "turbo-transport-belt": 9517
+    },
+    "long-handed-inserter": {
+      "transport-belt": 6817,
+      "fast-transport-belt": 6797,
+      "express-transport-belt": 6787,
+      "turbo-transport-belt": 6796
+    },
+    "bulk-inserter": {
+      "transport-belt": 27195,
+      "fast-transport-belt": 27200,
+      "express-transport-belt": 27161,
+      "turbo-transport-belt": 27198
     }
   }
 }

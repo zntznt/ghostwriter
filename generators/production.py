@@ -34,13 +34,13 @@ from dataclasses import dataclass
 from draftsman.blueprintable import BlueprintBook
 from draftsman.data import fluids as fluid_data, recipes
 
-from generators import assembly_row, cell, fluid_block, fluid_row, recycler_row, smelting_column
+from generators import assembly_row, cell, crusher_row, fluid_block, fluid_row, recycler_row, smelting_column
 from tools import rates
 from tools.check import TEXT_LIMITS
 
 MACHINES = ("electromagnetic-plant", "assembling-machine-3", "assembling-machine-2", "assembling-machine-1")
 GENERATORS = {"assembly_row": assembly_row, "fluid_row": fluid_row, "smelting_column": smelting_column,
-              "fluid_block": fluid_block, "cell": cell, "recycler_row": recycler_row}
+              "fluid_block": fluid_block, "cell": cell, "recycler_row": recycler_row, "crusher_row": crusher_row}
 OIL = ("heavy-oil", "light-oil", "petroleum-gas")
 BUFFER_SECONDS, BUFFER_MIN = 20, 5  # chain tests: output pooled before a product backs up
 # Rows are sized for this much more than the demand: a chain sized exactly runs
