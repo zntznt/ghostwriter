@@ -364,19 +364,12 @@ def _sized(kind: str, base: dict, item: str, rate: float, r: rates.Recipe) -> di
         rows, made, machines = 1, _plan(kind, _key(params)).rate(item), params["machines"]
     else:
         count = "furnaces" if kind == "smelting_column" else "machines"
-        for sides in (2, 1):  # a machine too wide to power two sides of still powers one
-            try:
-                full = _rated(kind, {**base, "sides": sides})
-                break
-            except ValueError:
-                if sides == 1:
-                    raise
-        rows = math.ceil(need / full - 1e-9)
+        rows = math.ceil(need / _rated(kind, {**base, "sides": 2}) - 1e-9)
         share = need / rows
         if share <= _rated(kind, {**base, "sides": 1, count: 1}) + 1e-9:
             sides, n = 1, 1
         else:
-            n = math.ceil(share / _rated(kind, {**base, "sides": sides, count: 1}) - 1e-9)
+            sides, n = 2, math.ceil(share / _rated(kind, {**base, "sides": 2, count: 1}) - 1e-9)
         params = {**base, "sides": sides, count: n}
         made, machines = _rated(kind, params), rows * sides * n
     command = f"python -m tools.bp gen {kind} " + " ".join(f"{k}={v}" for k, v in params.items())

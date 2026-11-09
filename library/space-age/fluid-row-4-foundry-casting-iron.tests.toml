@@ -1,0 +1,20 @@
+# Tests for fluid-row-4-foundry-casting-iron.json, run in the game by CI before every publish.
+# Written by `bp gen fluid_row recipe=casting-iron machine=foundry --validate --save space-age` from the generator's own tests.
+
+[ids]
+fluid_in = 28
+out_left = 31
+out_right = 32
+
+[[flow]]
+name = "4 machines: 15 iron-plate/s"
+feed = []
+drain = [
+  "out_left",
+  "out_right",
+]
+expect = { iron-plate = 15.0 }
+warmup = 36.93333333333334
+fluids = [
+  { entity = "fluid_in", fluid = "molten-iron" },
+]

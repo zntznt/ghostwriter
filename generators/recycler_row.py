@@ -222,7 +222,7 @@ def _build(p: Plan, pole: str) -> Blueprint:
     belts = {product_x} | {c["belt"] for c in columns.values()}
     width = max(c["belt"] for c in columns.values()) + 1 if p.sides == 2 else product_x + 1
     free = {x: [y for y in range(length) if (x, y) not in taken] for x in range(width) if x not in belts}
-    for x, y in layout.poles(pole, powered, free):
+    for x, y in layout.poles(pole, powered, free, layout.open_tiles(bp)):
         bp.entities.append(pole, tile_position=(x, y))
     bp.generate_power_connections()
     return bp

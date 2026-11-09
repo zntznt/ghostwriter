@@ -17,7 +17,7 @@ from draftsman.blueprintable import Blueprint, BlueprintBook, DeconstructionPlan
 from generators import (assembly_row, cell, crusher_row, factory, fluid_block, fluid_row, platform, production,
                         recycler_row, smelting_column)
 from generators.gated_requester import build
-from tools import pipes, rates
+from tools import layout, pipes, rates
 from tools.check import check
 from tools.codec import CodecError, decode, encode, root_key
 from tools.factorio import data_dir
@@ -121,6 +121,73 @@ def assert_powered(test: unittest.TestCase, bp: dict, label):
             continue
         group[root(a)] = root(b)
     test.assertEqual(len({root(n) for n in poles}), 1, label)
+
+
+class Poles(unittest.TestCase):
+    """layout.poles: every powered entity in a supply area, every pole on one network."""
+
+    def assert_one_network(self, pole, placed, powered, allowed):
+        from draftsman.data import entities as protos
+
+        p = protos.raw[pole]
+        w = math.ceil(2 * p["collision_box"][1][0])
+        tiles = [{(x + i, y + j) for i in range(w) for j in range(w)} for x, y in placed]
+        self.assertLessEqual(set().union(*tiles), set(allowed))
+        self.assertEqual(sum(map(len, tiles)), len(set().union(*tiles)), "poles overlap")
+        centres = [(x + w / 2, y + w / 2) for x, y in placed]
+        for x, y, h in powered:
+            self.assertTrue(any(abs(x - cx) < p["supply_area_distance"] + h and abs(y - cy) < p["supply_area_distance"] + h
+                                for cx, cy in centres), (x, y))
+        group = {0}
+        while True:
+            more = {k for k, c in enumerate(centres) if k not in group
+                    and any(math.dist(c, centres[g]) <= p["maximum_wire_distance"] for g in group)}
+            if not more:
+                break
+            group |= more
+        self.assertEqual(len(group), len(centres), "poles on more than one network")
+
+    def foundry_row(self):
+        # Foundries (5x5) both sides of a pipe: inserter columns 1 and 13, two inserters a machine.
+        powered, free = [], {1: [], 13: []}
+        for y0 in range(0, 30, 5):
+            for x in (1, 13):
+                powered += [(x + 0.5, y0 + 0.5, 0.15), (x + 0.5, y0 + 1.5, 0.15)]
+                free[x] += [y0 + 2, y0 + 3, y0 + 4]
+            powered += [(4.5, y0 + 2.5, 2.35), (10.5, y0 + 2.5, 2.35)]
+        return powered, free
+
+    def test_inserter_columns_past_wire_reach_join_through_a_bridge(self):
+        # 12 tiles apart, past a medium pole's 9: each column is covered on its own and a
+        # pole on the free row past the end joins them.
+        powered, free = self.foundry_row()
+        bridges = {(x, -1) for x in range(2, 13)}
+        placed = layout.poles("medium-electric-pole", powered, free, bridges)
+        self.assertEqual({x for x, _ in placed} & {1, 13}, {1, 13})
+        self.assert_one_network("medium-electric-pole", placed, powered,
+                                {(x, y) for x, ys in free.items() for y in ys} | bridges)
+        with self.assertRaisesRegex(ValueError, "join"):
+            layout.poles("medium-electric-pole", powered, free)
+
+    def test_a_substation_takes_two_free_columns(self):
+        powered, _ = self.foundry_row()
+        free = {x: list(range(-2, 32)) for x in (6, 7)}  # a two-tile channel down the middle
+        placed = layout.poles("substation", powered, free)
+        self.assert_one_network("substation", placed, powered, {(x, y) for x, ys in free.items() for y in ys})
+        with self.assertRaisesRegex(ValueError, "can't power"):
+            layout.poles("substation", powered, {6: list(range(-2, 32))})  # one tile wide: it doesn't fit
+
+    def test_columns_in_reach_keep_shared_rows(self):
+        # Assembler rows (3x3) both sides: columns 8 apart share rows, as before.
+        powered, free = [], {1: [], 9: []}
+        for y0 in range(0, 18, 3):
+            for x in (1, 9):
+                powered.append((x + 0.5, y0 + 0.5, 0.15))
+                free[x] += [y0 + 1, y0 + 2]
+            powered += [(3.5, y0 + 1.5, 1.35), (7.5, y0 + 1.5, 1.35)]
+        placed = layout.poles("medium-electric-pole", powered, free)
+        self.assertEqual(sorted(y for x, y in placed if x == 1), sorted(y for x, y in placed if x == 9))
+        self.assert_one_network("medium-electric-pole", placed, powered, {(x, y) for x, ys in free.items() for y in ys})
 
 
 class SmeltingColumn(unittest.TestCase):
@@ -1003,25 +1070,24 @@ class SpaceAgeMachines(unittest.TestCase):
         turbo = rates.inserter_watts("bulk-inserter", "turbo-transport-belt", 1, 1, RESEARCH)
         self.assertLess(turbo, 0.9 * rates.inserter_watts("bulk-inserter", "transport-belt", 1, 1, RESEARCH))
 
-    def test_an_electromagnetic_fluid_row_powers_one_side(self):
-        # Processing units: its first fluid input faces the pipe; two sides put the inserter
-        # columns ten tiles apart, past a medium pole's wire reach.
-        p = fluid_row.plan(recipe="processing-unit", sides=1, **EMP)
-        self.assertEqual(p.size, 4)
-        bp = fluid(recipe="processing-unit", sides=1, **EMP)
-        self.assertEqual(check({"blueprint": bp}), [])
-        assert_powered(self, bp, "fluid")
-        self.assertEqual({e["direction"] for e in bp["entities"] if e["name"] == "electromagnetic-plant"}, {8})
-        with self.assertRaisesRegex(ValueError, "sides=1"):
-            fluid_row.plan(recipe="processing-unit", **EMP)
+    def test_an_electromagnetic_fluid_row_powers_both_sides(self):
+        # Processing units: its first fluid input faces the pipe. The inserter columns are ten
+        # tiles apart, past a medium pole's wire reach: a bridge pole joins them.
+        p = fluid_row.plan(recipe="processing-unit", **EMP)
+        self.assertEqual((p.size, p.sides), (4, 2))
+        for sides in (1, 2):
+            bp = fluid(recipe="processing-unit", sides=sides, **EMP)
+            self.assertEqual(check({"blueprint": bp}), [], sides)
+            assert_powered(self, bp, sides)
+            self.assertEqual({e.get("direction", 0) for e in bp["entities"] if e["name"] == "electromagnetic-plant"},
+                             {8} if sides == 1 else {8, 0})
 
-    def test_a_foundry_row_says_what_powers_it(self):
-        with self.assertRaisesRegex(ValueError, "sides=1"):
-            fluid_row.plan(recipe="casting-iron", machine="foundry", belt="turbo-transport-belt")
-        bp = fluid(recipe="casting-iron", machine="foundry", belt="turbo-transport-belt", sides=1)
+    def test_a_foundry_row_powers_both_sides(self):
+        bp = fluid(recipe="casting-iron", machine="foundry", belt="turbo-transport-belt")
+        self.assertEqual(check({"blueprint": bp}), [])
         assert_powered(self, bp, "foundry")
-        # A substation is two tiles wide: it doesn't fit the one-tile inserter column.
-        with self.assertRaisesRegex(ValueError, "one tile"):
+        # A substation is two tiles wide: no 2x2 of the row is free for it.
+        with self.assertRaisesRegex(ValueError, "can't power"):
             fluid_row.plan(recipe="casting-iron", machine="foundry", belt="turbo-transport-belt", pole="substation")
 
     def test_the_planner_builds_circuits_in_electromagnetic_plants(self):

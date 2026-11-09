@@ -2,31 +2,31 @@
 # Written by `bp gen factory item=processing-unit rate=1 machine=electromagnetic-plant belt=turbo-transport-belt research=inserter-capacity-bonus=7 --validate --save space-age` from the generator's own tests.
 
 [ids]
-"in iron-plate 0" = 299
-"in coal 1" = 308
-"in copper-plate 2" = 312
-"in petroleum-gas 12" = 318
-"in water 8" = 319
-"out processing-unit 0" = 592
+"in iron-plate 0" = 302
+"in copper-plate 1" = 320
+"in coal 2" = 328
+"in petroleum-gas 17" = 332
+"in water 8" = 333
+"out processing-unit 0" = 614
 
 [[flow]]
 name = "compact factory of 7 rows: 1 processing-unit/s"
 feed = [
   { entity = "in iron-plate 0", lane = "left", item = "iron-plate" },
   { entity = "in iron-plate 0", lane = "right", item = "iron-plate" },
-  { entity = "in coal 1", lane = "left", item = "coal" },
-  { entity = "in coal 1", lane = "right", item = "coal" },
-  { entity = "in copper-plate 2", lane = "left", item = "copper-plate" },
-  { entity = "in copper-plate 2", lane = "right", item = "copper-plate" },
+  { entity = "in copper-plate 1", lane = "left", item = "copper-plate" },
+  { entity = "in copper-plate 1", lane = "right", item = "copper-plate" },
+  { entity = "in coal 2", lane = "left", item = "coal" },
+  { entity = "in coal 2", lane = "right", item = "coal" },
 ]
 drain = [
   "out processing-unit 0",
 ]
 expect = { processing-unit = 1.0 }
-warmup = 251.93333333333334
+warmup = 248.33333333333331
 window = 250.0
 fluids = [
-  { entity = "in petroleum-gas 12", fluid = "petroleum-gas", side = "south" },
+  { entity = "in petroleum-gas 17", fluid = "petroleum-gas", side = "south" },
   { entity = "in water 8", fluid = "water", side = "south" },
 ]
 at_least = true

@@ -293,12 +293,15 @@ class Validator(unittest.TestCase):
 
     def test_an_electromagnetic_fluid_row_reaches_its_rate(self):
         # Processing units: the acid fills the plant's first fluid input, the one facing the pipe.
-        params = {"recipe": "processing-unit", "machine": "electromagnetic-plant", "sides": 1}
-        bp = fluid_row.build(**params)
-        data, ids = bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
-        self.assertPasses(data)
-        report = self.run_flow(data, fluid_row.flow_tests(**params), ids)
-        self.assertTrue(report.ok, report.lines())
+        # Both sides: inserter columns 10 apart, joined by a pole past the top machine.
+        params = {"recipe": "processing-unit", "machine": "electromagnetic-plant", "belt": "turbo-transport-belt",
+                  "research": "inserter-capacity-bonus=7"}
+        self.assertPasses(fluid_row.build(**params).to_dict())
+        self.assertDraws(fluid_row, **params)
+
+    def test_a_two_sided_foundry_row_reaches_its_rate_and_draws_its_estimate(self):
+        # Inserter columns 12 apart, past a medium pole's 9-tile reach: twice a one-sided row.
+        self.assertDraws(fluid_row, recipe="casting-iron", machine="foundry")
 
     def test_an_electromagnetic_plant_production_chain_reaches_its_rate(self):
         # Processing units and advanced circuits in plants, each making 50% more than the rows
