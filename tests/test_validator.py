@@ -286,6 +286,11 @@ class Validator(unittest.TestCase):
         self.assertDraws(assembly_row, recipe="electronic-circuit", machine="electromagnetic-plant",
                          belt="turbo-transport-belt", research="inserter-capacity-bonus=7")
 
+    def test_a_researched_turbo_recycler_row_draws_its_estimate(self):
+        # Its bulk inserters fill their hands off a turbo belt: the energy an item measured off it, not off yellow.
+        self.assertDraws(recycler_row, recipe="iron-gear-wheel-recycling", belt="turbo-transport-belt",
+                         research="inserter-capacity-bonus=7")
+
     def test_an_electromagnetic_fluid_row_reaches_its_rate(self):
         # Processing units: the acid fills the plant's first fluid input, the one facing the pipe.
         params = {"recipe": "processing-unit", "machine": "electromagnetic-plant", "sides": 1}

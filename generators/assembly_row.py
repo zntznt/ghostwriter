@@ -90,9 +90,9 @@ class Plan:
         w += self.sides * (self.machines + 1) * rates.beacon_watts() if self.beacons else 0
         for (inserter, k), lanes in zip(self.feeders, self.lanes):
             moved = crafts * sum(self.recipe.ingredients[i] for i in set(lanes.values()))
-            w += rates.inserter_watts(inserter, m * k, moved, self.research)
-        return w + rates.inserter_watts(self.output[0], m * self.output[1], crafts * self.recipe.results[self.product],
-                                        self.research)
+            w += rates.inserter_watts(inserter, self.belt, m * k, moved, self.research)
+        return w + rates.inserter_watts(self.output[0], self.belt, m * self.output[1],
+                                        crafts * self.recipe.results[self.product], self.research)
 
 
 def plans(recipe="iron-gear-wheel", machine="assembling-machine-2", belt="transport-belt", sides=2,

@@ -56,6 +56,7 @@ class Plan:
     modules: str = ""
     beacons: str = ""  # in every beacon's slots; no beacons without
     beacons_per_furnace: int = 0
+    belt: str = "transport-belt"
 
     @property
     def per_side(self) -> float:
@@ -70,8 +71,8 @@ class Plan:
         w = n * rates.machine_watts(self.furnace, rates.recipe(self.recipe), self.modules, self.beacons,
                                     self.beacons_per_furnace, made / (n * self.product_rate))
         w += self.sides * (self.furnaces + 1) * rates.beacon_watts() if self.beacons else 0
-        return w + rates.inserter_watts(self.inserters[0], n, made * self.ore_rate / self.product_rate) \
-            + rates.inserter_watts(self.inserters[1], n, made)
+        return w + rates.inserter_watts(self.inserters[0], self.belt, n, made * self.ore_rate / self.product_rate) \
+            + rates.inserter_watts(self.inserters[1], self.belt, n, made)
 
 
 def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", sides=2, furnaces=0, modules="",
@@ -103,7 +104,7 @@ def plan(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", si
         inserters.append(picked)
     return Plan(furnaces or limit, sides, rates.size(furnace), burner, ore, product,
                 ore_rate, product_rate, lane, limit, 1 / crafts, tuple(inserters), furnace, recipe, modules,
-                beacons, per)
+                beacons, per, belt)
 
 
 def beacons_per_furnace(furnace: str, sides: int) -> int:
