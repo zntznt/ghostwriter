@@ -3606,6 +3606,14 @@ class Observe(unittest.TestCase):
 class Suggest(unittest.TestCase):
     """What the observer would build instead of a problem group, over hand-made snapshots."""
 
+    def test_suggestions_use_the_most_inserter_research_measured_that_the_game_has(self):
+        from tools import observe
+
+        for level, research in ((0, ""), (1, ""), (2, "inserter-capacity-bonus=2"),
+                                (6, "inserter-capacity-bonus=2"), (7, "inserter-capacity-bonus=7")):
+            with self.subTest(level):
+                self.assertEqual(observe.measured_research(level), research)
+
     @staticmethod
     def suggested(rows, status="item_ingredient_shortage", **kw):
         from tools import observe
