@@ -1,9 +1,39 @@
 # ghostwriter
 
-Generates Factorio 2.x blueprints, books, deconstruction and upgrade planners
-through code ([Draftsman](https://github.com/redruin1/factorio-draftsman)), checks
-them, and keeps a browsable library. Planned flow: generate → validate in the
-real game → fix → only passing strings reach the user.
+**Tell it what you want per second; get a Factorio blueprint that has been
+tested in the real game.**
+
+Most blueprints are fixed designs someone else sized. ghostwriter builds one for
+your numbers: the item, the rate, your machines, belts, modules, beacons and
+inserter research (Factorio 2.x and Space Age). Before you see it, it runs in a
+headless Factorio server and must make what it claims and draw the power it
+claims, within a few percent.
+
+**Just want blueprints?** Browse the tested library at
+https://zntznt.com/ghostwriter/ and copy a string. Nothing to install.
+
+**Your own numbers:**
+
+```
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m validator.fetch 2.1.23
+.venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 --validate
+```
+
+prints the blueprint string to paste into the game, and on stderr what it
+takes and whether the game agreed:
+
+```
+factory: compact, 486 tiles, optimal on shelves; ...
+factory power: 1.7 MW in all
+```
+
+**Already have a base?** Point `tools.observe` at your server and it lists what
+underperforms and why (starved, backed up, short of power), and for what a
+layout can fix, the exact command that builds a better one. See
+[Watching your own game](#watching-your-own-game).
+
+## Reference
 
 ```
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
