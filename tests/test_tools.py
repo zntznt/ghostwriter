@@ -3244,6 +3244,53 @@ class LibraryTests(unittest.TestCase):
                 library_tests(Path(tmp))
 
 
+class GenSave(unittest.TestCase):
+    """bp gen --validate --save DIR files the blueprint with its generator's tests (the game stubbed out)."""
+
+    def save(self, *argv) -> list[tuple[str, dict, object]]:
+        from unittest import mock
+
+        from tools import bp
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(bp, "LIBRARY", Path(tmp)), \
+                mock.patch.object(bp, "_validate", return_value=True), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            bp.main(["gen", *argv, "--validate", "--save", "filed"])
+            return library_tests(Path(tmp))
+
+    def expected(self, module, **params):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return (module.circuit_tests(**params) if hasattr(module, "circuit_tests") else [],
+                    module.flow_tests(**params) if hasattr(module, "flow_tests") else [])
+
+    def test_written_tests_load_back_as_the_generators(self):
+        from generators import gated_requester
+
+        for module, params in ((smelting_column, {"furnace": "electric-furnace"}),
+                               (gated_requester, {"count": 50}),
+                               (fluid_block, {"recipe": "basic-oil-processing", "machines": 2})):
+            with self.subTest(module.__name__):
+                argv = [module.__name__.split(".")[-1], *(f"{k}={v}" for k, v in params.items())]
+                [(label, _, tests)] = self.save(*argv)
+                self.assertTrue(label.startswith("filed/"))
+                self.assertEqual((tests.cases, tests.flows), self.expected(module, **params))
+
+    def test_a_books_rows_are_filed_with_their_tests(self):
+        params = {"item": "iron-gear-wheel", "rate": 1}
+        filed = self.save("production", *(f"{k}={v}" for k, v in params.items()))
+        rows = {(name, tuple(sorted(p.items()))): p for name, p in production.parts(**params)}
+        self.assertEqual(len(filed), len(rows))
+        for (label, _, tests), ((name, _), p) in zip(filed, rows.items()):
+            self.assertEqual(tests.flows, self.expected(production.GENERATORS[name], **p)[1], label)
+
+    def test_save_needs_validate(self):
+        from tools import bp
+
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            bp.main(["gen", "smelting_column", "--save", "smelting"])
+
+
 class Library(unittest.TestCase):
     def test_library_files_check_clean(self):
         for path in sorted(LIBRARY.rglob("*.json")):

@@ -1,0 +1,20 @@
+# Tests for smelting-column-24-steel-furnace-copper-plate.json, run in the game by CI before every publish.
+# Written by `bp gen smelting_column furnace=steel-furnace recipe=copper-plate --validate --save smelting` from the generator's own tests.
+
+[ids]
+plates = 1
+ore_left = 71
+ore_right = 72
+
+[[flow]]
+name = "24 furnaces: 15 copper-plate/s"
+feed = [
+  { entity = "ore_left", lane = "left", item = "copper-ore" },
+  { entity = "ore_left", lane = "right", item = "coal" },
+  { entity = "ore_right", lane = "left", item = "copper-ore" },
+  { entity = "ore_right", lane = "right", item = "coal" },
+]
+drain = [
+  "plates",
+]
+expect = { copper-plate = 15.0 }

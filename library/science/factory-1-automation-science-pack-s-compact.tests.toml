@@ -1,0 +1,24 @@
+# Tests for factory-1-automation-science-pack-s-compact.json, run in the game by CI before every publish.
+# Written by `bp gen factory item=automation-science-pack rate=1 --validate --save science` from the generator's own tests.
+
+[ids]
+"in copper-plate 0" = 84
+"in iron-plate 1" = 90
+"out automation-science-pack 0" = 115
+
+[[flow]]
+name = "compact factory of 2 rows: 1 automation-science-pack/s"
+feed = [
+  { entity = "in copper-plate 0", lane = "left", item = "copper-plate" },
+  { entity = "in copper-plate 0", lane = "right", item = "copper-plate" },
+  { entity = "in iron-plate 1", lane = "left", item = "iron-plate" },
+  { entity = "in iron-plate 1", lane = "right", item = "iron-plate" },
+]
+drain = [
+  "out automation-science-pack 0",
+]
+expect = { automation-science-pack = 1.0 }
+warmup = 96.0
+window = 333.33333333333337
+at_least = true
+settle = 4

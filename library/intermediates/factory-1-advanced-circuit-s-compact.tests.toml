@@ -1,0 +1,31 @@
+# Tests for factory-1-advanced-circuit-s-compact.json, run in the game by CI before every publish.
+# Written by `bp gen factory item=advanced-circuit rate=1 --validate --save intermediates` from the generator's own tests.
+
+[ids]
+"in iron-plate 0" = 239
+"in coal 1" = 245
+"in copper-plate 2" = 252
+"in petroleum-gas 11" = 258
+"out advanced-circuit 0" = 472
+
+[[flow]]
+name = "compact factory of 4 rows: 1 advanced-circuit/s"
+feed = [
+  { entity = "in iron-plate 0", lane = "left", item = "iron-plate" },
+  { entity = "in iron-plate 0", lane = "right", item = "iron-plate" },
+  { entity = "in coal 1", lane = "left", item = "coal" },
+  { entity = "in coal 1", lane = "right", item = "coal" },
+  { entity = "in copper-plate 2", lane = "left", item = "copper-plate" },
+  { entity = "in copper-plate 2", lane = "right", item = "copper-plate" },
+]
+drain = [
+  "out advanced-circuit 0",
+]
+expect = { advanced-circuit = 1.0 }
+warmup = 184.40000000000003
+window = 400.0
+fluids = [
+  { entity = "in petroleum-gas 11", fluid = "petroleum-gas", side = "south" },
+]
+at_least = true
+settle = 4

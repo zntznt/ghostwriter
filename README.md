@@ -51,6 +51,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m tools.bp gen cell recipe=electronic-circuit producer=copper-cable --validate   # cable machines handing cable straight to circuit machines
 .venv/bin/python -m tools.bp gen cell recipe=advanced-circuit producer=copper-cable belts=2 --validate   # circuits and plastic on a second input belt, by long-handed inserter
 .venv/bin/python -m tools.bp gen factory item=electronic-circuit rate=5 | .venv/bin/python -m tools.bp density - --rate 5   # how it spends its tiles
+.venv/bin/python -m tools.bp gen factory item=automation-science-pack rate=1 --validate --save science   # file it in library/science/ once it passes, with its circuit and flow tests beside it (NAME.tests.toml; a book's rows each with theirs, the whole-book chain test not) so CI re-runs them and the site shows "Throughput measured in game"
 .venv/bin/python -m tools.bp plan platform railguns=16 guns=16 thrusters=1 cargo_bays=24 fuel=1 reserve=1 power=2 promethium=1 ammo_feed=1   # a platform's promethium trip: where to turn, what to load
 .venv/bin/python -m tools.bp plan platform ... --verify 8 --shock 8   # fly the plan whole 8 times, 8 railguns killed as each turns
 .venv/bin/python -m tools.bp plan platform ... --save   # file that plan beside the platform's blueprint in library/ (the site shows it)

@@ -1,0 +1,24 @@
+# Tests for fluid-block-4-oil-refinery-advanced-oil-processing.json, run in the game by CI before every publish.
+# Written by `bp gen fluid_block recipe=advanced-oil-processing machines=4 --validate --save oil` from the generator's own tests.
+
+[ids]
+north_heavy-oil = 1
+north_light-oil = 26
+north_petroleum-gas = 55
+south_water = 84
+south_crude-oil = 109
+
+[[flow]]
+name = "4 oil-refinery: 20 heavy-oil/s, 36 light-oil/s, 44 petroleum-gas/s"
+feed = []
+drain = []
+expect = { heavy-oil = 20.0, light-oil = 36.0, petroleum-gas = 44.0 }
+warmup = 46.93333333333334
+window = 250.0
+fluids = [
+  { entity = "north_heavy-oil", fluid = "heavy-oil", side = "west", sink = true },
+  { entity = "north_light-oil", fluid = "light-oil", side = "west", sink = true },
+  { entity = "north_petroleum-gas", fluid = "petroleum-gas", side = "west", sink = true },
+  { entity = "south_water", fluid = "water", side = "west" },
+  { entity = "south_crude-oil", fluid = "crude-oil", side = "west" },
+]

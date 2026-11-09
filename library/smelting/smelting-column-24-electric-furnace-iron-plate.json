@@ -1,0 +1,1942 @@
+{
+  "blueprint": {
+    "item": "blueprint",
+    "version": 562954249699328,
+    "label": "Smelting column: 24 electric-furnace (iron-plate)",
+    "description": "12 electric-furnace per side x2: 15 iron-plate/s from 15 iron-ore/s. transport-belt carries 7.5/s per lane (belt-limited at 12 per side). Ore enters at the bottom on both lanes of each ore belt; iron-plate leaves at the top. Draws about 4.7 MW. Connect any pole to your grid.",
+    "icons": [
+      {
+        "index": 1,
+        "signal": {
+          "type": "item",
+          "name": "electric-furnace"
+        }
+      },
+      {
+        "index": 2,
+        "signal": {
+          "type": "item",
+          "name": "iron-plate"
+        }
+      }
+    ],
+    "entities": [
+      {
+        "entity_number": 1,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 0.5
+        }
+      },
+      {
+        "entity_number": 2,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 0.5
+        }
+      },
+      {
+        "entity_number": 3,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 0.5
+        }
+      },
+      {
+        "entity_number": 4,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 5,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 6,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 7,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 8,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 9,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 10,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 11,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 12,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 13,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 14,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 15,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 16,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 5.5
+        }
+      },
+      {
+        "entity_number": 17,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 5.5
+        }
+      },
+      {
+        "entity_number": 18,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 5.5
+        }
+      },
+      {
+        "entity_number": 19,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 6.5
+        }
+      },
+      {
+        "entity_number": 20,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 6.5
+        }
+      },
+      {
+        "entity_number": 21,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 6.5
+        }
+      },
+      {
+        "entity_number": 22,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 23,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 24,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 25,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 8.5
+        }
+      },
+      {
+        "entity_number": 26,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 8.5
+        }
+      },
+      {
+        "entity_number": 27,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 8.5
+        }
+      },
+      {
+        "entity_number": 28,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 9.5
+        }
+      },
+      {
+        "entity_number": 29,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 9.5
+        }
+      },
+      {
+        "entity_number": 30,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 9.5
+        }
+      },
+      {
+        "entity_number": 31,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 10.5
+        }
+      },
+      {
+        "entity_number": 32,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 10.5
+        }
+      },
+      {
+        "entity_number": 33,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 10.5
+        }
+      },
+      {
+        "entity_number": 34,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 11.5
+        }
+      },
+      {
+        "entity_number": 35,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 11.5
+        }
+      },
+      {
+        "entity_number": 36,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 11.5
+        }
+      },
+      {
+        "entity_number": 37,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 12.5
+        }
+      },
+      {
+        "entity_number": 38,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 12.5
+        }
+      },
+      {
+        "entity_number": 39,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 12.5
+        }
+      },
+      {
+        "entity_number": 40,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 13.5
+        }
+      },
+      {
+        "entity_number": 41,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 13.5
+        }
+      },
+      {
+        "entity_number": 42,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 13.5
+        }
+      },
+      {
+        "entity_number": 43,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 14.5
+        }
+      },
+      {
+        "entity_number": 44,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 14.5
+        }
+      },
+      {
+        "entity_number": 45,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 14.5
+        }
+      },
+      {
+        "entity_number": 46,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 15.5
+        }
+      },
+      {
+        "entity_number": 47,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 15.5
+        }
+      },
+      {
+        "entity_number": 48,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 15.5
+        }
+      },
+      {
+        "entity_number": 49,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 16.5
+        }
+      },
+      {
+        "entity_number": 50,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 16.5
+        }
+      },
+      {
+        "entity_number": 51,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 16.5
+        }
+      },
+      {
+        "entity_number": 52,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 17.5
+        }
+      },
+      {
+        "entity_number": 53,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 17.5
+        }
+      },
+      {
+        "entity_number": 54,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 17.5
+        }
+      },
+      {
+        "entity_number": 55,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 18.5
+        }
+      },
+      {
+        "entity_number": 56,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 18.5
+        }
+      },
+      {
+        "entity_number": 57,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 18.5
+        }
+      },
+      {
+        "entity_number": 58,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 19.5
+        }
+      },
+      {
+        "entity_number": 59,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 19.5
+        }
+      },
+      {
+        "entity_number": 60,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 19.5
+        }
+      },
+      {
+        "entity_number": 61,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 20.5
+        }
+      },
+      {
+        "entity_number": 62,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 20.5
+        }
+      },
+      {
+        "entity_number": 63,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 20.5
+        }
+      },
+      {
+        "entity_number": 64,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 21.5
+        }
+      },
+      {
+        "entity_number": 65,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 21.5
+        }
+      },
+      {
+        "entity_number": 66,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 21.5
+        }
+      },
+      {
+        "entity_number": 67,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 22.5
+        }
+      },
+      {
+        "entity_number": 68,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 22.5
+        }
+      },
+      {
+        "entity_number": 69,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 22.5
+        }
+      },
+      {
+        "entity_number": 70,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 23.5
+        }
+      },
+      {
+        "entity_number": 71,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 23.5
+        }
+      },
+      {
+        "entity_number": 72,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 23.5
+        }
+      },
+      {
+        "entity_number": 73,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 24.5
+        }
+      },
+      {
+        "entity_number": 74,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 24.5
+        }
+      },
+      {
+        "entity_number": 75,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 24.5
+        }
+      },
+      {
+        "entity_number": 76,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 25.5
+        }
+      },
+      {
+        "entity_number": 77,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 25.5
+        }
+      },
+      {
+        "entity_number": 78,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 25.5
+        }
+      },
+      {
+        "entity_number": 79,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 26.5
+        }
+      },
+      {
+        "entity_number": 80,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 26.5
+        }
+      },
+      {
+        "entity_number": 81,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 26.5
+        }
+      },
+      {
+        "entity_number": 82,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 27.5
+        }
+      },
+      {
+        "entity_number": 83,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 27.5
+        }
+      },
+      {
+        "entity_number": 84,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 27.5
+        }
+      },
+      {
+        "entity_number": 85,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 28.5
+        }
+      },
+      {
+        "entity_number": 86,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 28.5
+        }
+      },
+      {
+        "entity_number": 87,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 28.5
+        }
+      },
+      {
+        "entity_number": 88,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 29.5
+        }
+      },
+      {
+        "entity_number": 89,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 29.5
+        }
+      },
+      {
+        "entity_number": 90,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 29.5
+        }
+      },
+      {
+        "entity_number": 91,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 30.5
+        }
+      },
+      {
+        "entity_number": 92,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 30.5
+        }
+      },
+      {
+        "entity_number": 93,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 30.5
+        }
+      },
+      {
+        "entity_number": 94,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 31.5
+        }
+      },
+      {
+        "entity_number": 95,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 31.5
+        }
+      },
+      {
+        "entity_number": 96,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 31.5
+        }
+      },
+      {
+        "entity_number": 97,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 32.5
+        }
+      },
+      {
+        "entity_number": 98,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 32.5
+        }
+      },
+      {
+        "entity_number": 99,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 32.5
+        }
+      },
+      {
+        "entity_number": 100,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 33.5
+        }
+      },
+      {
+        "entity_number": 101,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 33.5
+        }
+      },
+      {
+        "entity_number": 102,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 33.5
+        }
+      },
+      {
+        "entity_number": 103,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 34.5
+        }
+      },
+      {
+        "entity_number": 104,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 34.5
+        }
+      },
+      {
+        "entity_number": 105,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 34.5
+        }
+      },
+      {
+        "entity_number": 106,
+        "name": "transport-belt",
+        "position": {
+          "x": 6.5,
+          "y": 35.5
+        }
+      },
+      {
+        "entity_number": 107,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 35.5
+        }
+      },
+      {
+        "entity_number": 108,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 35.5
+        }
+      },
+      {
+        "entity_number": 109,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 110,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 1.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 111,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 1.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 112,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 113,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 4.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 114,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 4.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 115,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 116,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 7.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 117,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 7.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 118,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 10.5
+        }
+      },
+      {
+        "entity_number": 119,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 10.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 120,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 10.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 121,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 13.5
+        }
+      },
+      {
+        "entity_number": 122,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 13.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 123,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 13.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 124,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 16.5
+        }
+      },
+      {
+        "entity_number": 125,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 16.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 126,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 16.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 127,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 19.5
+        }
+      },
+      {
+        "entity_number": 128,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 19.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 129,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 19.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 130,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 22.5
+        }
+      },
+      {
+        "entity_number": 131,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 22.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 132,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 22.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 133,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 25.5
+        }
+      },
+      {
+        "entity_number": 134,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 25.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 135,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 25.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 136,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 28.5
+        }
+      },
+      {
+        "entity_number": 137,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 28.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 138,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 28.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 139,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 31.5
+        }
+      },
+      {
+        "entity_number": 140,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 31.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 141,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 31.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 142,
+        "name": "electric-furnace",
+        "position": {
+          "x": 3.5,
+          "y": 34.5
+        }
+      },
+      {
+        "entity_number": 143,
+        "name": "inserter",
+        "position": {
+          "x": 1.5,
+          "y": 34.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 144,
+        "name": "inserter",
+        "position": {
+          "x": 5.5,
+          "y": 34.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 145,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 146,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 1.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 147,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 1.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 148,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 149,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 4.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 150,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 4.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 151,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 152,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 7.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 153,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 7.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 154,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 10.5
+        }
+      },
+      {
+        "entity_number": 155,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 10.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 156,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 10.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 157,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 13.5
+        }
+      },
+      {
+        "entity_number": 158,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 13.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 159,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 13.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 160,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 16.5
+        }
+      },
+      {
+        "entity_number": 161,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 16.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 162,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 16.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 163,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 19.5
+        }
+      },
+      {
+        "entity_number": 164,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 19.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 165,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 19.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 166,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 22.5
+        }
+      },
+      {
+        "entity_number": 167,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 22.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 168,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 22.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 169,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 25.5
+        }
+      },
+      {
+        "entity_number": 170,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 25.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 171,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 25.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 172,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 28.5
+        }
+      },
+      {
+        "entity_number": 173,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 28.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 174,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 28.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 175,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 31.5
+        }
+      },
+      {
+        "entity_number": 176,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 31.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 177,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 31.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 178,
+        "name": "electric-furnace",
+        "position": {
+          "x": 9.5,
+          "y": 34.5
+        }
+      },
+      {
+        "entity_number": 179,
+        "name": "inserter",
+        "position": {
+          "x": 11.5,
+          "y": 34.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 180,
+        "name": "inserter",
+        "position": {
+          "x": 7.5,
+          "y": 34.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 181,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 1.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 182,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 5.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 183,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 11.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 184,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 1.5,
+          "y": 9.5
+        }
+      },
+      {
+        "entity_number": 185,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 5.5,
+          "y": 9.5
+        }
+      },
+      {
+        "entity_number": 186,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 11.5,
+          "y": 9.5
+        }
+      },
+      {
+        "entity_number": 187,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 1.5,
+          "y": 15.5
+        }
+      },
+      {
+        "entity_number": 188,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 5.5,
+          "y": 15.5
+        }
+      },
+      {
+        "entity_number": 189,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 11.5,
+          "y": 15.5
+        }
+      },
+      {
+        "entity_number": 190,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 1.5,
+          "y": 21.5
+        }
+      },
+      {
+        "entity_number": 191,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 5.5,
+          "y": 21.5
+        }
+      },
+      {
+        "entity_number": 192,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 11.5,
+          "y": 21.5
+        }
+      },
+      {
+        "entity_number": 193,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 1.5,
+          "y": 27.5
+        }
+      },
+      {
+        "entity_number": 194,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 5.5,
+          "y": 27.5
+        }
+      },
+      {
+        "entity_number": 195,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 11.5,
+          "y": 27.5
+        }
+      },
+      {
+        "entity_number": 196,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 1.5,
+          "y": 33.5
+        }
+      },
+      {
+        "entity_number": 197,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 5.5,
+          "y": 33.5
+        }
+      },
+      {
+        "entity_number": 198,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 11.5,
+          "y": 33.5
+        }
+      }
+    ],
+    "wires": [
+      [
+        181,
+        5,
+        185,
+        5
+      ],
+      [
+        181,
+        5,
+        184,
+        5
+      ],
+      [
+        181,
+        5,
+        182,
+        5
+      ],
+      [
+        182,
+        5,
+        186,
+        5
+      ],
+      [
+        182,
+        5,
+        184,
+        5
+      ],
+      [
+        182,
+        5,
+        185,
+        5
+      ],
+      [
+        182,
+        5,
+        183,
+        5
+      ],
+      [
+        183,
+        5,
+        185,
+        5
+      ],
+      [
+        183,
+        5,
+        186,
+        5
+      ],
+      [
+        184,
+        5,
+        188,
+        5
+      ],
+      [
+        184,
+        5,
+        187,
+        5
+      ],
+      [
+        184,
+        5,
+        185,
+        5
+      ],
+      [
+        185,
+        5,
+        189,
+        5
+      ],
+      [
+        185,
+        5,
+        187,
+        5
+      ],
+      [
+        185,
+        5,
+        188,
+        5
+      ],
+      [
+        185,
+        5,
+        186,
+        5
+      ],
+      [
+        186,
+        5,
+        188,
+        5
+      ],
+      [
+        186,
+        5,
+        189,
+        5
+      ],
+      [
+        187,
+        5,
+        191,
+        5
+      ],
+      [
+        187,
+        5,
+        190,
+        5
+      ],
+      [
+        187,
+        5,
+        188,
+        5
+      ],
+      [
+        188,
+        5,
+        192,
+        5
+      ],
+      [
+        188,
+        5,
+        190,
+        5
+      ],
+      [
+        188,
+        5,
+        191,
+        5
+      ],
+      [
+        188,
+        5,
+        189,
+        5
+      ],
+      [
+        189,
+        5,
+        191,
+        5
+      ],
+      [
+        189,
+        5,
+        192,
+        5
+      ],
+      [
+        190,
+        5,
+        194,
+        5
+      ],
+      [
+        190,
+        5,
+        193,
+        5
+      ],
+      [
+        190,
+        5,
+        191,
+        5
+      ],
+      [
+        191,
+        5,
+        195,
+        5
+      ],
+      [
+        191,
+        5,
+        193,
+        5
+      ],
+      [
+        191,
+        5,
+        194,
+        5
+      ],
+      [
+        191,
+        5,
+        192,
+        5
+      ],
+      [
+        192,
+        5,
+        194,
+        5
+      ],
+      [
+        192,
+        5,
+        195,
+        5
+      ],
+      [
+        193,
+        5,
+        197,
+        5
+      ],
+      [
+        193,
+        5,
+        196,
+        5
+      ],
+      [
+        193,
+        5,
+        194,
+        5
+      ],
+      [
+        194,
+        5,
+        198,
+        5
+      ],
+      [
+        194,
+        5,
+        196,
+        5
+      ],
+      [
+        194,
+        5,
+        197,
+        5
+      ],
+      [
+        194,
+        5,
+        195,
+        5
+      ],
+      [
+        195,
+        5,
+        197,
+        5
+      ],
+      [
+        195,
+        5,
+        198,
+        5
+      ],
+      [
+        196,
+        5,
+        197,
+        5
+      ],
+      [
+        197,
+        5,
+        198,
+        5
+      ]
+    ]
+  }
+}

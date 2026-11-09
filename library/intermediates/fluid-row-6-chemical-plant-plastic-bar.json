@@ -1,0 +1,628 @@
+{
+  "blueprint": {
+    "item": "blueprint",
+    "version": 562954249699328,
+    "label": "Fluid row: 6 chemical-plant (plastic-bar)",
+    "description": "3 chemical-plant per side x2: 12 plastic-bar/s (belt-limited at 3 per side), drawing 120 petroleum-gas/s from the middle pipe; feed it at either end. Items enter at the bottom: in2: coal on both lanes. plastic-bar leaves at the top on each side's in1 far lane. Draws about 1.5 MW. Connect any pole to your grid.",
+    "icons": [
+      {
+        "index": 1,
+        "signal": {
+          "type": "item",
+          "name": "chemical-plant"
+        }
+      },
+      {
+        "index": 2,
+        "signal": {
+          "type": "item",
+          "name": "plastic-bar"
+        }
+      }
+    ],
+    "entities": [
+      {
+        "entity_number": 1,
+        "name": "pipe",
+        "position": {
+          "x": 6.5,
+          "y": 0.5
+        }
+      },
+      {
+        "entity_number": 2,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": 0.5
+        }
+      },
+      {
+        "entity_number": 3,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 0.5
+        }
+      },
+      {
+        "entity_number": 4,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": 0.5
+        }
+      },
+      {
+        "entity_number": 5,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 0.5
+        }
+      },
+      {
+        "entity_number": 6,
+        "name": "pipe",
+        "position": {
+          "x": 6.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 7,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 8,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 9,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 10,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 1.5
+        }
+      },
+      {
+        "entity_number": 11,
+        "name": "pipe",
+        "position": {
+          "x": 6.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 12,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 13,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 14,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 15,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 16,
+        "name": "pipe",
+        "position": {
+          "x": 6.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 17,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 18,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 19,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 20,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 3.5
+        }
+      },
+      {
+        "entity_number": 21,
+        "name": "pipe",
+        "position": {
+          "x": 6.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 22,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 23,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 24,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 25,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 4.5
+        }
+      },
+      {
+        "entity_number": 26,
+        "name": "pipe",
+        "position": {
+          "x": 6.5,
+          "y": 5.5
+        }
+      },
+      {
+        "entity_number": 27,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": 5.5
+        }
+      },
+      {
+        "entity_number": 28,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 5.5
+        }
+      },
+      {
+        "entity_number": 29,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": 5.5
+        }
+      },
+      {
+        "entity_number": 30,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 5.5
+        }
+      },
+      {
+        "entity_number": 31,
+        "name": "pipe",
+        "position": {
+          "x": 6.5,
+          "y": 6.5
+        }
+      },
+      {
+        "entity_number": 32,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": 6.5
+        }
+      },
+      {
+        "entity_number": 33,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 6.5
+        }
+      },
+      {
+        "entity_number": 34,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": 6.5
+        }
+      },
+      {
+        "entity_number": 35,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 6.5
+        }
+      },
+      {
+        "entity_number": 36,
+        "name": "pipe",
+        "position": {
+          "x": 6.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 37,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 38,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 39,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 40,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 7.5
+        }
+      },
+      {
+        "entity_number": 41,
+        "name": "pipe",
+        "position": {
+          "x": 6.5,
+          "y": 8.5
+        }
+      },
+      {
+        "entity_number": 42,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": 8.5
+        }
+      },
+      {
+        "entity_number": 43,
+        "name": "transport-belt",
+        "position": {
+          "x": 0.5,
+          "y": 8.5
+        }
+      },
+      {
+        "entity_number": 44,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": 8.5
+        }
+      },
+      {
+        "entity_number": 45,
+        "name": "transport-belt",
+        "position": {
+          "x": 12.5,
+          "y": 8.5
+        }
+      },
+      {
+        "entity_number": 46,
+        "name": "transport-belt",
+        "position": {
+          "x": 1.5,
+          "y": -0.5
+        }
+      },
+      {
+        "entity_number": 47,
+        "name": "transport-belt",
+        "position": {
+          "x": 11.5,
+          "y": -0.5
+        }
+      },
+      {
+        "entity_number": 48,
+        "name": "chemical-plant",
+        "position": {
+          "x": 4.5,
+          "y": 1.5
+        },
+        "direction": 4,
+        "recipe": "plastic-bar"
+      },
+      {
+        "entity_number": 49,
+        "name": "long-handed-inserter",
+        "position": {
+          "x": 2.5,
+          "y": 0.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 50,
+        "name": "fast-inserter",
+        "position": {
+          "x": 2.5,
+          "y": 1.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 51,
+        "name": "chemical-plant",
+        "position": {
+          "x": 4.5,
+          "y": 4.5
+        },
+        "direction": 4,
+        "recipe": "plastic-bar"
+      },
+      {
+        "entity_number": 52,
+        "name": "long-handed-inserter",
+        "position": {
+          "x": 2.5,
+          "y": 3.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 53,
+        "name": "fast-inserter",
+        "position": {
+          "x": 2.5,
+          "y": 4.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 54,
+        "name": "chemical-plant",
+        "position": {
+          "x": 4.5,
+          "y": 7.5
+        },
+        "direction": 4,
+        "recipe": "plastic-bar"
+      },
+      {
+        "entity_number": 55,
+        "name": "long-handed-inserter",
+        "position": {
+          "x": 2.5,
+          "y": 6.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 56,
+        "name": "fast-inserter",
+        "position": {
+          "x": 2.5,
+          "y": 7.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 57,
+        "name": "chemical-plant",
+        "position": {
+          "x": 8.5,
+          "y": 1.5
+        },
+        "direction": 12,
+        "recipe": "plastic-bar"
+      },
+      {
+        "entity_number": 58,
+        "name": "long-handed-inserter",
+        "position": {
+          "x": 10.5,
+          "y": 0.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 59,
+        "name": "fast-inserter",
+        "position": {
+          "x": 10.5,
+          "y": 1.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 60,
+        "name": "chemical-plant",
+        "position": {
+          "x": 8.5,
+          "y": 4.5
+        },
+        "direction": 12,
+        "recipe": "plastic-bar"
+      },
+      {
+        "entity_number": 61,
+        "name": "long-handed-inserter",
+        "position": {
+          "x": 10.5,
+          "y": 3.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 62,
+        "name": "fast-inserter",
+        "position": {
+          "x": 10.5,
+          "y": 4.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 63,
+        "name": "chemical-plant",
+        "position": {
+          "x": 8.5,
+          "y": 7.5
+        },
+        "direction": 12,
+        "recipe": "plastic-bar"
+      },
+      {
+        "entity_number": 64,
+        "name": "long-handed-inserter",
+        "position": {
+          "x": 10.5,
+          "y": 6.5
+        },
+        "direction": 4
+      },
+      {
+        "entity_number": 65,
+        "name": "fast-inserter",
+        "position": {
+          "x": 10.5,
+          "y": 7.5
+        },
+        "direction": 12
+      },
+      {
+        "entity_number": 66,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 2.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 67,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 10.5,
+          "y": 2.5
+        }
+      },
+      {
+        "entity_number": 68,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 2.5,
+          "y": 8.5
+        }
+      },
+      {
+        "entity_number": 69,
+        "name": "medium-electric-pole",
+        "position": {
+          "x": 10.5,
+          "y": 8.5
+        }
+      }
+    ],
+    "wires": [
+      [
+        66,
+        5,
+        67,
+        5
+      ],
+      [
+        66,
+        5,
+        68,
+        5
+      ],
+      [
+        67,
+        5,
+        69,
+        5
+      ],
+      [
+        68,
+        5,
+        69,
+        5
+      ]
+    ]
+  }
+}
