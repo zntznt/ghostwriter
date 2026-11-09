@@ -1181,7 +1181,9 @@ class Validator(unittest.TestCase):
         data = platform.build(railguns=32, guns=32, thrusters=1, cargo_bays=8, fuel=True).to_dict()
         # From 0.4 of the route, where chunks are plenty: from the solar system edge it
         # sometimes never starts (NOTES.md).
-        [flight] = platform.flight_tests(fuel=True, seconds=150, start=0.4, research=HIGH_RESEARCH)
+        # Speed dips once the start's fuel is used, until chunks reach the plants: 60 to 90 s in
+        # 8 flights, and once over 150 s. 240 s lets a late recovery settle.
+        [flight] = platform.flight_tests(fuel=True, seconds=240, start=0.4, research=HIGH_RESEARCH)
         flown = run_flight(self.server, data, flight, Report(self.server.version))
         self.assertEqual((flown.error, flown.built), ("", flown.entities))
         self.assertTrue(flown.survived, flown.ended)
