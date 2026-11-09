@@ -175,7 +175,8 @@ def build(furnace="stone-furnace", recipe="iron-plate", belt="transport-belt", i
     inserter_columns = sorted(c for cols in columns.values() for c in (cols[1], cols[3]))
     taken = {y + ins_offset for _, y in _spots(s, bs, 0, n, [0])[0]}
     free_rows = [y for y in range(length) if y not in taken]
-    for x, y in layout.poles(pole, powered, {c: free_rows for c in inserter_columns}):
+    for x, y in layout.poles(pole, powered, {c: free_rows for c in inserter_columns},
+                             layout.open_tiles(bp)):
         bp.entities.append(pole, tile_position=(x, y))
     bp.generate_power_connections()
     return bp

@@ -309,7 +309,7 @@ def build(recipe="electronic-circuit", producer="copper-cable", machine="assembl
             for x in range(c["machine"], c["machine"] + s):
                 if x not in used:
                     free[x].append(gap)
-    for x, y in layout.poles(pole, powered, free):
+    for x, y in layout.poles(pole, powered, free, layout.open_tiles(bp)):
         bp.entities.append(pole, tile_position=(x, y))
     bp.generate_power_connections()
     return bp

@@ -335,13 +335,7 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
     beaconed_step = None
     for base in options:
         try:
-            for sides in (2, 1):  # a machine too wide to power two sides of still powers one
-                try:
-                    full = _rated(kind, {**base, "sides": sides})
-                    break
-                except ValueError:
-                    if sides == 1:
-                        raise
+            full = _rated(kind, {**base, "sides": 2})
             rows = math.ceil(need / full - 1e-9)
             share = need / rows
             machine = base.get("machine") or base["furnace"]
@@ -352,8 +346,6 @@ def _size(item, demand, how, belt, furnace, tiers, extra=None) -> Step:
                            for sides in (1, 2)}
             if share <= per_machine[1] + 1e-9:
                 params = {**base, "sides": 1, count_key: 1}
-            elif sides == 1:
-                params = {**base, "sides": 1, count_key: math.ceil(share / per_machine[1] - 1e-9)}
             else:
                 params = {**base, "sides": 2, count_key: math.ceil(share / 2 / per_machine[2] - 1e-9)}
             step = Step(item, demand, kind, params, rows, _rated(kind, params))
@@ -414,11 +406,11 @@ def _row_area(s: Step) -> int:
 
 
 def _cast(recipe, belt, research=""):
-    """How a foundry casts `recipe` on `belt`: a one-sided fluid row for one fluid, a block for
+    """How a foundry casts `recipe` on `belt`: a fluid row for one fluid, a block for
     two; None if no row fits (cable on a yellow belt: 18/s a foundry), to make it as before."""
     try:
         if len(rates.recipe_any(recipe).fluids) == 1:
-            fluid_row.plan(recipe=recipe, machine="foundry", belt=belt, sides=1, research=research)
+            fluid_row.plan(recipe=recipe, machine="foundry", belt=belt, research=research)
             return "fluid_row", rates.recipe(recipe, fluids=True)
         fluid_block.plan(recipe=recipe, belt=belt, research=research)
         return "fluid_block", rates.recipe_any(recipe)

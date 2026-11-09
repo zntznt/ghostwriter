@@ -13,14 +13,15 @@ Chemical plants (plastic, batteries, explosives, solid fuel) and assembling
 machines 2 and 3 (processing units, electric engines, rocket fuel) both fit,
 and so do electromagnetic plants (4x4; processing units, superconductors) and
 foundries (5x5), turned so their first fluid input, the one a one-fluid recipe
-fills, faces the pipe. With two sides their inserter columns are 2 x size + 2
-tiles apart, past a medium pole's wire reach: they take sides=1. Recipes with
-two fluids, or a fluid product, are refused.
+fills, faces the pipe. Recipes with two fluids, or a fluid product, are refused.
 
 Inserters per machine follow the measured rates (tools/inserter_rates.json)
 with a 15% margin, and poles take the inserter-column tiles left over, or a
 one-row gap after each machine when there are none (and one before the
-first, for a 4-row machine's top inserter). `machines` (per side)
+first, for a 4-row machine's top inserter). Each side's column is powered on
+its own; where the two are past wire reach (2 x size + 2 tiles apart: a 4x4
+plant's 10, a foundry's 12, a medium pole's 9), a pole on a free tile past
+the top machine joins them. `machines` (per side)
 defaults to the most the belts carry; the description names each lane's item
 and the fluid flow the pipe must supply.
 
@@ -189,14 +190,7 @@ def plan(pole="medium-electric-pole", **params) -> Plan:
                 return p
             except ValueError as e:
                 errors.append(str(e))
-    hint = ""
-    if params.get("sides", 2) == 2:
-        try:
-            plan(pole, **{**params, "sides": 1})
-            hint = "; try sides=1"
-        except ValueError:
-            pass
-    raise ValueError(f"{p.recipe.name}: no layout leaves room to power it ({'; '.join(dict.fromkeys(errors))}){hint}")
+    raise ValueError(f"{p.recipe.name}: no layout leaves room to power it ({'; '.join(dict.fromkeys(errors))})")
 
 
 def build(recipe="plastic-bar", machine="", belt="transport-belt", sides=2, machines=0, inserter="",
@@ -318,7 +312,7 @@ def _build(p: Plan, pole: str) -> Blueprint:
             raise ValueError(f"not every machine takes {p.beacons_per_machine} beacons")
     taken = {p.lead + m * pitch + bs + r for m in range(n) for r in range(used)}
     free = {c["ins"]: [y for y in range(length) if y not in taken] for c in columns.values()}
-    for x, y in layout.poles(pole, powered, free):
+    for x, y in layout.poles(pole, powered, free, layout.open_tiles(bp)):
         bp.entities.append(pole, tile_position=(x, y))
     bp.generate_power_connections()
     return bp

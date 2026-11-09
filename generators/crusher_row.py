@@ -224,7 +224,7 @@ def _build(p: Plan, pole: str) -> Blueprint:
         for x, (_, used) in ((c["ins"], p.feeder), (c["out"], p.output)):
             taken = {p.lead + m * pitch + r for m in range(n) for r in range(used)}
             free[x] = [y for y in range(length) if y not in taken]
-    for x, y in layout.poles(pole, powered, free):
+    for x, y in layout.poles(pole, powered, free, layout.open_tiles(bp)):
         bp.entities.append(pole, tile_position=(x, y))
     bp.generate_power_connections()
     return bp
