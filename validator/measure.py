@@ -27,6 +27,16 @@ moves from a machine's output straight into another machine's input. The rig
 is copper cable in assembling-machine-3 handing over to electronic circuits in
 another (each faster than any inserter), so circuits/s x 3 is cable/s moved.
 
+    python -m validator.measure --recycler
+
+measures only into_recycler, keeping the rest, with no research and at each
+research measured: items/s an inserter (two, as a recycler row has) moves into
+a recycler crafting flat out, off a full belt that stands, as a row's input
+belt does past its last recycler. Off a standing belt an inserter is slower
+than off a moving one (fast inserters off a yellow belt: 2.73/s, not 2.81).
+Recycling an item takes 1/32 s, so the recycler takes all two inserters bring.
+The rig recycles gears (16 crafts/s, half a plate back) and counts its crafts.
+
     python -m validator.measure --energy
 
 measures only energy_per_item, keeping the rest: joules an inserter takes from
@@ -56,6 +66,7 @@ BELTS = ["transport-belt", "fast-transport-belt", "express-transport-belt", "tur
 ITEM = "iron-plate"
 RIG_INSERTERS = 2
 WARMUP, WINDOW = 10, 120  # seconds of game time
+RECYCLER_INSERTERS = ["inserter", "fast-inserter", "bulk-inserter"]  # those a recycler row picks from
 
 
 def rig(inserter: str, belt: str, from_belt: bool) -> tuple[dict, dict[str, int]]:
@@ -113,6 +124,58 @@ def measure(server: Server, inserter: str, belt: str, from_belt: bool, research:
         server.call("flow_teardown")
 
 
+RECYCLER_ITEM = "iron-gear-wheel"
+RECYCLER_CRAFTS = ('/sc for _, e in pairs(storage.flow.built) do '
+                   'if e.valid and e.name == "recycler" then rcon.print(e.products_finished) end end')
+
+
+def recycler_rig(inserter: str, belt: str) -> tuple[dict, dict[str, int]]:
+    """A north-running belt that ends, two inserters, a recycler facing east onto a turbo results belt."""
+    bp = Blueprint()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for y in range(4):
+            bp.entities.append(belt, tile_position=(0, y), direction=Direction.NORTH,
+                               **({"id": "bottom"} if y == 3 else {}))
+            bp.entities.append("turbo-transport-belt", tile_position=(6, y), direction=Direction.NORTH,
+                               **({"id": "out"} if y == 0 else {}))
+        for y in (1, 2):
+            bp.entities.append(inserter, tile_position=(1, y), direction=Direction.WEST)
+        bp.entities.append("recycler", tile_position=(2, 1), direction=Direction.EAST)
+        bp.entities.append("medium-electric-pole", tile_position=(1, 3))
+        bp.generate_power_connections()
+    return bp.to_dict(), {e.id: n for n, e in enumerate(bp.entities, start=1) if e.id}
+
+
+def measure_recycler(server: Server, inserter: str, belt: str, research: dict | None = None) -> float:
+    """Items/s per inserter into a recycler."""
+    data, ids = recycler_rig(inserter, belt)
+    _ok(server.call("flow_setup", json.dumps({"blueprint": encode(data), "speed": SPEED, "research": research or {}})))
+    try:
+        feeds = [{"entity": ids["bottom"], "lane": lane, "item": RECYCLER_ITEM} for lane in ("left", "right")]
+        _ok(server.call("flow_start", json.dumps({"feeds": feeds, "drains": [ids["out"]]})))
+        _wait_ticks(server, WARMUP * 60, timeout=60)
+
+        def now():
+            return int(server.command(RECYCLER_CRAFTS)), int(server.command("/sc rcon.print(game.tick)"))
+
+        crafts, tick = now()
+        _wait_ticks(server, WINDOW * 60, timeout=WINDOW + 60)
+        later, end = now()
+        return (later - crafts) / ((end - tick) / 60) / 2
+    finally:
+        server.call("flow_teardown")
+
+
+def recycler_rates(server: Server, research: dict | None = None, key: str = "") -> dict:
+    out = {}
+    for inserter in RECYCLER_INSERTERS:
+        for belt in BELTS:
+            out.setdefault(inserter, {})[belt] = round(measure_recycler(server, inserter, belt, research), 3)
+            print(f"{key} {inserter:22s} {belt:24s} into a recycler {out[inserter][belt]}", file=sys.stderr, flush=True)
+    return out
+
+
 HANDOVER_MACHINE = "assembling-machine-3"
 
 
@@ -165,8 +228,23 @@ def main(argv=None):
     ap.add_argument("--out", default=str(OUT))
     ap.add_argument("--handover", action="store_true", help="measure only machine-to-machine handovers")
     ap.add_argument("--energy", action="store_true", help="measure only inserters' energy per item")
+    ap.add_argument("--recycler", action="store_true", help="measure only inserters feeding a recycler")
     ap.add_argument("--research", help="measure everything with this research set, e.g. inserter-capacity-bonus=7")
     args = ap.parse_args(argv)
+    if args.recycler:
+        from tools.rates import research_levels
+
+        data = json.loads(Path(args.out).read_text())
+        with Server(args.factorio) as server:
+            if server.version != data["game_version"]:
+                sys.exit(f"the belt rates are from {data['game_version']}, the server is {server.version}: "
+                         "measure everything first")
+            data["into_recycler"] = recycler_rates(server)
+            for key, got in data.get("researched", {}).items():
+                got["into_recycler"] = recycler_rates(server, research_levels(key), key)
+        Path(args.out).write_text(dump_json(data))
+        print(f"-> {args.out}", file=sys.stderr)
+        return
     if args.research:
         from tools.rates import research_key, research_levels
 
@@ -193,6 +271,8 @@ def main(argv=None):
                 got["machine_to_machine"][inserter] = round(measure_handover(server, inserter, levels), 3)
                 print(f"{key} {inserter:22s} machine to machine {got['machine_to_machine'][inserter]}",
                       file=sys.stderr, flush=True)
+            if not args.energy:
+                got["into_recycler"] = recycler_rates(server, levels, key)
         data.setdefault("researched", {})[key] = got
         Path(args.out).write_text(dump_json(data))
         print(f"-> {args.out}", file=sys.stderr)
@@ -228,6 +308,7 @@ def main(argv=None):
                      "to_belt": round(measure(server, inserter, belt, False), 3)}
                 rates.setdefault(inserter, {})[belt] = r
                 print(f"{inserter:22s} {belt:24s} {r}", file=sys.stderr)
+        into_recycler = recycler_rates(server)
     old = json.loads(Path(args.out).read_text()).get("researched", {}) if Path(args.out).exists() else {}
     for key in old:  # measured on what may be another version: measure them again
         print(f"dropped the rates at {key}: python -m validator.measure --research {key}", file=sys.stderr)
@@ -236,6 +317,7 @@ def main(argv=None):
         "note": "Generated by `python -m validator.measure`; do not edit by hand. "
                 f"Items/s per inserter, no research, {ITEM}.",
         "rates": rates,
+        "into_recycler": into_recycler,
     }))
     print(f"-> {args.out}", file=sys.stderr)
 

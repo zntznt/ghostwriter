@@ -27,12 +27,12 @@ shortage, or below rated with no stall seen; not power, fuel, a recipe or a circ
 that makes something, what ghostwriter would build to make what the group makes now
 (--target rated: what it's rated for, so a group making nothing too): the generator for
 its machine (assembly_row; fluid_row, else fluid_block, with a fluid; smelting_column
-for a furnace), in the same machine, with its modules and beacons where every
-machine holds one normal module filling its slots alike, on --belt, inserters sized
-for --research (none: the rates any game gets). One row, or a production book when
-a row can't carry it; else the generators' reason none fits. Normal-quality machines
-and no research productivity: a group of better ones gets more machines than it
-needs, never fewer.
+for a furnace; recycler_row for a recycler, sized by its mean results), in the same
+machine, with its modules and beacons where every machine holds one normal module
+filling its slots alike, on --belt, inserters sized for --research (none: the rates
+any game gets). One row, or a production book when a row can't carry it; else the
+generators' reason none fits. Normal-quality machines and no research productivity:
+a group of better ones gets more machines than it needs, never fewer.
 """
 
 import argparse
@@ -47,7 +47,7 @@ from collections import Counter
 
 from draftsman.data import entities, items
 
-from generators import production
+from generators import production, recycler_row
 from tools import rates
 from tools.density import density
 from validator.rcon import Rcon
@@ -295,14 +295,15 @@ def suggest(groups: list[dict], target: str = "actual", belt: str = "turbo-trans
     """The groups, each of the `top` problems a layout can fix that make something to aim for
     (most output lost first) with a "suggestion": what ghostwriter would build to make the
     group's `target` output ("actual" or "rated"), or why no generator fits. A recipe with
-    variable results (recycling, crushing) gets why, past the `top` too: no generator
-    takes one, so there's nothing to build."""
+    variable results gets why, past the `top` too, unless a recycler makes it (recycler_row
+    sizes by the mean results): no other generator takes one, so there's nothing to build."""
     ranked = sorted((g for g in groups if fixable(g) and (not g["products"] or any(
         v[target] > 1e-9 for v in g["products"].values()))), key=lambda g: -g["lost"])
     made, tried = {}, 0
     for g in ranked:
         try:
-            rates.recipe_any(g["recipe"])
+            if g["machine"] != recycler_row.MACHINE:
+                rates.recipe_any(g["recipe"])
         except ValueError as e:
             made[id(g)] = {"kind": "no generator fits", "reason": str(e)}
             continue
@@ -322,14 +323,17 @@ def _suggestion(g: dict, target: str, belt: str, research: str) -> dict:
     item, v = max(g["products"].items(), key=lambda kv: kv[1][target])
     rate = v[target]
     machine, r = g["machine"], rates.recipe_any(g["recipe"], means=True)
-    furnace = entities.raw[machine]["type"] == "furnace"
+    recycler = machine == recycler_row.MACHINE  # a furnace to the game, but a row of its own
+    furnace = not recycler and entities.raw[machine]["type"] == "furnace"
     if not furnace and not rates.electric(machine):
         return {"kind": "no generator fits", "reason": f"{machine} burns fuel, and ghostwriter's rows feed it none"}
-    base = {"recipe": g["recipe"], "furnace" if furnace else "machine": machine, "belt": belt}
+    base = {"recipe": g["recipe"], **({} if recycler else {"furnace" if furnace else "machine": machine}), "belt": belt}
     base |= {k: g[f"uniform_{k}"] for k in ("modules", "beacons") if g[f"uniform_{k}"]}
     if research and not furnace:  # a furnace's one inserter each way needs none
         base["research"] = research
-    if furnace:
+    if recycler:
+        kinds = ("recycler_row",)
+    elif furnace:
         kinds = ("smelting_column",)
     elif r.fluids or set(r.results) - set(items.raw):
         kinds = ("fluid_row", "fluid_block")

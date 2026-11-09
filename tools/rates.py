@@ -385,6 +385,17 @@ def handover_rate(inserter: str, research: str | dict = "") -> float:
     return table[inserter]
 
 
+def recycler_feed_rate(inserter: str, belt: str, research: str | dict = "") -> float:
+    """Items/s one inserter moves off a standing full belt into a recycler crafting flat out, measured in game."""
+    # ponytail: measured into a plain recycler (16 crafts/s at most), so a rate at 8/s may be its cap, not the
+    # inserter's; measure into a sped-up one if beaconed item recycling with research matters.
+    table = _measured(research).get("into_recycler", {})
+    if inserter not in table or belt not in table[inserter]:
+        raise ValueError(f"no measured rate for {inserter} on {belt} into a recycler "
+                         "(python -m validator.measure --recycler)")
+    return table[inserter][belt]
+
+
 def inserter_rate(inserter: str, belt: str, from_belt: bool, research: str | dict = "") -> float:
     """Items/s one inserter moves off (from_belt) or onto a moving belt, measured in game."""
     table = _measured(research)["rates"]

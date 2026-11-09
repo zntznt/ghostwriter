@@ -168,6 +168,26 @@
         "fast-inserter": 6130,
         "long-handed-inserter": 4420,
         "bulk-inserter": 11309
+      },
+      "into_recycler": {
+        "inserter": {
+          "transport-belt": 1.845,
+          "fast-transport-belt": 1.823,
+          "express-transport-belt": 1.844,
+          "turbo-transport-belt": 1.845
+        },
+        "fast-inserter": {
+          "transport-belt": 4.787,
+          "fast-transport-belt": 5.452,
+          "express-transport-belt": 5.453,
+          "turbo-transport-belt": 5.455
+        },
+        "bulk-inserter": {
+          "transport-belt": 7.082,
+          "fast-transport-belt": 7.5,
+          "express-transport-belt": 6.669,
+          "turbo-transport-belt": 6.663
+        }
       }
     },
     "inserter-capacity-bonus=7": {
@@ -256,6 +276,26 @@
         "fast-inserter": 3960,
         "long-handed-inserter": 3242,
         "bulk-inserter": 11530
+      },
+      "into_recycler": {
+        "inserter": {
+          "transport-belt": 2.222,
+          "fast-transport-belt": 2.223,
+          "express-transport-belt": 2.246,
+          "turbo-transport-belt": 2.254
+        },
+        "fast-inserter": {
+          "transport-belt": 7.089,
+          "fast-transport-belt": 7.504,
+          "express-transport-belt": 6.671,
+          "turbo-transport-belt": 6.667
+        },
+        "bulk-inserter": {
+          "transport-belt": 7.494,
+          "fast-transport-belt": 7.999,
+          "express-transport-belt": 8.0,
+          "turbo-transport-belt": 8.002
+        }
       }
     }
   },
@@ -264,5 +304,25 @@
     "fast-inserter": 10534,
     "long-handed-inserter": 8734,
     "bulk-inserter": 30079
+  },
+  "into_recycler": {
+    "inserter": {
+      "transport-belt": 0.906,
+      "fast-transport-belt": 0.905,
+      "express-transport-belt": 0.913,
+      "turbo-transport-belt": 0.908
+    },
+    "fast-inserter": {
+      "transport-belt": 2.728,
+      "fast-transport-belt": 2.728,
+      "express-transport-belt": 2.727,
+      "turbo-transport-belt": 2.723
+    },
+    "bulk-inserter": {
+      "transport-belt": 2.728,
+      "fast-transport-belt": 2.729,
+      "express-transport-belt": 2.726,
+      "turbo-transport-belt": 2.723
+    }
   }
 }
