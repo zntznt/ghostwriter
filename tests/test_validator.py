@@ -366,6 +366,19 @@ class Validator(unittest.TestCase):
                                     '.productivity_bonus)')
         self.assertEqual(float(bonus), 0)  # the run's research productivity undone
 
+    def test_beaconed_crusher_rows_reach_their_mean_results_and_draw_their_estimate(self):
+        # Three speed beacons a crusher, 480 kW each: crushing on yellow (its lane binds as without them),
+        # with productivity modules too; reprocessing, now 3.6 times as fast; and crushing on turbo at
+        # inserter research 7, where three bulk inserters fill 89% of the lane.
+        for params in ({"beacons": "speed-module-3"},
+                       {"modules": "productivity-module-3", "beacons": "speed-module-3"},
+                       {"recipe": "metallic-asteroid-reprocessing", "beacons": "speed-module-3"},
+                       {"belt": "turbo-transport-belt", "research": "inserter-capacity-bonus=7",
+                        "beacons": "speed-module-3"}):
+            with self.subTest(**params):
+                self.assertPasses(crusher_row.build(**params).to_dict())
+                self.assertDraws(crusher_row, **params)
+
     def test_a_recycler_drops_its_results_on_the_near_lane(self):
         # One side, facing east onto the results belt: everything on its left lane.
         bp = recycler_row.build(sides=1, machines=2)

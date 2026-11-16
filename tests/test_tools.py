@@ -403,7 +403,11 @@ class CrusherRow(unittest.TestCase):
         for params in ({}, {"sides": 1}, {"recipe": "metallic-asteroid-reprocessing"},
                        {"recipe": "advanced-metallic-asteroid-crushing", "modules": "productivity-module-3"},
                        {"belt": "turbo-transport-belt", "research": "inserter-capacity-bonus=7", "productivity": 0.3},
-                       {"modules": "speed-module-3"}, {"pole": "small-electric-pole"}):
+                       {"modules": "speed-module-3"}, {"pole": "small-electric-pole"},
+                       {"recipe": "metallic-asteroid-reprocessing", "beacons": "speed-module-3"},
+                       {"beacons": "speed-module-3", "modules": "productivity-module-3", "sides": 1},
+                       {"recipe": "metallic-asteroid-reprocessing", "beacons": "speed-module-3",
+                        "pole": "small-electric-pole"}):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 bp = crusher_row.build(**params).to_dict()["blueprint"]
@@ -462,8 +466,32 @@ class CrusherRow(unittest.TestCase):
     def test_refuses_what_a_crusher_row_cant_do(self):
         with self.assertRaisesRegex(ValueError, "crusher can't craft"):
             crusher_row.plan(recipe="iron-gear-wheel")
-        with self.assertRaisesRegex(ValueError, "beacons"):
-            crusher_row.plan(beacons="speed-module-3")
+
+    def test_beacons_outside_the_input_belts_reach_every_crusher_alike(self):
+        # A beacon column beside each input belt, one beacon by each crusher and one past each end:
+        # every crusher takes three, the row crafting and drawing for them.
+        r = rates.recipe_any("metallic-asteroid-reprocessing", means=True)
+        p = crusher_row.plan(recipe=r.name, beacons="speed-module-3")
+        self.assertEqual(p.beacons_per_machine, 3)
+        self.assertAlmostEqual(p.rated, rates.crafts_per_second("crusher", r, "", "speed-module-3", 3))
+        self.assertGreater(p.crafts, crusher_row.plan(recipe=r.name).crafts * 3)
+        bp = crusher_row.build(recipe=r.name, beacons="speed-module-3")
+        beacons = [(e.tile_position["x"] + 1.5, e.tile_position["y"] + 1.5)
+                   for e in bp.entities if e.name == "beacon"]
+        crushers = [(e.tile_position["x"] + 1, e.tile_position["y"] + 1.5) for e in bp.entities if e.name == "crusher"]
+        self.assertEqual(len(beacons), p.sides * (p.machines + 2))
+        self.assertEqual({layout.beacons_reaching(c, (0.7, 1.2), beacons) for c in crushers}, {3})
+        plain = crusher_row.plan(recipe=r.name, machines=p.machines)
+        self.assertGreater(p.watts(), plain.watts() + len(beacons) * rates.beacon_watts())
+        # Beaconed past its turbo lane, a crusher crafts at what three inserters side by side put on it.
+        t = crusher_row.plan(belt="turbo-transport-belt", research="inserter-capacity-bonus=7", beacons="speed-module-3")
+        self.assertAlmostEqual(t.crafts, crusher_row.FILL["turbo-transport-belt"] * 30 / 20.3)
+        # Crushing allows productivity (reprocessing doesn't): modules the beacons speed up again.
+        c = rates.recipe_any("metallic-asteroid-crushing", means=True)
+        q = crusher_row.plan(modules="productivity-module-3", beacons="speed-module-3")
+        self.assertAlmostEqual(q.rated, rates.crafts_per_second("crusher", c, "productivity-module-3",
+                                                                "speed-module-3", 3))
+        self.assertAlmostEqual(q.recipe.results["iron-ore"], 20 * 1.2)
 
 
 
@@ -3993,6 +4021,14 @@ class Suggest(unittest.TestCase):
         s = self.suggested(rows)["suggestion"]
         self.assertEqual((s["kind"], s["generator"]), ("build", "crusher_row"), s)
         self.assertNotIn("productivity", s["params"])
+        # Beaconed crushers get a beaconed row.
+        beacon = Observe.beacon()
+        rows = Observe.machines(1, "carbonic-asteroid-reprocessing", 2, 1, 6, machine="crusher", energy=2,
+                                beacons=[beacon, beacon, beacon])
+        s = self.suggested(rows)["suggestion"]
+        self.assertEqual((s["kind"], s["generator"], s["params"].get("beacons")),
+                         ("build", "crusher_row", "speed-module-3"), s)
+        self.assertGreaterEqual(self.made(s["command"]), s["target"])
 
     def test_problems_a_layout_cant_fix_get_no_build(self):
         from tools import observe
