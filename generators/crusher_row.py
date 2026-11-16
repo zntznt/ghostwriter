@@ -19,11 +19,16 @@ move at the rates without research. Where more than three would be needed
 and the crusher crafts at that, its results waiting in it; a lane can bind the
 same way. `machines` (per side) defaults to what 85% of a lane takes: inserters
 spread along it don't fill it, though one crusher's three side by side do (checked
-in game). Poles take the inserter-column tiles left over, else a row's gap
-after each crusher.
+in game) but for a turbo lane, 89% (FILL). Poles take the inserter-column tiles
+left over, else a row's gap after each crusher.
+
+With beacons, a beacon column stands outside each input belt: a beacon beside
+each crusher's three rows and one past each end, so every crusher takes the
+three nearest (`beacons_per_machine`), 480 kW each. Inserters and lanes still
+cap what it crafts, so a crusher its output already binds (crushing on yellow)
+gains nothing; reprocessing and researched turbo rows do.
 
 Crushers need zero gravity: a space platform (the validator builds on one).
-No beacons: a 3x3 beacon doesn't fit beside a 2-tile crusher column.
 """
 
 import math
@@ -31,14 +36,18 @@ from dataclasses import dataclass
 
 from draftsman.blueprintable import Blueprint
 from draftsman.constants import Direction
-from draftsman.data import items, recipes
+from draftsman.data import entities, items, recipes
 
-from generators.assembly_row import MARGIN, REGULAR
+from generators.assembly_row import BEACON, MARGIN, REGULAR
 from generators.recycler_row import SIGMAS, _spread
 from tools import layout, rates
 
 MACHINE = "crusher"
 DEPTH, ROWS = 2, 3  # a crusher standing north: tiles across, rows along
+# Share of a lane three inserters side by side fill flat out, measured: a yellow lane 7.49 of 7.5, an
+# express one 98%, a turbo one 26.8 of 30 (three bulk inserters at capacity 7, beaconed crushing).
+# ponytail: turbo measured with bulk hands of 12 only; measure other hands if a row binds there.
+FILL = {"turbo-transport-belt": 0.89}
 FASTEST = 0.98  # inserters moving at least this share of the fastest count as fast, the cheapest of them taken
 
 
@@ -56,6 +65,8 @@ class Plan:
     gap: int = 0  # empty rows after each crusher, for poles when the inserter columns are full
     lead: int = 0  # empty rows before the first, when its top inserters are out of a pole's reach
     modules: str = ""
+    beacons: str = ""  # in every beacon's slots; no beacons without
+    beacons_per_machine: int = 0
     research: str = ""  # the inserter research the row is sized for
     productivity: float = 0  # the force's research bonus for the recipe
 
@@ -94,7 +105,9 @@ class Plan:
         """Average electric W making `share` of the rated output."""
         m = self.machines * self.sides
         crafts = share * self.sides * self.side_crafts
-        w = m * rates.machine_watts(MACHINE, self.recipe, self.modules, utilisation=crafts / (m * self.rated))
+        w = m * rates.machine_watts(MACHINE, self.recipe, self.modules, self.beacons, self.beacons_per_machine,
+                                    crafts / (m * self.rated))
+        w += self.sides * (self.machines + 2) * rates.beacon_watts() if self.beacons else 0
         for (inserter, k), moved, from_belt in ((self.feeder, self.recipe.ingredients, True),
                                                 (self.output, self.recipe.results, False)):
             w += m * k * rates.inserter_drain(inserter) + sum(
@@ -113,14 +126,13 @@ def _plan(recipe="metallic-asteroid-crushing", belt="transport-belt", sides=2, m
           beacons="", productivity=0.0) -> Plan:
     if sides not in (1, 2):
         raise ValueError("sides is 1 or 2")
-    if beacons:
-        raise ValueError("a crusher row takes no beacons: a 3x3 beacon doesn't fit beside its 2-tile crushers")
     if recipe not in recipes.raw:
         raise ValueError(f"unknown recipe {recipe!r}")
     base = rates.recipe_any(recipe, means=True)
     if base.fluids or len(base.ingredients) != 1 or set(base.results) - set(items.raw):
         raise ValueError(f"{recipe}: a crusher row takes one item in and gives items back")
-    rated = rates.crafts_per_second(MACHINE, base, modules)
+    per = 3 if beacons else 0  # build() checks every crusher takes them
+    rated = rates.crafts_per_second(MACHINE, base, modules, beacons, per)
     r = rates.made(MACHINE, base, modules, float(productivity))
     research = rates.research_key(research)
 
@@ -131,7 +143,7 @@ def _plan(recipe="metallic-asteroid-crushing", belt="transport-belt", sides=2, m
         return min(((math.ceil(crafts * seconds(i, moved, from_belt) / MARGIN - 1e-9), k), i)
                    for k, i in enumerate(REGULAR))[::-1]
 
-    crafts = min(rated, rates.lane_rate(belt) / sum(r.results.values()))
+    crafts = min(rated, FILL.get(belt, 1) * rates.lane_rate(belt) / sum(r.results.values()))
     out, (k, _) = fewest(r.results, False, crafts)
     if k > ROWS:  # flat out: three of the fastest
         quickest = min(seconds(i, r.results, False) for i in REGULAR)
@@ -145,7 +157,7 @@ def _plan(recipe="metallic-asteroid-crushing", belt="transport-belt", sides=2, m
     # lane's 7.14 on it), so a side's crushers keep MARGIN of it; three side by side fill one alone (7.49).
     limit = max(1, math.floor(min(2 * lane / amount, MARGIN * lane / total) / crafts + 1e-9))
     return Plan(r, belt, sides, machines or limit, limit, crafts, rated, (feeder, fed), (out, k), modules=modules,
-                research=research, productivity=float(productivity))
+                beacons=beacons, beacons_per_machine=per, research=research, productivity=float(productivity))
 
 
 def plan(pole="medium-electric-pole", **params) -> Plan:
@@ -163,7 +175,8 @@ def plan(pole="medium-electric-pole", **params) -> Plan:
 def build(recipe="metallic-asteroid-crushing", belt="transport-belt", sides=2, machines=0,
           pole="medium-electric-pole", research="", modules="", beacons="", productivity=0.0) -> Blueprint:
     """research: inserter research the row is sized for (e.g. inserter-capacity-bonus=7). modules: a
-    module in every crusher's slots. productivity: the force's research bonus for the recipe (asteroid
+    module in every crusher's slots. beacons: a module in every slot of beacons outside the input
+    belts, the row sized for their speed. productivity: the force's research bonus for the recipe (asteroid
     productivity: 0.1 a level), the results sized for it."""
     return _build(plan(pole, recipe=recipe, belt=belt, sides=sides, machines=machines, research=research,
                        modules=modules, beacons=beacons, productivity=productivity), pole)
@@ -176,11 +189,11 @@ def _length(p: Plan) -> int:
 def _build(p: Plan, pole: str) -> Blueprint:
     n, length, pitch = p.machines, _length(p), ROWS + p.gap
     # Columns from the west: in, inserters, crusher, out, results (then mirrored).
-    product_x = 3 + DEPTH
-    columns = {"left": {"belt": 0, "ins": 1, "machine": 2, "out": 2 + DEPTH}}
+    product_x, bs = 3 + DEPTH, rates.size(BEACON) if p.beacons else 0
+    columns = {"left": {"belt": 0, "ins": 1, "machine": 2, "out": 2 + DEPTH, "beacon": -bs}}
     if p.sides == 2:
         columns["right"] = {"belt": product_x + DEPTH + 3, "ins": product_x + DEPTH + 2, "machine": product_x + 2,
-                            "out": product_x + 1}
+                            "out": product_x + 1, "beacon": product_x + DEPTH + 4}
 
     bp = Blueprint()
     made = p.rates()
@@ -192,6 +205,7 @@ def _build(p: Plan, pole: str) -> Blueprint:
         + ", ".join(f"{k} {v:.3g}/s" for k, v in made.items())
         + (f"; each crusher crafts {p.crafts:.3g} of its {p.rated:.3g}/s, all its output takes" if p.output_bound
            else "")
+        + (f". {p.beacons_per_machine} beacons of {p.beacons} reach each crusher" if p.beacons else "")
         + f". Draws about {rates.megawatts(p.watts())}. Needs zero gravity (a space platform). "
         "Connect any pole to your grid.")
     bp.icons = [MACHINE, p.product]
@@ -204,21 +218,32 @@ def _build(p: Plan, pole: str) -> Blueprint:
             bp.entities.append(p.belt, tile_position=(c["belt"], y), direction=Direction.NORTH,
                                **({"id": f"in_{side}"} if y == length - 1 else {}))
 
-    powered = []  # (centre x, centre y, half width)
+    powered, crushers, beacons = [], [], []  # powered: (centre x, centre y, half width)
     for side, c in columns.items():
         west = side == "left"
+        for y in [p.lead - bs] + [p.lead + m * pitch for m in range(n)] + [p.lead + (n - 1) * pitch + bs] if bs else ():
+            bp.entities.append(BEACON, tile_position=(c["beacon"], y))
+            bp.entities[-1].request_modules(p.beacons, range(entities.raw[BEACON]["module_slots"]))
+            beacons.append((c["beacon"] + bs / 2, y + bs / 2))
+            powered.append((*beacons[-1], rates.half_width(BEACON)))
         for m in range(n):
             y0 = p.lead + m * pitch
             bp.entities.append(MACHINE, tile_position=(c["machine"], y0), direction=Direction.NORTH,
                                recipe=p.recipe.name)
             rates.request_modules(bp.entities[-1], MACHINE, p.recipe, p.modules)
             # ponytail: the narrow half (0.7) for both axes; a pole's reach along the row is understated.
-            powered.append((c["machine"] + DEPTH / 2, y0 + ROWS / 2, rates.half_width(MACHINE)))
+            crushers.append((c["machine"] + DEPTH / 2, y0 + ROWS / 2))
+            powered.append((*crushers[-1], rates.half_width(MACHINE)))
             for x, (inserter, k) in ((c["ins"], p.feeder), (c["out"], p.output)):
                 for row in range(k):
                     bp.entities.append(inserter, tile_position=(x, y0 + row), direction=layout.facing(west))
                     powered.append((x + 0.5, y0 + row + 0.5, rates.half_width(inserter)))
 
+    if bs:
+        (x1, y1), (x2, y2) = entities.raw[MACHINE]["collision_box"]
+        if any(layout.beacons_reaching(c, ((x2 - x1) / 2, (y2 - y1) / 2), beacons) != p.beacons_per_machine
+               for c in crushers):
+            raise ValueError(f"not every crusher takes {p.beacons_per_machine} beacons")
     free = {}
     for c in columns.values():
         for x, (_, used) in ((c["ins"], p.feeder), (c["out"], p.output)):
